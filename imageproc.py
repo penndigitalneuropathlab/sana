@@ -160,11 +160,6 @@ def generate_mask(contours, size):
 
 # applies the mask to the image, non-mask areas turn black
 def mask_image(img, mask):
-    print(img)
-    print(mask)
-    print(img.shape, img.dtype)
-    print(mask.shape, mask.dtype)
-
     return cv2.bitwise_and(img, mask)
 
 def get_slide_color(img):
@@ -174,8 +169,8 @@ def get_slide_color(img):
     return np.tile(np.argmax(histo), 3)
 
 def get_neuron_density(loader, frame, tile_size, tile_step):
+
     # generate the tiles from the frame
-    frame_size = frame.shape[:2][::-1]
     tiles = loader.load_tiles(frame, tile_size, tile_step)
 
     # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons

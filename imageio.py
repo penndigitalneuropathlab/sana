@@ -60,7 +60,7 @@ class SVSLoader:
     def get_ntiles(self, tile_size, tile_step, frame_size):
         return ((frame_size - tile_size) // tile_step) + 1
 
-    def get_frame_locs(self, frame_size, frame_step):
+    def get_frame_locs(self, frame_size, frame_step, tile_size):
 
         # calculate the numbers of frames in the image
         nx, ny = (self.get_dim() // frame_step) + 1
@@ -69,28 +69,46 @@ class SVSLoader:
         locs = np.zeros((nx, ny, 2), dtype=int)
         for i in range(nx):
             for j in range(ny):
-                locs[i][j] = np.array((i * frame_step[0], j * frame_step[1]))
+
+                # calculate the location
+                x, y = i * frame_step[0], j * frame_step[1]
+
+                # shift the location to account for center-aligned tiles
+                x, y = x - tile_size[0]//2, y - tile_size[1]//2
+                locs[i][j] = np.array((x, y))
         return locs
 
     # loads an ROI of the image based on the relative pixel resolution
-    # NOTE: this auto-upscales the location to match the level 0 resolution
-    def load_region(self, loc, size, lvl=None, pad_color=(0, 0, 0)):
+    # NOTE: this allows any coordinates to be given
+    #        1) if loc is negative, we decrease size, and shift loc to zero
+    #        2) if size is bigger than image, we decrease size
+    #        3) a padded rectangle will be added to top/bottom/left/right using
+    #             the given color
+    def load_region(self, loc, size, lvl=None, pad_color=(255, 255, 255)):
         if lvl is None:
             lvl = self.lvl
 
-        # make sure the we don't read past the image, calculate the padding
         size = np.copy(size)
         h, w = self.get_dim(lvl)
+        padx1, pady1, padx2, pady2 = 0, 0, 0, 0
+
+        # make sure the location isn't negative
+        if loc[0] < 0:
+            padx1 = 0 - loc[0]
+            loc[0] = 0
+            size[0] -= padx1
+        if loc[1] < 0:
+            pady1 = 0 - loc[1]
+            loc[1] = 0
+            size[1] -= pady1
+
+        # make sure the size isn't past the image boundary
         if loc[0] + size[0] >= h:
-            padx = loc[0] + size[0] - h
-            size[0] = h - loc[0]
-        else:
-            padx = 0
+            padx2 = loc[0] + size[0] - h
+            size[0] -= padx2
         if loc[1] + size[1] >= w:
-            pady = loc[1] + size[1] - w
-            size[1] = w - loc[1]
-        else:
-            pady = 0
+            pady2 = loc[1] + size[1] - w
+            size[1] -= pady2
 
         # load the region
         # NOTE: upscale the location before accessing the image
@@ -98,13 +116,15 @@ class SVSLoader:
         img = np.array(self.svs.read_region(
             location=loc, level=lvl, size=size))[:, :, :3]
 
-        # pad the img with pady rows with cols of the original image size
-        pady = np.full_like(img, pad_color, shape=(pady, img.shape[1], 3))
-        img = np.concatenate((img, pady), axis=0)
+        # pad img with rows at the top/bottom with cols of img size
+        pady1 = np.full_like(img, pad_color, shape=(pady1, img.shape[1], 3))
+        pady2 = np.full_like(img, pad_color, shape=(pady2, img.shape[1], 3))
+        img = np.concatenate((pady1, img, pady2), axis=0)
 
-        # pad the img with padx cols with rows of the padded image size
-        padx = np.full_like(img, pad_color, shape=(img.shape[0], padx, 3))
-        img = np.concatenate((img, padx), axis=1)
+        # pad img with cols at the left/right with rows of the padded img size
+        padx1 = np.full_like(img, pad_color, shape=(img.shape[0], padx1, 3))
+        padx2 = np.full_like(img, pad_color, shape=(img.shape[0], padx2, 3))
+        img = np.concatenate((padx1, img, padx2), axis=1)
 
         return img
 
@@ -129,7 +149,6 @@ class SVSLoader:
             N * frame.shape[1],                # N bytes between element rows
             N * 1,                             # N bytes between element cols
         )
-
         # perform the tiling
         # NOTE: this is pretty complicated... but very fast
         #       23) in this article -> https://towardsdatascience.com/advanced-numpy-master-stride-tricks-with-25-illustrated-exercises-923a9393ab20

@@ -66,7 +66,7 @@ def main(argv):
     tile_ds = (frame_size - frame_pad) / ntiles
 
     # generate the locations and sizes of the frames
-    frame_locs = loader.get_frame_locs(frame_size, frame_step)
+    frame_locs = loader.get_frame_locs(frame_size, frame_step, tile_size)
 
     # define an array to hold the result of each frame analysis
     nd = np.ones(
@@ -100,17 +100,6 @@ def main(argv):
 
     # # crop out the padded portions of the frame
     w, h = np.rint(loader.get_dim() / tile_ds).astype(np.int)
-
-    print('thumbnail:', thumbnail.shape)
-    print('frame:', frame_size)
-    print('tile:', tile_size, tile_step)
-
-    print('ntiles:', ntiles)
-    print('tile ds:', tile_ds)
-    print('nd:', nd.shape)
-    print('new dim:', h, w)
-    print(loader.get_dim())
-
     nd = nd[:h, :w]
 
     # scale the density analysis to a grayscale image
@@ -165,6 +154,8 @@ def main(argv):
     axs[0][1].get_shared_y_axes().join(axs[0][1], axs[1][1])
 
     axs[0][2].imshow(wm_thresh, cmap='coolwarm')
+    axs[0][2].set_title('Thresholded Neuron Density')
+    axs[1][2].set_title('WM Detected Thumbnail')
 
     plt.show()
 
