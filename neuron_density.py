@@ -103,48 +103,41 @@ def main(argv):
     nd = nd[:h, :w]
 
     # scale the density analysis to a grayscale image
-    nd = np.rint(255 * (nd - np.min(nd)) / \
-                 (np.max(nd) - np.min(nd))).astype(np.uint8)
-
-    # calculate the histogram of the image
-    # NOTE: the log is taken for better thresholding and plotting
-    hist, bins = np.histogram(nd, 256)
-    hist = np.log(hist, out=np.zeros_like(hist, dtype=np.float), where=hist!=0)
-
-    # get the histogram thresholds
-    bckg_tiss = 15
-    wm_gm = 75
-    lo_hi = 155
-
-    # separate the background from the tissue
-    bckg = np.full_like(nd, 0)
-    wm = np.full_like(nd, 50)
-    nd_bckg_sep = np.where(nd < bckg_tiss, bckg, wm)
-
-    # separate the GM from the WM
-    lo_gm = np.full_like(nd, 100)
-    nd_wm_sep = np.where(nd < wm_gm, nd_bckg_sep, lo_gm)
-
-    # separate the dense GM from the sparse GM
-    hi_gm = np.full_like(nd, 200)
-    nd_gm_sep = np.where(nd < lo_hi, nd_wm_sep, hi_gm)
+    nd = np.rint(255 * nd).astype(np.uint8)
 
     # detect the tissue from the thumbnail image
     tissue_contours, tb_thresh, tb_tissue_detected = iproc.detect_tissue(
         loader, thumbnail, loader.get_thumbnail_lvl())
 
-    wm_contours, wm_thresh, tb_wm_detected = iproc.detect_wm(
-        loader, nd, thumbnail, tissue_contours, tile_ds)
+    wm_contours, wm_thresh, tb_wm_detected, hist, gm_wm, means, vars = \
+        iproc.detect_wm(loader, nd, thumbnail, tissue_contours, tile_ds)
+
+    # plot_color_deconvolution()
+
+    # plot_neuron_density()
+
+    # plot_tissue_detection()
+
+    # plot_neuron_density()
+
+    # plot_wmgm_detection()
 
     fig, axs = plt.subplots(2, 3)
     axs[0][0].imshow(nd, cmap='coolwarm')
     axs[0][0].set_title('Neuron Density - Tile Size: (%d,%d) Microns' % \
                         (tile_size_m[0], tile_size_m[1]))
     axs[1][0].plot(hist, color='black')
-    axs[1][0].plot(bckg_tiss, hist[bckg_tiss], '.', color='red', linewidth=5)
-    axs[1][0].plot(wm_gm, hist[wm_gm], '.', color='green', linewidth=5)
-    axs[1][0].plot(lo_hi, hist[lo_hi], '.', color='blue', linewidth=5)
-    axs[1][0].set_title('Log Scaled Histo of Neuron Density')
+    axs[1][0].axvline(gm_wm, color='purple', label='WM/GM Density Threshold')
+    axs[1][0].arrow(means[0], hist[means[0]], vars[0], 0,
+                    color='red', width=10, length_includes_head=True,
+                    head_width=300, head_length=1,
+                    label='WM Normal Distributino')
+    axs[1][0].arrow(means[1], hist[means[1]], vars[1], 0,
+                    color='blue', width=10, length_includes_head=True,
+                    head_width=300, head_length=1,
+                    label='GM Normal Distribution')
+    axs[1][0].set_title('Tissue Histogram of Neuron Density')
+    axs[1][0].set_xlim([0, 70])
 
     axs[0][1].imshow(tb_thresh, cmap='coolwarm')
     axs[0][1].set_title('Thresholded Thumbnail')
@@ -155,75 +148,10 @@ def main(argv):
 
     axs[0][2].imshow(wm_thresh, cmap='coolwarm')
     axs[0][2].set_title('Thresholded Neuron Density')
-    axs[1][2].set_title('WM Detected Thumbnail')
+    axs[1][2].imshow(tb_wm_detected, cmap='coolwarm')
+    axs[1][2].set_title('GM Detected Thumbnail')
 
     plt.show()
-
-
-    # TODO: write the detectinos to json
-    #       NOTE: script to import to qupath - http://www.andrewjanowczyk.com/exporting-and-re-importing-annotations-from-qupath-for-usage-in-machine-learning/
-    #
-
-def plot_cells(img, sep, neuron, non_neuron):
-
-    fig, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
-    ax = axs.ravel()
-    ax[0].imshow(img)
-    ax[0].set_title('Original')
-    ax[1].imshow(sep)
-    ax[1].set_title('Stain Separated')
-    ax[2].imshow(neuron)
-    ax[2].set_title('Neuronal')
-    ax[3].imshow(non_neuron)
-    ax[3].set_title('Non-Neuronal')
-    for a in ax.ravel():
-        a.axis('off')
-    fig.tight_layout()
-
-def plot_stains(img, hem, dab, res):
-
-    fig, axs = plt.subplots(2, 2, figsize=(7, 6), sharex=True, sharey=True)
-    ax = axs.ravel()
-    ax[0].imshow(img)
-    ax[0].set_title('Original')
-    ax[1].imshow(hem)
-    ax[1].set_title('Hematoxylin')
-    ax[2].imshow(dab)
-    ax[2].set_title('DAB')
-    ax[3].imshow(res)
-    ax[3].set_title('Residual')
-    for a in ax.ravel():
-        a.axis('off')
-    fig.tight_layout()
-
-def plot_histos(img, hem, dab, res):
-
-    fig, axs = plt.subplots(1, 3, sharex=True, sharey=True)
-    ax = axs.ravel()
-    ax[0].plot(img[0, :], 'r')
-    ax[0].plot(img[1, :], 'g')
-    ax[0].plot(img[2, :], 'b')
-    ax[0].plot(img[3, :], 'black')
-    ax[0].set_title('Original')
-    ax[1].plot(hem[0, :], 'r')
-    ax[1].plot(hem[1, :], 'g')
-    ax[1].plot(hem[2, :], 'b')
-    ax[1].plot(hem[3, :], 'black')
-    ax[1].set_title('Hematoxylin')
-    ax[2].plot(dab[0, :], 'r')
-    ax[2].plot(dab[1, :], 'g')
-    ax[2].plot(dab[2, :], 'b')
-    ax[2].plot(dab[3, :], 'black')
-    ax[2].set_title('DAB')
-    # ax[3].plot(res[0, :], 'r')
-    # ax[3].plot(res[1, :], 'g')
-    # ax[3].plot(res[2, :], 'b')
-    # ax[3].plot(res[3, :], 'black')
-    # ax[3].set_title('Residual')
-    for a in ax.ravel():
-        a.set_xlim([160, 255])
-    fig.tight_layout()
-
 
 if __name__ == "__main__":
     main(sys.argv)

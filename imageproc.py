@@ -2,14 +2,15 @@
 # TODO: should probably remove as much PIL as possible, switching from
 #        Image to array and vice versa can't be efficient
 import os
+import cv2
 import numpy as np
 from numpy.linalg import det, inv
 from PIL import Image, ImageFilter
-import cv2
+from scipy.ndimage.filters import gaussian_filter
 from skimage.exposure import rescale_intensity
 from sklearn.cluster import KMeans
-from scipy.ndimage.filters import gaussian_filter
-from matplotlib import pyplot as plt
+from sklearn.mixture import GaussianMixture
+from scipy.stats import multivariate_normal
 
 # applies a Gaussian Blur to a PIL Image object
 # TODO: radius should be in terms of an actual neuropath value
@@ -30,7 +31,7 @@ def calc_contour_area(contour):
 
 # finds the contours of a thresholded image
 # TODO: is chain approx simple sufficient? seems like it just saves mem
-def find_contours(loader, img, lvl):
+def find_contours(loader, img, lvl=None):
     cont, hier = cv2.findContours(
         img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
@@ -60,6 +61,57 @@ def downscale_contours(contours, ds):
     return contours
 def round_contours(contours):
     return np.rint(contours).astype(np.int32)
+
+# converts the detections into the contour using the pixel resolution and the relative position of the tile
+def detections_to_contours(loader, detections, loc=None):
+    if loc is None:
+        loc = np.array(0,0)
+
+    return [loader.micron_to_px(
+        np.reshape(d, (d.shape[0]//2, 1, 2))) - loc for d in detections]
+
+def rgb_to_gray(img):
+    return np.dot(img.astype(np.float64), [0.2989, 0.5870, 0.1140])
+
+def histogram(img):
+    return np.histogram(img, bins=256, range=(0, 255))[0]
+
+def round_img(img):
+    return np.rint(img).astype(np.uint8)
+
+def norm(v):
+    k = (np.sqrt(np.sum(v**2)))
+    if k != 0:
+        return v / k
+    else:
+        return v
+
+# creates an image mask based on the given detections
+def generate_mask(contours, size):
+
+    # draw the contours, inside detections stays white, outside turns black
+    return cv2.drawContours(np.full(size, 0, dtype=np.uint8),
+                            contours, -1, 255, -1)
+
+# applies the mask to the image, non-mask areas turn black
+def mask_image(img, mask):
+    return cv2.bitwise_and(img, mask)
+
+def get_slide_color(img):
+    img = rgb_to_gray(img)
+    img = round_img(img)
+    histo = histogram(img)
+    return np.tile(np.argmax(histo), 3)
+
+def get_neuron_density(loader, frame, tile_size, tile_step):
+
+    # generate the tiles from the frame
+    tiles = loader.load_tiles(frame, tile_size, tile_step)
+
+    # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons
+    # calculate the neuron density of each tile
+    # NOTE: https://www.kenhub.com/en/library/anatomy/cortical-cytoarchitecture
+    return 1 - (np.sum(tiles, axis=(2, 3)) / (255 * tile_size[0]*tile_size[1]))
 
 # finds the tissue in a thresholded image
 def detect_tissue(loader, img, lvl):
@@ -117,73 +169,71 @@ def detect_wm(loader, nd, tb, tissue_contours, tile_ds):
     # downscale tissue contours to the tiled resolution
     tissue_contours = downscale_contours(
         tissue_contours, loader.get_ds() * tile_ds)
-
     tissue_contours = round_contours(tissue_contours)
 
     # mask out the background
     mask = generate_mask(tissue_contours, nd.shape)
     nd_tissue = mask_image(nd, mask)
 
-    # contours, hierarchy = find_contours(loader, thresh)
-    return None, nd_tissue, None
+    # get the histogram, set the background count to zero
+    hist = histogram(nd_tissue)
+    hist[0] = 0
 
-# converts the detections into the contour using the pixel resolution and the relative position of the tile
-def detections_to_contours(loader, detections, loc=None):
-    if loc is None:
-        loc = np.array(0,0)
+    # TODO: can do this before masking and rounding!!
+    # find the boundary between gm and wm
+    gm_wm, means, vars = mle_threshold(nd_tissue)
 
-    return [loader.micron_to_px(
-        np.reshape(d, (d.shape[0]//2, 1, 2))) - loc for d in detections]
+    # threshold the image based the on gm/wm boundary
+    # TODO: probably need a K-Means or something... balanced is so weird
+    gm = np.full_like(nd_tissue, 200)
+    nd_thresh = np.where(nd_tissue < gm_wm, nd_tissue, gm)
+    # nd_thresh = simple_threshold(nd_tissue, gm_wm, x=1, y=2)
 
-def rgb_to_gray(img):
-    return np.dot(img.astype(np.float64), [0.2989, 0.5870, 0.1140])
+    # TODO: how does this work? seems like it might be doing 0 to 1+
+    # TODO: need to blur and/or increase micron size
+    # TODO: need to remove small annotations, fill holes
+    contours, hierachy = find_contours(loader, nd_thresh)
+    contours = [c[0] for c in contours]
 
-def histogram(img):
-    return np.histogram(img, bins=256)[0]
+    tb_gm = cv2.drawContours(tb, contours, -1, 0, thickness=3)
 
-def round_img(img):
-    return np.rint(img).astype(np.uint8)
+    return contours, nd_thresh, tb_gm, hist, gm_wm, means, vars
 
-def norm(v):
-    k = (np.sqrt(np.sum(v**2)))
-    if k != 0:
-        return v / k
-    else:
-        return v
+def mle_threshold(x, k=4):
 
-# creates an image mask based on the given detections
-def generate_mask(contours, size):
+    # TODO: elbow method to find the true k
+    #        --probably is 4: bckg, wm, lo gm, hi gm
+    # find the initial means of the distributions using KMeans
+    kmeans = KMeans(n_clusters=k).fit(x.flatten()[:, None])
+    means = kmeans.cluster_centers_
 
-    # draw the contours, inside detections stays white, outside turns black
-    return cv2.drawContours(np.full(size, 0, dtype=np.uint8),
-                            contours, -1, 255, -1)
+    # perform a GMM to find the mean and variances of our distributions
+    gmm = GaussianMixture(n_components=k, means_init=means).fit(x.flatten()[:, None])
+    means = gmm.means_[:, 0]
+    vars = gmm.covariances_[:, 0, 0]
 
-# applies the mask to the image, non-mask areas turn black
-def mask_image(img, mask):
-    return cv2.bitwise_and(img, mask)
+    # get the wm and gm distributions
+    # NOTE: 2nd and 3rd means in an ordered list, 1st is the background
+    inds = means.argsort()[1:3]
+    means = means[inds]
+    vars = vars[inds]
 
-def get_slide_color(img):
-    img = rgb_to_gray(img)
-    img = round_img(img)
-    histo = histogram(img)
-    return np.tile(np.argmax(histo), 3)
+    # perform maximum likelihood estimation, find the crossing of the PDFs
+    t = np.arange(0, 256, 1)
+    p_wm = multivariate_normal(means[0], vars[0]).pdf(t).flatten()
+    p_gm = multivariate_normal(means[1], vars[1]).pdf(t).flatten()
+    threshold = np.nonzero(p_wm > p_gm)[0][-1]
 
-def get_neuron_density(loader, frame, tile_size, tile_step):
-
-    # generate the tiles from the frame
-    tiles = loader.load_tiles(frame, tile_size, tile_step)
-
-    # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons
-    # calculate the neuron density of each tile
-    # NOTE: https://www.kenhub.com/en/library/anatomy/cortical-cytoarchitecture
-    return tile_size[0]*tile_size[1] / np.sum(tiles, axis=(2, 3))
+    return threshold, np.rint(means).astype(int), np.rint(vars).astype(int)
 
 def balanced_hist_threshold(x, i_s=0, i_e=255):
 
-    # while x[i_s] < 5:
-    #     i_s += 1
-    # while x[i_e] < 5:
-    #     i_e -= 1
+    # move start and end points until we hit relevant area of the histo
+    min_color = np.mean(x[i_s:i_e])
+    while x[i_s] < min_color:
+        i_s += 1
+    while x[i_e] < min_color:
+        i_e -= 1
 
     # find center of histo
     i_m = int(round((i_s + i_e) / 2))
@@ -215,11 +265,6 @@ def balanced_hist_threshold(x, i_s=0, i_e=255):
         i_m = new_i_m
 
     return i_m
-
-def kmeans(x, k):
-    clt = KMeans(n_clusters=k)
-    clt.fit(x[:, None])
-    return clt.cluster_centers_
 
 # NOTE: does not support removing dyes yet, ask Claire what this is
 # [0] code from skimage.color
@@ -261,7 +306,7 @@ class StainSeparator:
         self.stain_to_rgb = stain_v
         self.rgb_to_stain = stain_v_inv
 
-    def run(self, frame, ret=[True, True, True]):
+    def run(self, frame, ret=[True, True, True], rescale=True):
         s1, s2, s3 = None, None, None
 
         # separate the stains, convert from rgb to stains
@@ -280,7 +325,14 @@ class StainSeparator:
             s3 = self.combine_stains(
                 np.stack((z, z, stains[:, :, 2]), axis=-1))
 
-        return s1, s2, s3
+        if not rescale:
+            return s1, s2, s3
+        else:
+            h = rescale_intensity(stains[:, :, 0], out_range=(0, 1),
+                      in_range=(0, np.percentile(stains[:, :, 0], 99)))
+            d = rescale_intensity(stains[:, :, 1], out_range=(0, 1),
+                      in_range=(0, np.percentile(stains[:, :, 1], 99)))
+            return s1, s2, s3, np.dstack((z, d, h))
 
     # performs color denconvolution using a rgb image and a inverted stain vector
     def separate_stains(self, rgb):
