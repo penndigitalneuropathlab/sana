@@ -30,12 +30,6 @@ class SVSLoader:
         self.thumbnail = self.load_thumbnail()
         self.slide_color = iproc.get_slide_color(self.thumbnail)
 
-    # specifies the dimensions of frame (pixels) and tiles (microns)
-    def init_tiling(self, fsize, fstep, tsize, tstep):
-        self.set_frame_dims(fsize, fstep)
-        self.set_tile_dims(tsize, tstep)
-        self.set_frame_locs()
-
     # getters
     def get_dim(self, lvl=None):
         if lvl is None:
@@ -66,6 +60,14 @@ class SVSLoader:
         self.nf = (self.get_dim() // self.fstep) + 1
         self.fds = self.get_dim() / self.nf
 
+        # define the location of the frames
+        self.flocs = np.zeros((self.nf[0], self.nf[1], 2), dtype=int)
+        for i in range(self.nf[0]):
+            for j in range(self.nf[1]):
+                x, y = i * self.fstep[0], j * self.fstep[1]
+                self.flocs[i][j] = np.array((x, y))
+
+
     def set_tile_dims(self, size, step):
         self.tsize = self.micron_to_px(size)
         self.tstep = self.micron_to_px(step)
@@ -73,31 +75,23 @@ class SVSLoader:
         self.nt = ((self.fsize + self.fpad - self.tsize) // self.tstep) + 1
         self.tds = self.fsize / self.nt
 
-    def set_frame_locs(self):
-
-        # define the location of the frames
-        self.flocs = np.zeros((self.nf[1], self.nf[0], 2), dtype=int)
-        for j in range(self.nf[1]):
-            for i in range(self.nf[0]):
-
-                # calculate the location
-                x, y = i * self.fstep[0], j * self.fstep[1]
-
-                # shift the location to account for center-aligned tiles
-                x, y = x - self.tsize[0]//2, y - self.tsize[1]//2
-                self.flocs[j][i] = np.array((x, y))
+    # def run_framing(self, )
 
     def run_tiling(self, ffunc, fargs, tfunc, targs):
 
         # define an array to hold the result of each frame analysis
-        arr = np.zeros((self.nf[1] * self.nt[1], self.nf[0] * self.nt[0]),
-                       dtype=np.float)
+        arr = np.zeros((self.nf[0], self.nf[1]), dtype=object)
 
         # load the frames one by one into memory
-        for j in range(self.nf[1]):
-            for i in range(self.nf[0]):
-                frame = self.load_region(self.flocs[j][i],
-                                         pad_color=self.slide_color)
+        for i in range(self.nf[0]):
+            for j in range(self.nf[1]):
+
+                # shift the location to account for center-aligned tiles
+                x = self.flocs[i][j][0] - self.tsize[0]//2
+                y = self.flocs[i][j][1] - self.tsize[1]//2
+                loc = np.array((x, y))
+                # load the frame
+                frame = self.load_region(loc, pad_color=self.slide_color)
 
                 # apply the frame processing
                 frame = ffunc(frame, *fargs)
@@ -106,13 +100,8 @@ class SVSLoader:
                 tiles = self.load_tiles(frame)
 
                 # apply the tile processing
-                y1, x1 = j * self.nt[0], i * self.nt[1]
-                y2, x2 = (j+1) * self.nt[0], (i+1) * self.nt[1]
-                arr[y1:y2, x1:x2] = tfunc(tiles, *targs)
-
-        # crop out the padded portions of the frames
-        w, h = np.rint(self.get_dim() / self.tds).astype(np.int)
-        return arr[:h, :w]
+                arr[i][j] = tfunc(tiles, *targs)
+        return arr
 
     # loads an ROI of the image based on the relative pixel resolution
     # NOTE: this allows any coordinates to be given

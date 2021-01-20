@@ -20,9 +20,9 @@ import imageio as iio
 def gauss_blur(img, sigma=3):
     return gaussian_filter(img, sigma=sigma).astype(np.uint8)
 
-def simple_threshold(img, threshold, x=0, y=1):
-    x = np.full_like(img, x)
-    y = np.full_like(img, y)
+def simple_threshold(img, threshold, lo=0, hi=1):
+    x = np.full_like(img, lo)
+    y = np.full_like(img, hi)
     return np.where(img < threshold, x, y)
 
 # calculates the area of a contour (polygon)
@@ -176,39 +176,6 @@ def mle(means, vars):
         thresholds.append(np.nonzero(p1 > p2)[0][-1] + means[i])
     return thresholds
 
-# finds the tissue in a thresholded image
-def detect_tissue(loader, img, lvl):
-
-    # convert to grayscale and blur
-    gray = rgb_to_gray(img)
-    blur = gauss_blur(gray, 7)
-
-    # find the boundary between tissue and background
-    means, vars = gmm(img, k=2)
-
-    # threshold = mle(means, vars)[0]
-    threshold = means[1] - 1
-
-    # apply the threshold
-    thresh = simple_threshold(blur, threshold, x=1, y=0)
-
-    # get the contours of the image
-    contours = find_contours(loader, thresh, lvl)
-
-    # remove unnecessary detections
-    tissue_contours, hole_contours = filter_contours(contours, 1e6, 1e6)
-
-    # draw the contours on the image
-    img = cv2.drawContours(img, tissue_contours, -1,
-                           (255, 0, 0), thickness=3)
-    img = cv2.drawContours(img, hole_contours, -1,
-                           (255, 0, 0), thickness=3)
-
-    # upscale contours to original resolution
-    tissue_contours = upscale_contours(tissue_contours, loader.get_ds(lvl))
-
-    return tissue_contours, thresh
-
 def detect_wm(loader, nd, tb, tile_ds):
 
     # get the histogram, scale to size of the image
@@ -343,23 +310,72 @@ class StainSeparator:
     #
     # end of class
 
-def run_nd(f, lvl, fsize, fstep, tsize, tstep):
+def run_neuron_density(f, lvl, fsize, fstep, tsize, tstep):
 
+    # initialize the objects
     separator = StainSeparator('H-DAB')
     loader = iio.SVSLoader(f)
     loader.set_lvl(lvl)
+    loader.set_frame_dims(fsize, fstep)
+    loader.set_tile_dims(tsize, tstep)
 
-    loader.init_tiling(fsize, fstep, tsize, tstep)
-
+    # define the framing and tiling functions and arguments
     ffunc = separator.dab_gray
     fargs = []
 
     tfunc = get_neuron_density
     targs = []
 
-    return loader.run_tiling(ffunc, fargs, tfunc, targs)
+    # run the framing and tiling
+    ndf = loader.run_tiling(ffunc, fargs, tfunc, targs)
 
+    # stitch the frame analyses together
+    cols = []
+    for j in range(ndf.shape[1]):
+        cols.append(np.concatenate(ndf[:, j], axis=1))
+    nd = np.concatenate(cols, axis=0)
 
+    # crop out the padded portions of the frames
+    w, h = np.rint(loader.get_dim() / loader.tds).astype(np.int)
+    return nd[:h, :w]
 
+# TODO: need a way to remove area if majority is white, see airbubbles and external tissue fragments
+def run_tissue_detection(f):
+
+    loader = iio.SVSLoader(f)
+
+    # convert thumbnail to grayscale and blur
+    gray = rgb_to_gray(loader.thumbnail)
+    histo = histogram(round_img(gray))
+    blur = gauss_blur(gray, 5)
+
+    # define the threshold as just above the mean tissue color
+    # NOTE: this removes the external tissue surrounding the cortical ribbon
+    m, v = gmm(blur, 2)
+    threshold = int(m[0] + 2*np.sqrt(v[0]))
+
+    # TODO: use threhsold to the left to remove airbubbles and other dark object
+    # apply the threshold based on the color of the slide
+    # threshold = int(np.rint(rgb_to_gray(loader.slide_color))) - 10
+    thresh = simple_threshold(blur, threshold, lo=1, hi=0)
+
+    # get the contours of the thresholded image
+    contours = find_contours(loader, thresh, loader.get_thumbnail_lvl())
+
+    # remove unnecessary detections
+    tissue_contours, hole_contours = filter_contours(contours, 1e6, 1e6)
+
+    # draw the contours on the thumbnail
+    cv2.drawContours(loader.thumbnail, tissue_contours, -1,
+                     (255, 0, 0), thickness=3)
+    cv2.drawContours(loader.thumbnail, hole_contours, -1,
+                     (255, 0, 0), thickness=3)
+
+    # upscale contours to original resolution
+    # NOTE: currently ignoring the holes, need to subtract these from the tissue
+    tissue_contours = upscale_contours(
+        tissue_contours, loader.get_ds(loader.get_thumbnail_lvl()))
+
+    return tissue_contours, thresh, loader.thumbnail, histo, threshold
 #
 # end of file
