@@ -8,13 +8,16 @@ from numpy.linalg import det, inv
 from PIL import Image, ImageFilter
 from scipy.ndimage.filters import gaussian_filter
 from skimage.exposure import rescale_intensity
-from sklearn.cluster import KMeans
 from sklearn.mixture import GaussianMixture
 from scipy.stats import multivariate_normal
+from matplotlib import pyplot as plt
+import seaborn as sns; sns.set()
+
+import imageio as iio
 
 # applies a Gaussian Blur to a PIL Image object
 # TODO: radius should be in terms of an actual neuropath value
-def gauss_blur(img, sigma):
+def gauss_blur(img, sigma=3):
     return gaussian_filter(img, sigma=sigma).astype(np.uint8)
 
 def simple_threshold(img, threshold, x=0, y=1):
@@ -49,7 +52,33 @@ def find_contours(loader, img, lvl=None):
 
         # store data in data structure
         contours.append([c, h, micron_area, 0])
-    return contours, hier
+    return contours
+
+def filter_contours(contours, min_main_area, min_hole_area):
+
+    # find all the main contours
+    # NOTE: contours without a parent and is above the min size
+    for c in contours:
+        if c[1][3] == -1 and c[2] > min_main_area:
+            c[3] = 1
+
+    # find all the holes in the main tissue specimens
+    # NOTE: contours whose parent is a main tissue specimen and is
+    #       above the min hole size
+    # TODO: get an actual good micron^2 value
+    for c in contours:
+        if c[3] != 1 and contours[c[1][3]][3] == 1 and c[2] > min_hole_area:
+            c[3] = -1
+
+    # TODO: currently ignoring all other contours in the hierarchy
+    pass
+
+    # separate out the main contours, and the hole contours
+    # NOTE: ignoring all other contours (these should be background)
+    main_contours = [c[0] for c in contours if c[3] == 1]
+    hole_contours = [c[0] for c in contours if c[3] == -1]
+
+    return main_contours, hole_contours
 
 def upscale_contours(contours, ds):
     for i in range(len(contours)):
@@ -60,7 +89,9 @@ def downscale_contours(contours, ds):
         contours[i] = contours[i].astype(np.float64) / ds
     return contours
 def round_contours(contours):
-    return np.rint(contours).astype(np.int32)
+    for i in range(len(contours)):
+        contours[i] = np.rint(contours[i]).astype(np.int32)
+    return contours
 
 # converts the detections into the contour using the pixel resolution and the relative position of the tile
 def detections_to_contours(loader, detections, loc=None):
@@ -103,15 +134,47 @@ def get_slide_color(img):
     histo = histogram(img)
     return np.tile(np.argmax(histo), 3)
 
-def get_neuron_density(loader, frame, tile_size, tile_step):
-
-    # generate the tiles from the frame
-    tiles = loader.load_tiles(frame, tile_size, tile_step)
+def get_neuron_density(tiles):
 
     # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons
     # calculate the neuron density of each tile
     # NOTE: https://www.kenhub.com/en/library/anatomy/cortical-cytoarchitecture
-    return 1 - (np.sum(tiles, axis=(2, 3)) / (255 * tile_size[0]*tile_size[1]))
+    return round_img(255 - np.mean(tiles, axis=(2, 3)))
+
+
+def gmm(x, k):
+
+     # perform a GMM to find the mean and variances of our distributions
+    gmm = GaussianMixture(n_components=k, covariance_type='full') \
+        .fit(x.flatten()[:, None])
+
+    # get the sorted means and corresponding variances
+    inds = gmm.means_[:, 0].argsort()
+    means = gmm.means_[:, 0][inds]
+    vars = gmm.covariances_[:, 0, 0][inds]
+
+    return np.rint(means).astype(int), vars
+
+
+def mle(means, vars):
+
+    # perform maximum likelihood estimation
+    # NOTE: this is finding the crossing of the PDFs between the means
+    t = np.arange(0, 256, 1)
+    thresholds = []
+    for i in range(means.shape[0]-1):
+
+        # generate the pdfs
+        p1 = multivariate_normal(means[i], vars[i]).pdf(t)
+        p2 = multivariate_normal(means[i+1], vars[i+1]).pdf(t)
+
+        # only evaluate the pdfs between the 2 means
+        p1 = p1.flatten()[means[i]:means[i+1]]
+        p2 = p2.flatten()[means[i]:means[i+1]]
+
+        # find the last x value where p1 is more probable than p2
+        thresholds.append(np.nonzero(p1 > p2)[0][-1] + means[i])
+    return thresholds
 
 # finds the tissue in a thresholded image
 def detect_tissue(loader, img, lvl):
@@ -120,152 +183,62 @@ def detect_tissue(loader, img, lvl):
     gray = rgb_to_gray(img)
     blur = gauss_blur(gray, 7)
 
-    # TODO: detect from histo
+    # find the boundary between tissue and background
+    means, vars = gmm(img, k=2)
+
+    # threshold = mle(means, vars)[0]
+    threshold = means[1] - 1
+
     # apply the threshold
-    threshold = 230
     thresh = simple_threshold(blur, threshold, x=1, y=0)
 
     # get the contours of the image
-    contours, hierarchy = find_contours(loader, thresh, lvl)
+    contours = find_contours(loader, thresh, lvl)
 
-    # find all the main tissue specimens
-    # NOTE: contours without a parent and is above the min tissue size
-    # TODO: get an actual good micron^2 value
-    min_tissue_area = 1e5
-    for c in contours:
-        if c[1][3] == -1 and c[2] > min_tissue_area:
-            c[3] = 1
-
-    # find all the holes in the main tissue specimens
-    # NOTE: contours whose parent is a main tissue specimen and is
-    #       above the min hole size
-    # TODO: get an actual good micron^2 value
-    min_hole_area = 1e6
-    for c in contours:
-        if contours[c[1][3]][3] == 1 and c[2] > min_hole_area:
-            c[3] = -1
-
-    # TODO: currently ignoring all other contours in the hierarchy
-    pass
-
-    # separate out the main tissue contours, and the tissue hole contours
-    # NOTE: ignoring all other contours (these should be background)
-    tissue_contours = [c[0] for c in contours if c[3] == 1]
-    hole_contours = [c[0] for c in contours if c[3] == -1]
+    # remove unnecessary detections
+    tissue_contours, hole_contours = filter_contours(contours, 1e6, 1e6)
 
     # draw the contours on the image
     img = cv2.drawContours(img, tissue_contours, -1,
-                           (0, 0, 0), thickness=3)
+                           (255, 0, 0), thickness=3)
     img = cv2.drawContours(img, hole_contours, -1,
-                           (0, 0, 0), thickness=3)
+                           (255, 0, 0), thickness=3)
 
     # upscale contours to original resolution
     tissue_contours = upscale_contours(tissue_contours, loader.get_ds(lvl))
 
-    return tissue_contours, thresh, img
+    return tissue_contours, thresh
 
-def detect_wm(loader, nd, tb, tissue_contours, tile_ds):
+def detect_wm(loader, nd, tb, tile_ds):
 
-    # downscale tissue contours to the tiled resolution
-    tissue_contours = downscale_contours(
-        tissue_contours, loader.get_ds() * tile_ds)
-    tissue_contours = round_contours(tissue_contours)
+    # get the histogram, scale to size of the image
+    hist = histogram(nd) / (nd.shape[0] * nd.shape[1])
 
-    # mask out the background
-    mask = generate_mask(tissue_contours, nd.shape)
-    nd_tissue = mask_image(nd, mask)
+    # segment the image based on the distribution of colors
+    means, vars = gmm(nd, 3)
+    bg_wm, wm_gm = mle(means, vars)
 
-    # get the histogram, set the background count to zero
-    hist = histogram(nd_tissue)
-    hist[0] = 0
+    # threshold the image for the wm region
+    gm = np.full_like(nd, means[2])
+    thresh = np.where(nd <= bg_wm, np.zeros_like(nd), np.ones_like(nd))
+    thresh = np.where(nd > wm_gm, np.zeros_like(nd), thresh)
 
-    # TODO: can do this before masking and rounding!!
-    # find the boundary between gm and wm
-    gm_wm, means, vars = mle_threshold(nd_tissue)
+    # blur and re-threshold to remove thin strips
+    thresh = gauss_blur(255*thresh, 7)
+    thresh = np.where(thresh>128, np.ones_like(thresh), np.zeros_like(thresh))
 
-    # threshold the image based the on gm/wm boundary
-    # TODO: probably need a K-Means or something... balanced is so weird
-    gm = np.full_like(nd_tissue, 200)
-    nd_thresh = np.where(nd_tissue < gm_wm, nd_tissue, gm)
-    # nd_thresh = simple_threshold(nd_tissue, gm_wm, x=1, y=2)
+    # find the contours of the wm region
+    contours = find_contours(loader, thresh.astype(np.uint8))
 
-    # TODO: how does this work? seems like it might be doing 0 to 1+
-    # TODO: need to blur and/or increase micron size
-    # TODO: need to remove small annotations, fill holes
-    contours, hierachy = find_contours(loader, nd_thresh)
-    contours = [c[0] for c in contours]
+    wm_contours, hole_contours = filter_contours(contours, 1e4, 1e5)
+    wm_contours = upscale_contours(wm_contours, tile_ds)
+    wm_contours = round_contours(wm_contours)
 
-    tb_gm = cv2.drawContours(tb, contours, -1, 0, thickness=3)
+    cv2.drawContours(tb, wm_contours, -1, 0, thickness=3)
 
-    return contours, nd_thresh, tb_gm, hist, gm_wm, means, vars
+    return contours, thresh, hist, wm_gm, means, vars
 
-def mle_threshold(x, k=4):
-
-    # TODO: elbow method to find the true k
-    #        --probably is 4: bckg, wm, lo gm, hi gm
-    # find the initial means of the distributions using KMeans
-    kmeans = KMeans(n_clusters=k).fit(x.flatten()[:, None])
-    means = kmeans.cluster_centers_
-
-    # perform a GMM to find the mean and variances of our distributions
-    gmm = GaussianMixture(n_components=k, means_init=means).fit(x.flatten()[:, None])
-    means = gmm.means_[:, 0]
-    vars = gmm.covariances_[:, 0, 0]
-
-    # get the wm and gm distributions
-    # NOTE: 2nd and 3rd means in an ordered list, 1st is the background
-    inds = means.argsort()[1:3]
-    means = means[inds]
-    vars = vars[inds]
-
-    # perform maximum likelihood estimation, find the crossing of the PDFs
-    t = np.arange(0, 256, 1)
-    p_wm = multivariate_normal(means[0], vars[0]).pdf(t).flatten()
-    p_gm = multivariate_normal(means[1], vars[1]).pdf(t).flatten()
-    threshold = np.nonzero(p_wm > p_gm)[0][-1]
-
-    return threshold, np.rint(means).astype(int), np.rint(vars).astype(int)
-
-def balanced_hist_threshold(x, i_s=0, i_e=255):
-
-    # move start and end points until we hit relevant area of the histo
-    min_color = np.mean(x[i_s:i_e])
-    while x[i_s] < min_color:
-        i_s += 1
-    while x[i_e] < min_color:
-        i_e -= 1
-
-    # find center of histo
-    i_m = int(round((i_s + i_e) / 2))
-
-    # calculate the weights of the left and right sides of the histo
-    w_l = np.sum(x[i_s:i_m])
-    w_r = np.sum(x[i_m:i_e+1])
-
-    # loop until the start and ends meet
-    while i_s < i_e:
-
-        # left side heavier, shift the start up
-        if w_l > w_r:
-            w_l -= x[i_s]
-            i_s += 1
-        # right side heavier, shift the end down
-        else:
-            w_r -= x[i_e]
-            i_e -= 1
-
-        # readjust the weights if the middle changed
-        new_i_m = int(round((i_s + i_e) / 2))
-        if new_i_m < i_m:
-            w_l -= x[i_m]
-            w_r += x[i_m]
-        elif new_i_m > i_m:
-            w_l += x[i_m]
-            w_r -= x[i_m]
-        i_m = new_i_m
-
-    return i_m
-
+# TODO: estimate the stain vector, dont just use the default
 # NOTE: does not support removing dyes yet, ask Claire what this is
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
@@ -306,7 +279,11 @@ class StainSeparator:
         self.stain_to_rgb = stain_v
         self.rgb_to_stain = stain_v_inv
 
-    def run(self, frame, ret=[True, True, True], rescale=True):
+    def dab_gray(self, frame):
+        _, dab, _ = self.run(frame, ret=(False, True, False), rescale=False)
+        return rgb_to_gray(dab)
+
+    def run(self, frame, ret=[True, True, True], rescale=False):
         s1, s2, s3 = None, None, None
 
         # separate the stains, convert from rgb to stains
@@ -366,7 +343,21 @@ class StainSeparator:
     #
     # end of class
 
+def run_nd(f, lvl, fsize, fstep, tsize, tstep):
 
+    separator = StainSeparator('H-DAB')
+    loader = iio.SVSLoader(f)
+    loader.set_lvl(lvl)
+
+    loader.init_tiling(fsize, fstep, tsize, tstep)
+
+    ffunc = separator.dab_gray
+    fargs = []
+
+    tfunc = get_neuron_density
+    targs = []
+
+    return loader.run_tiling(ffunc, fargs, tfunc, targs)
 
 
 

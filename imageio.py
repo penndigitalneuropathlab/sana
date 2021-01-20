@@ -4,9 +4,7 @@ import json
 import struct
 import numpy as np
 import openslide
-
-# default frame size, should be around 100 MB in memory
-DEF_FRAME_SIZE = np.array((2000, 2000))
+import imageproc as iproc
 
 def get_fullpath(f):
     return os.path.abspath(os.path.expanduser(f))
@@ -29,6 +27,15 @@ class SVSLoader:
         self.mpp = float(self.svs.properties['aperio.MPP'])
         self.props = self.svs.properties
 
+        self.thumbnail = self.load_thumbnail()
+        self.slide_color = iproc.get_slide_color(self.thumbnail)
+
+    # specifies the dimensions of frame (pixels) and tiles (microns)
+    def init_tiling(self, fsize, fstep, tsize, tstep):
+        self.set_frame_dims(fsize, fstep)
+        self.set_tile_dims(tsize, tstep)
+        self.set_frame_locs()
+
     # getters
     def get_dim(self, lvl=None):
         if lvl is None:
@@ -40,10 +47,6 @@ class SVSLoader:
             lvl = self.lvl
         return self.ds[lvl]
 
-    # setters
-    def set_lvl(self, lvl):
-        self.lvl = lvl
-
     # gets the highest and lowest resolution levels
     # NOTE: highest might always be level 0 and lowest might be level -1
     def get_thumbnail_lvl(self):
@@ -51,32 +54,65 @@ class SVSLoader:
     def get_original_lvl(self):
         return np.argmin(self.ds)
 
-    def load_thumbnail(self):
-        lvl = self.get_thumbnail_lvl()
-        loc = np.array((0,0))
-        size = self.get_dim(lvl)
-        return self.load_region(loc, size, lvl)
+    # setters
+    def set_lvl(self, lvl):
+        self.lvl = lvl
 
-    def get_ntiles(self, tile_size, tile_step, frame_size):
-        return ((frame_size - tile_size) // tile_step) + 1
-
-    def get_frame_locs(self, frame_size, frame_step, tile_size):
+    def set_frame_dims(self, size, step):
+        self.fsize = size
+        self.fstep = step
 
         # calculate the numbers of frames in the image
-        nx, ny = (self.get_dim() // frame_step) + 1
+        self.nf = (self.get_dim() // self.fstep) + 1
+        self.fds = self.get_dim() / self.nf
+
+    def set_tile_dims(self, size, step):
+        self.tsize = self.micron_to_px(size)
+        self.tstep = self.micron_to_px(step)
+        self.fpad = self.tsize - 1
+        self.nt = ((self.fsize + self.fpad - self.tsize) // self.tstep) + 1
+        self.tds = self.fsize / self.nt
+
+    def set_frame_locs(self):
 
         # define the location of the frames
-        locs = np.zeros((nx, ny, 2), dtype=int)
-        for i in range(nx):
-            for j in range(ny):
+        self.flocs = np.zeros((self.nf[1], self.nf[0], 2), dtype=int)
+        for j in range(self.nf[1]):
+            for i in range(self.nf[0]):
 
                 # calculate the location
-                x, y = i * frame_step[0], j * frame_step[1]
+                x, y = i * self.fstep[0], j * self.fstep[1]
 
                 # shift the location to account for center-aligned tiles
-                x, y = x - tile_size[0]//2, y - tile_size[1]//2
-                locs[i][j] = np.array((x, y))
-        return locs
+                x, y = x - self.tsize[0]//2, y - self.tsize[1]//2
+                self.flocs[j][i] = np.array((x, y))
+
+    def run_tiling(self, ffunc, fargs, tfunc, targs):
+
+        # define an array to hold the result of each frame analysis
+        arr = np.zeros((self.nf[1] * self.nt[1], self.nf[0] * self.nt[0]),
+                       dtype=np.float)
+
+        # load the frames one by one into memory
+        for j in range(self.nf[1]):
+            for i in range(self.nf[0]):
+                frame = self.load_region(self.flocs[j][i],
+                                         pad_color=self.slide_color)
+
+                # apply the frame processing
+                frame = ffunc(frame, *fargs)
+
+                # generate the tiles from the frame
+                tiles = self.load_tiles(frame)
+
+                # apply the tile processing
+                y1, x1 = j * self.nt[0], i * self.nt[1]
+                y2, x2 = (j+1) * self.nt[0], (i+1) * self.nt[1]
+                arr[y1:y2, x1:x2] = tfunc(tiles, *targs)
+
+        # crop out the padded portions of the frames
+        w, h = np.rint(self.get_dim() / self.tds).astype(np.int)
+        return arr[:h, :w]
 
     # loads an ROI of the image based on the relative pixel resolution
     # NOTE: this allows any coordinates to be given
@@ -84,9 +120,13 @@ class SVSLoader:
     #        2) if size is bigger than image, we decrease size
     #        3) a padded rectangle will be added to top/bottom/left/right using
     #             the given color
-    def load_region(self, loc, size, lvl=None, pad_color=(255, 255, 255)):
+    def load_region(self, loc, size=None, lvl=None, pad_color=None):
+        if size is None:
+            size = self.fsize + self.fpad
         if lvl is None:
             lvl = self.lvl
+        if pad_color is None:
+            pad_color = (255, 255, 255)
 
         size = np.copy(size)
         h, w = self.get_dim(lvl)
@@ -128,32 +168,35 @@ class SVSLoader:
 
         return img
 
-    def load_tiles(self, frame, tile_size, tile_step):
-
-        # get the number of rows and cols of tiles
-        ncols, nrows = self.get_ntiles(tile_size, tile_step, frame.shape[:2])
+    def load_tiles(self, frame):
 
         # define the shape output
         shape = (
-            ncols,
-            nrows,
-            tile_size[1],
-            tile_size[0],
+            self.nt[0],
+            self.nt[1],
+            self.tsize[0],
+            self.tsize[1],
         )
 
         # define the stride lengths in each dimension
         N = frame.itemsize
         strides = (
-            N * frame.shape[1] * tile_step[1], # N bytes between tile rows
-            N * tile_step[0],                  # N bytes between tile cols
-            N * frame.shape[1],                # N bytes between element rows
-            N * 1,                             # N bytes between element cols
+            N * frame.shape[1] * self.tstep[1], # N bytes between tile rows
+            N * self.tstep[0],                  # N bytes between tile cols
+            N * frame.shape[1],                 # N bytes between element rows
+            N * 1,                              # N bytes between element cols
         )
         # perform the tiling
         # NOTE: this is pretty complicated... but very fast
         #       23) in this article -> https://towardsdatascience.com/advanced-numpy-master-stride-tricks-with-25-illustrated-exercises-923a9393ab20
         return np.lib.stride_tricks.as_strided(
             frame, shape=shape, strides=strides)
+
+    def load_thumbnail(self):
+        lvl = self.get_thumbnail_lvl()
+        loc = np.array((0,0))
+        size = self.get_dim(lvl)
+        return self.load_region(loc, size, lvl)
 
     # scales a pixel value to the original pixel resolution
     def upscale_px(self, px, lvl=None, order=1):
@@ -170,14 +213,14 @@ class SVSLoader:
     def px_to_micron(self, px, lvl=None, order=1):
         if lvl is None:
             lvl = self.lvl
-        px = self.upscale_px(px, lvl)
+        px = self.upscale_px(px, lvl, order)
         return px * self.mpp**order
     # converts micron to pixel, downscales to relative pixel resolution
     def micron_to_px(self, micron, lvl=None, order=1):
         if lvl is None:
             lvl = self.lvl
         px = micron / self.mpp**order
-        return self.downscale_px(px, lvl)
+        return self.downscale_px(px, lvl, order)
 #
 # end of class
 
