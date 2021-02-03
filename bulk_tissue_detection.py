@@ -33,7 +33,8 @@ def main(argv):
     for ifile, ofile in zip(ifiles, ofiles):
 
         # TODO: write the tissue contours to a json file
-        tissue_contours, _, img, _, _ = iproc.run_tissue_detection(ifile)
+        loader = iio.SVSLoader(ifile)
+        tissue_contours, _, img, _, _ = iproc.run_tissue_detection(loader)
 
         # plotting...
         fig, axs = plt.subplots()

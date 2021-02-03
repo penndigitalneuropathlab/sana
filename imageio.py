@@ -52,30 +52,36 @@ class SVSLoader:
     def set_lvl(self, lvl):
         self.lvl = lvl
 
-    def set_frame_dims(self, size, step):
-        self.fsize = size
-        self.fstep = step
-
-        # calculate the numbers of frames in the image
-        self.nf = (self.get_dim() // self.fstep) + 1
-        self.fds = self.get_dim() / self.nf
+    def set_frame_dims(self, size, step, flocs=None):
+        self.fsize = np.rint(size).astype(np.int)
+        self.fstep = np.rint(step).astype(np.int)
 
         # define the location of the frames
-        self.flocs = np.zeros((self.nf[0], self.nf[1], 2), dtype=int)
-        for i in range(self.nf[0]):
-            for j in range(self.nf[1]):
-                x, y = i * self.fstep[0], j * self.fstep[1]
-                self.flocs[i][j] = np.array((x, y))
+        if flocs is None:
 
+            # calculate the numbers of frames in the image
+            self.nf = (self.get_dim() // self.fstep) + 1
+            self.fds = self.get_dim() / self.nf
+
+            self.flocs = np.zeros((self.nf[0], self.nf[1], 2), dtype=int)
+            for i in range(self.nf[0]):
+                for j in range(self.nf[1]):
+                    x, y = i * self.fstep[0], j * self.fstep[1]
+                    self.flocs[i][j] = np.array((x, y))
+        else:
+            self.nf = flocs.shape[0] + flocs.shape[1]
+            self.fds = self.get_dim() / self.nf
+            self.flocs = flocs
 
     def set_tile_dims(self, size, step):
         self.tsize = self.micron_to_px(size)
         self.tstep = self.micron_to_px(step)
         self.fpad = self.tsize - 1
-        self.nt = ((self.fsize + self.fpad - self.tsize) // self.tstep) + 1
-        self.tds = self.fsize / self.nt
 
-    # def run_framing(self, )
+    def get_tile_count(self, fsize):
+        nt = ((fsize + self.fpad - self.tsize) // self.tstep) + 1
+        tds = fsize / nt
+        return nt, tds
 
     def run_tiling(self, ffunc, fargs, tfunc, targs):
 
@@ -90,6 +96,7 @@ class SVSLoader:
                 x = self.flocs[i][j][0] - self.tsize[0]//2
                 y = self.flocs[i][j][1] - self.tsize[1]//2
                 loc = np.array((x, y))
+
                 # load the frame
                 frame = self.load_region(loc, pad_color=self.slide_color)
 
@@ -159,10 +166,13 @@ class SVSLoader:
 
     def load_tiles(self, frame):
 
+        fsize = np.array((frame.shape[1], frame.shape[0])) - self.fpad
+        nt, tds = self.get_tile_count(fsize)
+        print(frame.shape, fsize, nt, self.tsize, self.tstep, self.fpad)
         # define the shape output
         shape = (
-            self.nt[0],
-            self.nt[1],
+            nt[0],
+            nt[1],
             self.tsize[0],
             self.tsize[1],
         )
@@ -170,8 +180,8 @@ class SVSLoader:
         # define the stride lengths in each dimension
         N = frame.itemsize
         strides = (
-            N * frame.shape[1] * self.tstep[1], # N bytes between tile rows
-            N * self.tstep[0],                  # N bytes between tile cols
+            N * frame.shape[1] * self.tstep[0], # N bytes between tile rows
+            N * self.tstep[1],                  # N bytes between tile cols
             N * frame.shape[1],                 # N bytes between element rows
             N * 1,                              # N bytes between element cols
         )
@@ -210,6 +220,7 @@ class SVSLoader:
             lvl = self.lvl
         px = micron / self.mpp**order
         return self.downscale_px(px, lvl, order)
+
 #
 # end of class
 
@@ -259,18 +270,51 @@ def read_tissue_detections(ifname, dname):
 
     return tissue_detections
 
+# TODO: this should be in GeoJSON format, use that library
 # NOTE: currently only handles a single polygon annotation
-def read_qupath_annotations(ifname, dname):
+def read_qupath_annotations(ifname):
+
+    fix_json(ifname)
 
     # prepare the input file
-    ifname = get_fullpath(ifname) \
-            .replace('images', dname) \
-            .replace('.svs', '.json')
     fp = open(ifname, 'r')
 
-    # TODO: not sure what this header is
-    # fp.seek(7)
     data = json.loads(fp.read())
 
-    annotation = data[0]['geometry']['coordinates'][0]
-    return annotation
+    # TODO: handle the multipolygon better than this, why is there sometimes 2 sets of coords
+    annotations = []
+    for annotation in data:
+        geo = annotation['geometry']
+        if geo['type'] == 'MultiPolygon':
+            coords_list = geo['coordinates']
+            for coords in coords_list:
+                x = np.array([float(c[0]) for c in coords[0]])
+                y = np.array([float(c[1]) for c in coords[0]])
+                area = iproc.calc_area(x, y)
+                if area > 5000:
+                    annotations.append(np.array(coords[0]))
+        elif geo['type'] == 'Polygon':
+            coords = geo['coordinates']
+            x = np.array([float(c[0]) for c in coords[0]])
+            y = np.array([float(c[1]) for c in coords[0]])
+            area = iproc.calc_area(x, y)
+            if area > 5000:
+                annotations.append(np.array(coords[0]).astype(float))
+
+    return annotations
+
+def fix_json(ifname):
+    fp = open(ifname, 'rb')
+    header = fp.read(7)
+    if header == bytes([172, 237, 0, 5, 116, 4, 249]):
+        data = fp.read()
+        fp.close()
+        fp = open(ifname, 'wb')
+        fp.write(data)
+        fp.close()
+
+
+
+
+#
+# end of file

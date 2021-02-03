@@ -3,8 +3,12 @@
 #        Image to array and vice versa can't be efficient
 import os
 import cv2
+import math
 import numpy as np
+from PIL import Image
 from numpy.linalg import det, inv
+from numpy import sin, cos, sqrt, pi
+
 from PIL import Image, ImageFilter
 from scipy.ndimage.filters import gaussian_filter
 from skimage.exposure import rescale_intensity
@@ -12,6 +16,7 @@ from sklearn.mixture import GaussianMixture
 from scipy.stats import multivariate_normal
 from matplotlib import pyplot as plt
 import seaborn as sns; sns.set()
+from shapely.geometry import Polygon
 
 import imageio as iio
 
@@ -30,7 +35,18 @@ def simple_threshold(img, threshold, lo=0, hi=1):
 def calc_contour_area(contour):
     x = np.array([float(v[0][0]) for v in contour])
     y = np.array([float(v[0][1]) for v in contour])
-    return 0.5*np.abs(np.dot(x,np.roll(y,1))-np.dot(y,np.roll(x,1)))
+    return calc_area(x, y)
+
+def calc_area(x, y):
+    x0, x1, y0, y1 = x, np.roll(x,1), y, np.roll(y,1)
+    return 0.5*np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+
+def calc_centroid(x, y):
+    A = calc_area(x, y)
+    x0, x1, y0, y1 = x, np.roll(x,1), y, np.roll(y,1)
+    cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
+    cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
+    return np.array((cx, cy))
 
 # finds the contours of a thresholded image
 # TODO: is chain approx simple sufficient? seems like it just saves mem
@@ -118,11 +134,11 @@ def norm(v):
         return v
 
 # creates an image mask based on the given detections
-def generate_mask(contours, size):
+def generate_mask(contours, size, x=0, y=255):
 
     # draw the contours, inside detections stays white, outside turns black
-    return cv2.drawContours(np.full(size, 0, dtype=np.uint8),
-                            contours, -1, 255, -1)
+    return cv2.drawContours(np.full(size, x, dtype=np.uint8),
+                            contours, -1, y, -1)
 
 # applies the mask to the image, non-mask areas turn black
 def mask_image(img, mask):
@@ -134,6 +150,11 @@ def get_slide_color(img):
     histo = histogram(img)
     return np.tile(np.argmax(histo), 3)
 
+# TODO: blur and threshold the image so it's just the DAB spots,
+#        this way the color of the background cannot affect the analysis
+#        can then count neurons, check sizes, shapes, etc.
+#        --Should probably add a step after stain separation for thresholding
+#             -- this would almost definitely need to be level 1 or 0
 def get_neuron_density(tiles):
 
     # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons
@@ -175,35 +196,6 @@ def mle(means, vars):
         # find the last x value where p1 is more probable than p2
         thresholds.append(np.nonzero(p1 > p2)[0][-1] + means[i])
     return thresholds
-
-def detect_wm(loader, nd, tb, tile_ds):
-
-    # get the histogram, scale to size of the image
-    hist = histogram(nd) / (nd.shape[0] * nd.shape[1])
-
-    # segment the image based on the distribution of colors
-    means, vars = gmm(nd, 3)
-    bg_wm, wm_gm = mle(means, vars)
-
-    # threshold the image for the wm region
-    gm = np.full_like(nd, means[2])
-    thresh = np.where(nd <= bg_wm, np.zeros_like(nd), np.ones_like(nd))
-    thresh = np.where(nd > wm_gm, np.zeros_like(nd), thresh)
-
-    # blur and re-threshold to remove thin strips
-    thresh = gauss_blur(255*thresh, 7)
-    thresh = np.where(thresh>128, np.ones_like(thresh), np.zeros_like(thresh))
-
-    # find the contours of the wm region
-    contours = find_contours(loader, thresh.astype(np.uint8))
-
-    wm_contours, hole_contours = filter_contours(contours, 1e4, 1e5)
-    wm_contours = upscale_contours(wm_contours, tile_ds)
-    wm_contours = round_contours(wm_contours)
-
-    cv2.drawContours(tb, wm_contours, -1, 0, thickness=3)
-
-    return contours, thresh, hist, wm_gm, means, vars
 
 # TODO: estimate the stain vector, dont just use the default
 # NOTE: does not support removing dyes yet, ask Claire what this is
@@ -310,14 +302,10 @@ class StainSeparator:
     #
     # end of class
 
-def run_neuron_density(f, lvl, fsize, fstep, tsize, tstep):
+def run_neuron_density(loader):
 
     # initialize the objects
     separator = StainSeparator('H-DAB')
-    loader = iio.SVSLoader(f)
-    loader.set_lvl(lvl)
-    loader.set_frame_dims(fsize, fstep)
-    loader.set_tile_dims(tsize, tstep)
 
     # define the framing and tiling functions and arguments
     ffunc = separator.dab_gray
@@ -339,13 +327,27 @@ def run_neuron_density(f, lvl, fsize, fstep, tsize, tstep):
     w, h = np.rint(loader.get_dim() / loader.tds).astype(np.int)
     return nd[:h, :w]
 
-# TODO: need a way to remove area if majority is white, see airbubbles and external tissue fragments
-def run_tissue_detection(f):
+def run_layer_segmentation(loader, frots):
 
-    loader = iio.SVSLoader(f)
+    # initalize the objects
+    separator = StainSeparator('H-DAB')
+
+    # define the framing and tiling functions and arguments
+    ffunc = separator.dab_gray
+    fargs = []
+
+    tfunc = get_neuron_density
+    targs = []
+
+    # run the framing and tiling
+    ndf = loader.run_tiling(ffunc, fargs, tfunc, targs, frots)
+
+# TODO: need a way to remove area if majority is white, see airbubbles and external tissue fragments
+def run_tissue_detection(loader):
+    thumbnail = np.copy(loader.thumbnail)
 
     # convert thumbnail to grayscale and blur
-    gray = rgb_to_gray(loader.thumbnail)
+    gray = rgb_to_gray(thumbnail)
     histo = histogram(round_img(gray))
     blur = gauss_blur(gray, 5)
 
@@ -363,19 +365,172 @@ def run_tissue_detection(f):
     contours = find_contours(loader, thresh, loader.get_thumbnail_lvl())
 
     # remove unnecessary detections
-    tissue_contours, hole_contours = filter_contours(contours, 1e6, 1e6)
+    tissue_contours, hole_contours = filter_contours(contours, 1e7, 1e6)
 
     # draw the contours on the thumbnail
-    cv2.drawContours(loader.thumbnail, tissue_contours, -1,
-                     (255, 0, 0), thickness=3)
-    cv2.drawContours(loader.thumbnail, hole_contours, -1,
-                     (255, 0, 0), thickness=3)
+    # cv2.drawContours(thumbnail, tissue_contours, -1,
+    #                  (0, 0, 0), thickness=3)
+    # cv2.drawContours(thumbnail, hole_contours, -1,
+    #                  (0, 0, 0), thickness=3)
 
     # upscale contours to original resolution
     # NOTE: currently ignoring the holes, need to subtract these from the tissue
-    tissue_contours = upscale_contours(
-        tissue_contours, loader.get_ds(loader.get_thumbnail_lvl()))
+    upscale_contours(tissue_contours, loader.get_ds(loader.get_thumbnail_lvl()))
 
-    return tissue_contours, thresh, loader.thumbnail, histo, threshold
+    return tissue_contours, thresh, thumbnail, histo, threshold
+
+def get_bg_fg_mask(thumbnail):
+
+    # convert thumbnail to grayscale and blur
+    gray = rgb_to_gray(thumbnail)
+    histo = histogram(round_img(gray))
+    blur = gauss_blur(gray, 5)
+
+    # define the threshold as just above the mean tissue color
+    # NOTE: this removes the external tissue surrounding the cortical ribbon
+    m, v = gmm(blur, 2)
+    threshold = int(m[0] + 2*np.sqrt(v[0]))
+
+    # TODO: use threhsold to the left to remove airbubbles and other dark object
+    # apply the threshold based on the color of the slide
+    # threshold = int(np.rint(rgb_to_gray(loader.slide_color))) - 10
+    return simple_threshold(blur, threshold, lo=1, hi=0)
+
+def run_wm_detection(loader, nd, tb, tc):
+
+    # scale the tissue contours to the current dimension
+    round_contours(downscale_contours(tc, loader.get_ds() * loader.tds))
+
+    # apply the tissue mask to the neuron density
+    tc_mask = generate_mask(tc, (nd.shape[0], nd.shape[1]))
+    nd = mask_image(nd, tc_mask)
+
+    # get the histogram, scale to size of the image
+    hist = histogram(nd) / (nd.shape[0] * nd.shape[1])
+
+    # segment the image based on the distribution of colors
+    means, vars = gmm(nd, 3)
+    bg_wm, wm_gm = mle(means, vars)
+
+    # threshold the image for the wm region
+    thresh = np.where(nd <= bg_wm, np.zeros_like(nd), np.ones_like(nd))
+    thresh = np.where(nd > wm_gm, np.zeros_like(nd), thresh)
+
+    # TODO: use these instead of bluring to remove layer 1 strips in wm
+    # TODO: do the same to tissue and GM
+    # TODO: smoothing is affecting low separation tissues
+    # https://gasparesganga.com/labs/postgis-normalize-geometry/
+    # https://gis.stackexchange.com/questions/317208/removing-narrow-polygon-dangles
+    # blur and re-threshold to remove thin strips
+    thresh = gauss_blur(255*thresh, 3)
+    thresh = np.where(thresh>128, np.ones_like(thresh), np.zeros_like(thresh))
+
+    # find the contours of the wm region
+    contours = find_contours(loader, thresh.astype(np.uint8))
+
+    # remove unwanted contours
+    wm_contours, hole_contours = filter_contours(contours, 1e5, 1e5)
+
+    # upscale the contours back to original pixel resolution
+    round_contours(upscale_contours(wm_contours, loader.tds))
+    round_contours(upscale_contours(tc, loader.tds))
+
+    # cv2.drawContours(tb, wm_contours, -1, (255, 0, 0), thickness=3)
+
+    return wm_contours, hist, [bg_wm, wm_gm], means, vars
+
+def run_gm_detection(loader, nd, tb, tissue_contours, wm_contours):
+
+    # downscale the input contours to create masks
+    tc = round_contours(downscale_contours(tissue_contours, loader.tds))
+    wc = round_contours(downscale_contours(wm_contours, loader.tds))
+
+    # keep all tissue, and remove all the wm
+    tc_mask = generate_mask(tc, (nd.shape[0], nd.shape[1]), x=0, y=255)
+    wc_mask = generate_mask(wc, (nd.shape[0], nd.shape[1]), x=255, y=0)
+    nd = mask_image(nd, tc_mask)
+    nd = mask_image(nd, wc_mask)
+
+    # threshold and get the contours
+    thresh = np.where(nd > 0, np.ones_like(nd), np.zeros_like(nd))
+    contours = find_contours(loader, thresh.astype(np.uint8))
+
+    # remove unwanted contours
+    gm_contours, hole_contours = filter_contours(contours, 1e5, 1e5)
+
+    # upscale the contours back to original pixel resolution
+    round_contours(upscale_contours(wm_contours, loader.tds))
+    round_contours(upscale_contours(gm_contours, loader.tds))
+    round_contours(upscale_contours(tissue_contours, loader.tds))
+
+    # draw the contours onto the thumbnail
+    cv2.drawContours(tb, gm_contours, -1, (0, 0, 255), thickness=3)
+
+    return gm_contours
+
+# calculates the angle of rotation (degrees) given 2 coordinates forming a line
+def find_angle(a, b):
+    return np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
+
+# rotates a point around the origin by the angle in radians
+def rotate_point(origin, point, angle):
+    ox, oy = origin
+    px, py = point
+    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+    return np.array((qx, qy))
+
+# TODO: provide a frame to this as well, and just check if the bounding box fits in the frame
+def run_crop_rectangle(loader, rect):
+
+    # get the orthogonal bounding box
+    rect = np.array(rect)
+    upper_left = np.min(rect, axis=0)
+    lower_right = np.max(rect, axis=0)
+
+    # define the location and size to read from the image
+    loc = np.array(upper_left)
+    size = np.array((lower_right[0] - loc[0], lower_right[1] - loc[1]))
+
+    loc = np.rint(loc).astype(np.int)
+    size = np.rint(size).astype(np.int)
+
+    # load the bounding box image region of the annotation
+    image = loader.load_region(loc, size)
+
+    # find the center of the image
+    center = [size[0]//2, size[1]//2]
+
+    # shift the rectangle annotation to the relative position
+    rect[:, 0] -= loc[0]
+    rect[:, 1] -= loc[1]
+
+    # find the rectangle's angle of rotation
+    a, b = (rect[0][0], rect[0][1]), (rect[1][0], rect[1][1])
+    angle = find_angle(a, b)
+    angle -= 90 * (angle//90)
+
+    # rotate the image by the angle of rotation
+    image_rot = Image.fromarray(image).rotate(angle)
+
+    # rotate the rectangle by the angle of rotation
+    # NOTE: this function rotates counter-clockwise, so negative angle is used
+    th = math.radians(-angle)
+    rot_rect = [np.rint(rotate_point(center, rect[i], th)).astype(int) \
+         for i in range(rect.shape[0])]
+    rot_rect = np.array(sorted(rot_rect, key=lambda x: (x[0], x[1])) )
+
+    # crop the image
+    left, upper = np.min(rot_rect, axis=0)
+    right, lower = np.max(rot_rect, axis=0)
+    image_crop = image_rot.crop((left, upper, right, lower))
+
+    return image_crop
+
+
+
+
+
+
 #
 # end of file

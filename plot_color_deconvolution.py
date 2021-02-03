@@ -3,6 +3,7 @@ import os
 import sys
 import numpy as np
 from matplotlib import pyplot as plt
+import seaborn as sns; sns.set()
 import imageio as iio
 import imageproc as iproc
 
@@ -55,7 +56,7 @@ def plot(name, f, lvl, loc=None, size=None):
     for a in ax.ravel():
         a.axis('off')
     fig.tight_layout()
-    plt.savefig(iio.get_fullpath(name))
+    plt.savefig(iio.get_fullpath(name), dpi=500)
 
 if __name__ == "__main__":
     main(sys.argv)

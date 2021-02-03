@@ -22,8 +22,9 @@ def main(argv):
 
 def plot(name, f):
 
+    loader = iio.SVSLoader(f)
     tissue_contours, thresholded, ts_detected, histo, ts_bg = \
-        iproc.run_tissue_detection(f)
+        iproc.run_tissue_detection(loader)
 
     # plotting...
     fig = plt.figure(constrained_layout=True)

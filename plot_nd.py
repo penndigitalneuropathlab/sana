@@ -33,8 +33,11 @@ def main(argv):
     fstep = np.copy(fsize)
     nds = []
     for tsize, tstep in zip(tsizes, tsteps):
-        nds.append(iproc.run_nd(f, lvl, fsize, fstep, tsize, tstep))
-
+        loader = iio.SVSLoader(f)
+        loader.set_lvl(lvl)
+        loader.set_frame_dims(fsize, fstep)
+        loader.set_tile_dims(tsize, tstep)
+        nds.append(iproc.run_neuron_density(loader))
 
     fname = NAME % "Neuron_Density_Tile_Sizes"
 
