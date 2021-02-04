@@ -34,8 +34,8 @@ def main(argv):
     loader = iio.SVSLoader(f)
     loader.set_lvl(lvl)
 
-    # get a mask defining the location of background and foreground
-    tissue_mask = iproc.get_bg_fg_mask(np.copy(loader.thumbnail))
+    # get the threshold for masking the tissue
+    tissue_threshold = iproc.get_tissue_threshold(loader.thumbnail)
 
     # load the annotations
     annos = iio.read_qupath_annotations(a)
@@ -60,35 +60,48 @@ def main(argv):
         tsize = np.array((75, 75))
         tstep = np.array((10, 10))
         loader.set_tile_dims(tsize, tstep)
-        nd, sig = run_layer_segmentation(loader, tissue_mask, anno, centroid, r)
+        nd, sig, nm = run_layer_segmentation(loader, tissue_threshold, anno, centroid, r)
         nds.append(nd)
         sigs.append(sig)
 
-        tsize = np.array((10, 100))
+        tsize = np.array((50, 500))
         tstep = np.array((10, 10))
         loader.set_tile_dims(tsize, tstep)
-        nd, sig = run_layer_segmentation(loader, tissue_mask, anno, centroid, r)
+        nd, sig, nm = run_layer_segmentation(loader, tissue_threshold, anno, centroid, r)
         nds.append(nd)
         sigs.append(sig)
 
         fig = plt.figure(constrained_layout=True)
-        gs = fig.add_gridspec(2, 2)
+        gs = fig.add_gridspec(3, 2)
         for i in range(2):
-            ax = fig.add_subplot(gs[0, i])
-            ax.imshow(nds[i].T, cmap='coolwarm')
-            ax.grid(False)
-            ax.set_xticks([])
-            ax.set_yticks([])
-            ax.set_aspect('equal')
-            ax.set_xlim([0, nds[i].T.shape[1]])
-            ax.set_ylim([nds[i].T.shape[0], 0])
-        for i in range(2):
-            ax = fig.add_subplot(gs[1, i])
-            ax.plot(sigs[i], color='black')
-            ax.set_xlim([0, sigs[i].shape[0]])
+            ax1 = fig.add_subplot(gs[0, i])
+            ax1.imshow(nds[i].T, cmap='coolwarm')
+            ax1.grid(False)
+            ax1.set_xticks([])
+            ax1.set_yticks([])
+            ax1.set_aspect('equal')
+            ax1.set_xlim([0, nds[i].T.shape[1]])
+            ax1.set_ylim([nds[i].T.shape[0], 0])
+
+            ax2 = fig.add_subplot(gs[1, i])
+            ax2.plot(sigs[i], color='black')
+            ax2.set_xlim([0, sigs[i].shape[0]])
+            ax2.set_xlabel('Cortical Depth')
+            ax2.set_ylabel('Neuron Density')
+            ax2.set_xticks([])
+            ax1.get_shared_x_axes().join(ax1, ax2)
+
+        ax3 = fig.add_subplot(gs[2, :])
+        ax3.imshow(nm, cmap='coolwarm')
+        ax3.grid(False)
+        ax3.set_xticks([])
+        ax3.set_yticks([])
+        ax3.set_aspect('equal')
+        ax3.set_xlim([0, nm.T.shape[1]])
+        ax3.set_ylim([nm.T.shape[0], 0])
         plt.show()
 
-def run_layer_segmentation(loader, tissue_mask, anno, centroid, r):
+def run_layer_segmentation(loader, tissue_threshold, anno, centroid, r):
 
     # define the frame size and location based on the centroid and radius
     floc = np.rint(centroid - r).astype(np.int)
@@ -101,8 +114,8 @@ def run_layer_segmentation(loader, tissue_mask, anno, centroid, r):
     # load the frame region
     frame = loader.load_region(floc, fsize)
 
-    # shift mask to the relative position
-    mask = tissue_mask[floc[1]:floc[1]+fsize[1], floc[0]:floc[0]+fsize[0]]
+    # generate the tissue mask using the pre-calculated threshold
+    tissue_mask = iproc.get_tissue_mask(frame, tissue_threshold)
 
     # shift the annotation to relative position and account for
     #  center aligned tiles
@@ -111,7 +124,7 @@ def run_layer_segmentation(loader, tissue_mask, anno, centroid, r):
 
     # find the contour of the pial boundary
     contours = cv2.findContours(
-        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
+        tissue_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
 
     # get the vertices of the contours within the annotation
     layer0 = []
@@ -140,19 +153,22 @@ def run_layer_segmentation(loader, tissue_mask, anno, centroid, r):
         iproc.rotate_point(centroid, anno[i], th)).astype(int) \
                          for i in range(anno.shape[0])])
 
+    # generate the rotated tissue mask using the pre-calculated threshold
+    tissue_mask_rot = iproc.get_tissue_mask(frame_rot, tissue_threshold)
 
-    separator = iproc.StainSeparator('H-DAB')
-    dab = separator.dab_gray(frame_rot)
+    neuron_mask = iproc.get_neuron_mask(frame_rot, tissue_mask_rot, blur=1)
 
-    tiles = loader.load_tiles(dab)
+    tiles = loader.load_tiles(neuron_mask)
 
+    # TODO: cannot do a rectangle region. it is way too imprecise
     nd = iproc.get_neuron_density(tiles)
-    # nd = nd[:, 200:250]
-    sig = np.mean(nd, axis=1)
+    nd = nd[:, 250:600]
+    sig = np.mean(nd[:, 100:200], axis=1)
+    sig -= np.min(sig)
 
-    return nd, sig
+    return nd[:, 100:200], sig, 255-neuron_mask
 
-def plot_rotation(frame, anno, centroid, r, mask, tissx, tissy, frame_rot, anno_rot):
+def plot_rotation(frame, anno, centroid, r, tissue_mask, tissx, tissy, frame_rot, anno_rot):
 
     fig = plt.figure(constrained_layout=True)
     gs = fig.add_gridspec(1, 3)
@@ -170,7 +186,7 @@ def plot_rotation(frame, anno, centroid, r, mask, tissx, tissy, frame_rot, anno_
     # plot the tissue mask, with the detected line of best fit
     ax = fig.add_subplot(gs[0, 1])
     axs.append(ax)
-    ax.imshow(mask)
+    ax.imshow(tissue_mask)
     ax.plot(tissx, tissy, color='red')
 
     # plot the rotated image and annotation

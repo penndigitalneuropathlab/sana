@@ -25,9 +25,11 @@ import imageio as iio
 def gauss_blur(img, sigma=3):
     return gaussian_filter(img, sigma=sigma).astype(np.uint8)
 
-def simple_threshold(img, threshold, lo=0, hi=1):
-    x = np.full_like(img, lo)
-    y = np.full_like(img, hi)
+def simple_threshold(img, threshold, x, y):
+    if type(x) is int:
+        x = np.full_like(img, x)
+    if type(y) is int:
+        y = np.full_like(img, y)
     return np.where(img < threshold, x, y)
 
 # calculates the area of a contour (polygon)
@@ -142,7 +144,7 @@ def generate_mask(contours, size, x=0, y=255):
 
 # applies the mask to the image, non-mask areas turn black
 def mask_image(img, mask):
-    return cv2.bitwise_and(img, mask)
+    return cv2.bitwise_and(img, img, mask=mask)
 
 def get_slide_color(img):
     img = rgb_to_gray(img)
@@ -150,24 +152,62 @@ def get_slide_color(img):
     histo = histogram(img)
     return np.tile(np.argmax(histo), 3)
 
-# TODO: blur and threshold the image so it's just the DAB spots,
-#        this way the color of the background cannot affect the analysis
-#        can then count neurons, check sizes, shapes, etc.
-#        --Should probably add a step after stain separation for thresholding
-#             -- this would almost definitely need to be level 1 or 0
+# count the percentage of neurons in each tile based on the threshold DAB stain
 def get_neuron_density(tiles):
 
-    # TODO: incorporate avg neuron size to get number of neurons in tile instead of density of neurons
-    # calculate the neuron density of each tile
-    # NOTE: https://www.kenhub.com/en/library/anatomy/cortical-cytoarchitecture
-    return round_img(255 - np.mean(tiles, axis=(2, 3)))
+    # calculate the percentage of each tile occupied by neurons
+    nd = round_img(255 - np.mean(tiles, axis=(2, 3)))
 
+    return nd
+
+def get_tissue_threshold(thumbnail):
+
+    # convert thumbnail to grayscale and blur
+    gray = rgb_to_gray(thumbnail)
+    blur = gauss_blur(gray, 5)
+
+    # define the threshold as just above the mean tissue color
+    # NOTE: this removes the external tissue surrounding the cortical ribbon
+    m, v = gmm(blur.flatten()[:, None], 2)
+    threshold = int(m[0] + 2*np.sqrt(v[0]))
+
+    return threshold
+
+def get_tissue_mask(frame, threshold):
+    gray = rgb_to_gray(frame)
+    blur = gauss_blur(gray, 5)
+    return simple_threshold(blur, threshold, x=1, y=0)
+
+def get_neuron_threshold(frame):
+
+    # remove any masked data from the analysis
+    x = frame[frame != 255].flatten()[:, None]
+
+    # model the data as neuron and tissue distributions
+    m, v = gmm(x, 2)
+    print(m, v)
+    neuron_threshold = mle(m, v)
+
+    return neuron_threshold
+
+def get_neuron_mask(frame, tissue_mask, blur=1):
+
+    # generate the dab stain separated frame
+    separator = StainSeparator('H-DAB')
+    dab = separator.dab_gray(frame, blur)
+
+    # mask out any slide background
+    dab = mask_image(dab, tissue_mask)
+    dab[dab == 0] = 255
+
+    neuron_threshold = get_neuron_threshold(dab)
+
+    return simple_threshold(neuron_threshold, dab, x=255, y=0)
 
 def gmm(x, k):
 
      # perform a GMM to find the mean and variances of our distributions
-    gmm = GaussianMixture(n_components=k, covariance_type='full') \
-        .fit(x.flatten()[:, None])
+    gmm = GaussianMixture(n_components=k, covariance_type='full').fit(x)
 
     # get the sorted means and corresponding variances
     inds = gmm.means_[:, 0].argsort()
@@ -238,9 +278,12 @@ class StainSeparator:
         self.stain_to_rgb = stain_v
         self.rgb_to_stain = stain_v_inv
 
-    def dab_gray(self, frame):
+    def dab_gray(self, frame, blur=1):
         _, dab, _ = self.run(frame, ret=(False, True, False), rescale=False)
-        return rgb_to_gray(dab)
+        if blur == 1:
+            return rgb_to_gray(dab)
+        else:
+            return gauss_blur(rgb_to_gray(dab), blur)
 
     def run(self, frame, ret=[True, True, True], rescale=False):
         s1, s2, s3 = None, None, None
@@ -353,13 +396,13 @@ def run_tissue_detection(loader):
 
     # define the threshold as just above the mean tissue color
     # NOTE: this removes the external tissue surrounding the cortical ribbon
-    m, v = gmm(blur, 2)
+    m, v = gmm(blur.flatten()[:, None], 2)
     threshold = int(m[0] + 2*np.sqrt(v[0]))
 
     # TODO: use threhsold to the left to remove airbubbles and other dark object
     # apply the threshold based on the color of the slide
     # threshold = int(np.rint(rgb_to_gray(loader.slide_color))) - 10
-    thresh = simple_threshold(blur, threshold, lo=1, hi=0)
+    thresh = simple_threshold(blur, threshold, x=1, y=0)
 
     # get the contours of the thresholded image
     contours = find_contours(loader, thresh, loader.get_thumbnail_lvl())
@@ -379,22 +422,38 @@ def run_tissue_detection(loader):
 
     return tissue_contours, thresh, thumbnail, histo, threshold
 
-def get_bg_fg_mask(thumbnail):
 
-    # convert thumbnail to grayscale and blur
-    gray = rgb_to_gray(thumbnail)
-    histo = histogram(round_img(gray))
-    blur = gauss_blur(gray, 5)
 
-    # define the threshold as just above the mean tissue color
-    # NOTE: this removes the external tissue surrounding the cortical ribbon
-    m, v = gmm(blur, 2)
-    threshold = int(m[0] + 2*np.sqrt(v[0]))
+def get_dab_mask(loader):
 
-    # TODO: use threhsold to the left to remove airbubbles and other dark object
-    # apply the threshold based on the color of the slide
-    # threshold = int(np.rint(rgb_to_gray(loader.slide_color))) - 10
-    return simple_threshold(blur, threshold, lo=1, hi=0)
+    separator = StainSeparator('H-DAB')
+
+    tissue_mask = get_bg_fg_mask(np.copy(loader.thumbnail))
+
+    lvl = 1
+    fsize = np.array((2000,2000))
+    fstep = np.array((2000,2000))
+    loader.set_lvl(lvl)
+    loader.set_frame_dims(fsize, fstep)
+
+    # generate the dab stain separator frames
+    ffunc = separator.dab_gray
+    fargs = [5]
+    frames = loader.run_framing(ffunc, fargs)
+
+    # separate the dab into neuron, tissue, and slide distributions
+    m, v = gmm(blur.flatten()[:, None], 3)
+
+    neuron_threshold, tissue_threshold = mle(m, v)
+    print(neuron_threshold, tissue_threshold)
+    plt.plot(histogram(blur))
+    plt.show()
+
+    neuron_mask = simple_threshold(blur, neuron_threshold, x=1, y=0)
+    tissue_mask = simple_threshold(blur, neuron_threshold, x=0, y=blur)
+    tissue_mask = simple_threshold(tissue_mask, tissue_threshold, x=1, y=0)
+
+    return neuron_mask, tissue_mask
 
 def run_wm_detection(loader, nd, tb, tc):
 
@@ -409,7 +468,7 @@ def run_wm_detection(loader, nd, tb, tc):
     hist = histogram(nd) / (nd.shape[0] * nd.shape[1])
 
     # segment the image based on the distribution of colors
-    means, vars = gmm(nd, 3)
+    means, vars = gmm(nd.flatten()[:, None], 3)
     bg_wm, wm_gm = mle(means, vars)
 
     # threshold the image for the wm region

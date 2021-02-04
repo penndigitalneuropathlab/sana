@@ -27,6 +27,8 @@ class SVSLoader:
         self.mpp = float(self.svs.properties['aperio.MPP'])
         self.props = self.svs.properties
 
+        self.fpad = 0
+
         self.thumbnail = self.load_thumbnail()
         self.slide_color = iproc.get_slide_color(self.thumbnail)
 
@@ -82,6 +84,23 @@ class SVSLoader:
         nt = ((fsize + self.fpad - self.tsize) // self.tstep) + 1
         tds = fsize / nt
         return nt, tds
+
+    def run_framing(self, ffunc, fargs):
+
+        # define an array to hold the result of each frame analysis
+        arr = np.zeros((self.nf[0], self.nf[1]), dtype=object)
+
+        # load the frames one by one into memory
+        for i in range(self.nf[0]):
+            for j in range(self.nf[1]):
+
+                # load the frame
+                frame = self.load_region(
+                    self.flocs[i][j], pad_color=self.slide_color)
+
+                # apply the frame processing
+                arr[i][j] = ffunc(frame, *fargs)
+        return arr
 
     def run_tiling(self, ffunc, fargs, tfunc, targs):
 
@@ -168,7 +187,7 @@ class SVSLoader:
 
         fsize = np.array((frame.shape[1], frame.shape[0])) - self.fpad
         nt, tds = self.get_tile_count(fsize)
-        print(frame.shape, fsize, nt, self.tsize, self.tstep, self.fpad)
+
         # define the shape output
         shape = (
             nt[0],
