@@ -325,7 +325,7 @@ def read_qupath_annotations(ifname):
 def fix_json(ifname):
     fp = open(ifname, 'rb')
     header = fp.read(7)
-    if header == bytes([172, 237, 0, 5, 116, 4, 249]):
+    if bytes([header[0]]) != bytes([91]):
         data = fp.read()
         fp.close()
         fp = open(ifname, 'wb')

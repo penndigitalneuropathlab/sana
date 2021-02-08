@@ -190,7 +190,7 @@ def get_neuron_threshold(frame):
 
     return neuron_threshold
 
-def get_neuron_mask(frame, tissue_mask, blur=1):
+def get_neuron_mask(frame, tissue_mask, blur=0):
 
     # generate the dab stain separated frame
     separator = StainSeparator('H-DAB')
@@ -280,7 +280,7 @@ class StainSeparator:
 
     def dab_gray(self, frame, blur=1):
         _, dab, _ = self.run(frame, ret=(False, True, False), rescale=False)
-        if blur == 1:
+        if blur == 0:
             return rgb_to_gray(dab)
         else:
             return gauss_blur(rgb_to_gray(dab), blur)
@@ -421,39 +421,6 @@ def run_tissue_detection(loader):
     upscale_contours(tissue_contours, loader.get_ds(loader.get_thumbnail_lvl()))
 
     return tissue_contours, thresh, thumbnail, histo, threshold
-
-
-
-def get_dab_mask(loader):
-
-    separator = StainSeparator('H-DAB')
-
-    tissue_mask = get_bg_fg_mask(np.copy(loader.thumbnail))
-
-    lvl = 1
-    fsize = np.array((2000,2000))
-    fstep = np.array((2000,2000))
-    loader.set_lvl(lvl)
-    loader.set_frame_dims(fsize, fstep)
-
-    # generate the dab stain separator frames
-    ffunc = separator.dab_gray
-    fargs = [5]
-    frames = loader.run_framing(ffunc, fargs)
-
-    # separate the dab into neuron, tissue, and slide distributions
-    m, v = gmm(blur.flatten()[:, None], 3)
-
-    neuron_threshold, tissue_threshold = mle(m, v)
-    print(neuron_threshold, tissue_threshold)
-    plt.plot(histogram(blur))
-    plt.show()
-
-    neuron_mask = simple_threshold(blur, neuron_threshold, x=1, y=0)
-    tissue_mask = simple_threshold(blur, neuron_threshold, x=0, y=blur)
-    tissue_mask = simple_threshold(tissue_mask, tissue_threshold, x=1, y=0)
-
-    return neuron_mask, tissue_mask
 
 def run_wm_detection(loader, nd, tb, tc):
 

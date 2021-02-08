@@ -2,6 +2,7 @@
 import os
 import sys
 import math
+import time
 
 import cv2
 import numpy as np
@@ -54,27 +55,31 @@ def main(argv):
         ri = np.argmax(dist)
         r = np.max(dist)
 
-        nds = []
-        sigs = []
-
-        tsize = np.array((75, 75))
+        # perform short tile and long tile analysis to differentiate features
+        # NOTE: layer 1 does not show up in long tile analysis, however long tile
+        #       gives good performance on other layers
+        # NOTE: might be able to estimate a good tile size based on each frame
+        tsize = np.array((75, 500))
         tstep = np.array((10, 10))
         loader.set_tile_dims(tsize, tstep)
-        nd, sig, nm = run_layer_segmentation(loader, tissue_threshold, anno, centroid, r)
-        nds.append(nd)
-        sigs.append(sig)
-
-        tsize = np.array((50, 500))
+        nd_short, sig_short = \
+                run_layer_segmentation(
+                    loader, tissue_threshold, anno, centroid, r)
+        tsize = np.array((300, 500))
         tstep = np.array((10, 10))
         loader.set_tile_dims(tsize, tstep)
-        nd, sig, nm = run_layer_segmentation(loader, tissue_threshold, anno, centroid, r)
-        nds.append(nd)
-        sigs.append(sig)
+        nd_long, sig_long = \
+                run_layer_segmentation(
+                    loader, tissue_threshold, anno, centroid, r)
+        nds = [nd_short, nd_long]
+        sigs = [sig_short, sig_long]
 
-        fig = plt.figure(constrained_layout=True)
-        gs = fig.add_gridspec(3, 2)
-        for i in range(2):
-            ax1 = fig.add_subplot(gs[0, i])
+        fig = plt.figure()
+        gs = fig.add_gridspec(3, len(nds))
+        titles = ['Narrow Tile -- 75 x 500 Microns',
+                  'Wide Tile -- 300 x 500 Microns']
+        for i in range(len(nds)):
+            ax1 = fig.add_subplot(gs[:2, i])
             ax1.imshow(nds[i].T, cmap='coolwarm')
             ax1.grid(False)
             ax1.set_xticks([])
@@ -82,23 +87,16 @@ def main(argv):
             ax1.set_aspect('equal')
             ax1.set_xlim([0, nds[i].T.shape[1]])
             ax1.set_ylim([nds[i].T.shape[0], 0])
+            ax1.set_title(titles[i])
 
-            ax2 = fig.add_subplot(gs[1, i])
+            ax2 = fig.add_subplot(gs[2, i])
             ax2.plot(sigs[i], color='black')
             ax2.set_xlim([0, sigs[i].shape[0]])
             ax2.set_xlabel('Cortical Depth')
-            ax2.set_ylabel('Neuron Density')
+            ax2.set_ylabel('Neuron Density (%AO DAB)')
             ax2.set_xticks([])
             ax1.get_shared_x_axes().join(ax1, ax2)
-
-        ax3 = fig.add_subplot(gs[2, :])
-        ax3.imshow(nm, cmap='coolwarm')
-        ax3.grid(False)
-        ax3.set_xticks([])
-        ax3.set_yticks([])
-        ax3.set_aspect('equal')
-        ax3.set_xlim([0, nm.T.shape[1]])
-        ax3.set_ylim([nm.T.shape[0], 0])
+        plt.suptitle('Cortical Neuron Density')
         plt.show()
 
 def run_layer_segmentation(loader, tissue_threshold, anno, centroid, r):
@@ -143,6 +141,7 @@ def run_layer_segmentation(loader, tissue_threshold, anno, centroid, r):
     angle = iproc.find_angle((tissx[0], tissy[0]), (tissx[1], tissy[1]))
     angle = angle - (90 * (angle//90))
 
+    # TODO: annotation and frame are not being rotated correctly...
     # NOTE: reshape=False might cause alignment issue down the line
     # rotate the frame by the angle of rotation
     frame_rot = ndimage.rotate(frame, angle, reshape=False, mode='nearest')
@@ -156,17 +155,32 @@ def run_layer_segmentation(loader, tissue_threshold, anno, centroid, r):
     # generate the rotated tissue mask using the pre-calculated threshold
     tissue_mask_rot = iproc.get_tissue_mask(frame_rot, tissue_threshold)
 
-    neuron_mask = iproc.get_neuron_mask(frame_rot, tissue_mask_rot, blur=1)
+    neuron_mask = iproc.get_neuron_mask(frame_rot, tissue_mask_rot, blur=0)
 
+    # generate the tiles from the neuron mask
     tiles = loader.load_tiles(neuron_mask)
 
-    # TODO: cannot do a rectangle region. it is way too imprecise
+    # TODO: start making a detector on this signal
+    #        a) heuristic peak detection
+    #        b) some type of template matching?
+    #        c) correlate with object detection (i.e. size/eccentricity)
     nd = iproc.get_neuron_density(tiles)
-    nd = nd[:, 250:600]
-    sig = np.mean(nd[:, 100:200], axis=1)
+
+    # downscale the annotation to the tile space
+    _, tds = loader.get_tile_count(fsize)
+    anno_rot_ds = anno_rot / tds
+
+    # apply the annotation to the neuron density calculation
+    for i in range(nd.shape[0]):
+        for j in range(nd.shape[1]):
+            if not ray_tracing(i, j, anno_rot_ds):
+                nd[i][j] = 0
+
+    # sig = nd[:, 350]
+    sig = nd[:, 460]
     sig -= np.min(sig)
 
-    return nd[:, 100:200], sig, 255-neuron_mask
+    return nd, sig
 
 def plot_rotation(frame, anno, centroid, r, tissue_mask, tissx, tissy, frame_rot, anno_rot):
 
@@ -212,7 +226,10 @@ def linear_regression(x, y):
     b = np.mean(y) - m * np.mean(x)
     return m, b
 
-# @jit(nopython=True)
+# TODO: use jit throughout this code!
+# NOTE: might be hard to implement this on other's computers...
+#          either will have to spend a lot of time installing everything, OR just have it run on my computer. I'm a fan of creating a web server
+@jit(nopython=True)
 def ray_tracing(x,y,poly):
     n = len(poly)
     inside = False
