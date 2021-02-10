@@ -1,6 +1,7 @@
 
 import os
 import sys
+from copy import copy
 import openslide
 import numpy as np
 
@@ -25,7 +26,7 @@ class Loader(openslide.OpenSlide):
         self.thumbnail = self.load_thumbnail()
 
         # calculate the color of the slide background
-        self.slide_color = self.thumbnail.get_bg_color()
+        self.slide_color = copy(self.thumbnail).get_bg_color()
 
     # getters
     def get_dim(self, lvl=None):
