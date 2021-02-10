@@ -41,14 +41,8 @@ class Loader(openslide.OpenSlide):
     def set_lvl(self, lvl):
         self.lvl = lvl
 
-    # gets the highest and lowest resolution levels
-    def get_thumbnail_lvl(self):
-        return np.argmax(self.ds)
-    def get_original_lvl(self):
-        return np.argmin(self.ds)
-
     def load_thumbnail(self):
-        lvl = self.get_thumbnail_lvl()
+        lvl = self.lc - 1
         loc = sana_geo.Point(0, 0, self.mpp, self.ds,
                              is_micron=False, lvl=lvl)
         h, w = self.get_dim(lvl)
@@ -97,7 +91,7 @@ class Loader(openslide.OpenSlide):
 
         # load the region
         # NOTE: upscale the location before accessing the image
-        sana_geo.rescale(loc, self.get_original_lvl())
+        sana_geo.rescale(loc, 0)
         loc = sana_geo.round(loc)
         size = sana_geo.round(size)
         img = np.array(self.read_region(
