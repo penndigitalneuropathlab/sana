@@ -16,6 +16,7 @@ import sana_io
 import sana_geo
 from sana_loader import Loader
 from sana_framer import Framer
+from sana_tiler import Tiler
 
 # NOTE: https://link.springer.com/article/10.1007/s10803-009-0790-8
 # this paper is basically donig what im doing from 2009
@@ -39,14 +40,37 @@ def main(argv):
     loader = Loader(f)
     loader.set_lvl(lvl)
 
+    tsize = sana_geo.Point(300, 500, loader.mpp, loader.ds)
+    tstep = sana_geo.Point(20, 20, loader.mpp, loader.ds)
     fsize = sana_geo.Point(2000, 2000, loader.mpp, loader.ds, is_micron=False, lvl=lvl)
-    framer = Framer(loader, fsize)
 
-    for i in range(framer.n[0]):
-        for j in range(framer.n[1]):
-            img = framer.get(i, j).img
-            plt.imshow(img)
+    tiler = Tiler(loader, tsize, tstep=tstep, fsize=fsize)
+
+    for i in range(tiler.framer.n[0]):
+        for j in range(tiler.framer.n[1]):
+
+            # load the frame
+            frame = tiler.load_frame(i, j)
+
+            # process the frame
+            frame.to_gray()
+
+            # load the tiles
+            tiles = tiler.load_tiles(frame)
+
+            # process the tiles
+            blur = np.mean(tiles, axis=(2, 3))
+
+            plt.imshow(blur)
             plt.show()
+
+    # framer = Framer(loader, fsize)
+    #
+    # for i in range(framer.n[0]):
+    #     for j in range(framer.n[1]):
+    #         img = framer.get(i, j).img
+    #         plt.imshow(img)
+    #         plt.show()
 
 #
 #     # get the threshold for masking the tissue

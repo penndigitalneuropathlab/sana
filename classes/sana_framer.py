@@ -9,15 +9,17 @@ import numpy as np
 import sana_geo
 
 class Framer:
-    def __init__(self, loader, size, step=None, locs=None):
+    def __init__(self, loader, size, step=None, fpad=None, fshift=None, locs=None):
 
         # store the slide loader
         self.loader = loader
 
-        # define the frame size and step in terms of pixels
+        # define the frame size and step
         self.size = size
         if step is None:
             self.step = copy(self.size)
+        else:
+            self.step = step
 
         # convert the dimensions to pixels and round
         if self.size.is_micron:
@@ -30,6 +32,14 @@ class Framer:
             sana_geo.rescale(self.size, loader.lvl)
         self.size = sana_geo.round(self.size)
         self.step = sana_geo.round(self.step)
+
+        # store the padding and shifting for center-alignment
+        if fpad is None:
+            self.fpad = Point(0, 0, self.loader.mpp, self.loader.ds, is_micron=False, lvl=self.loader.lvl)
+            self.fshift = np.copy(self.fpad)
+        else:
+            self.fpad = fpad
+            self.fshift = fshift
 
         # define the locations of the frames
         if locs is None:
@@ -44,15 +54,19 @@ class Framer:
                 for j in range(self.n[1]):
                     x, y = i * self.step[0], j * self.step[1]
                     self.locs[i][j] = \
-                        sana_geo.Point(x, y, loader.mpp, loader.ds,
-                                       is_micron=False, lvl=loader.lvl)
+                        sana_geo.Point(x, y, self.loader.mpp,
+                                       self.loader.ds, is_micron=False,
+                                       lvl=self.loader.lvl)
         else:
-            self.n = locs.shape[0] + locs.shape[1]
+            self.n = len(locs)
             self.ds = self.loader.get_dim() / self.n
             self.locs = locs
 
-    def get(self, i, j):
-        return self.loader.load_frame(self.locs[i][j], self.size,
+    def load(self, i, j):
+
+        # load the frame, apply the shifting and padding
+        return self.loader.load_frame(
+            self.locs[i][j]-self.fshift, self.size+self.fpad,
             pad_color=self.loader.slide_color)
 
 # TODO: this should probably be it's own file
@@ -60,6 +74,7 @@ class Framer:
 class Frame:
     def __init__(self, img):
         self.img = img
+        self.size = np.array((img.shape[1], img.shape[0]))
 
     def to_gray(self):
         if self.img.shape[-1] >= 3:
