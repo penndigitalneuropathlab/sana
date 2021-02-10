@@ -48,6 +48,13 @@ class Thresholder:
             thresholds.append(np.nonzero(p1 > p2)[0][-1] + self.means[i])
 
         self.thresholds = thresholds
+
+    # defines the threshold as 1 std above the mean
+    def close_right(self):
+        thresholds = []
+        for i in range(self.k-1):
+            thresholds.append(self.means[i] + 2*np.sqrt(self.vars[i]))
+        self.thresholds = thresholds
 #
 # end of Thresholder
 

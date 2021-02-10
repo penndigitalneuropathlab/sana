@@ -32,7 +32,6 @@ class Frame:
 
     def histogram(self):
         self.round()
-        print(self.img.shape)
         histogram = np.zeros((256, self.img.shape[-1]))
         for i in range(histogram.shape[-1]):
             histogram[:, i] = np.histogram(self.img[:, :, i],
@@ -84,6 +83,7 @@ class Frame:
         if blur != 0:
             self.gauss_blur(blur)
 
+    # TODO: move most of this code to a TissueThresholder class in sana_thresholder??
     def tissue_mask(self, blur=5):
 
         # convert to grayscale and blur
@@ -99,11 +99,8 @@ class Frame:
         # run the gmm algorithm to define means and vars
         thresholder.gmm()
 
-        # TODO: mle doesn't work for tissue, do something smarter
-        #         might need to be 1 std from the tissue mean?
-        #      int(m[0] + 2*np.sqrt(v[0]))
-        # threshold the means and vars using mle
-        thresholder.mle()
+        # threshold the means and vars
+        thresholder.close_right()
 
         # threshold the img, anything darker than threshold is tissue
         self.tissue_threshold = thresholder.thresholds[0]
