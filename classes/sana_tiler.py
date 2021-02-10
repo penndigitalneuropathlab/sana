@@ -8,7 +8,6 @@ import numpy as np
 import sana_geo
 from sana_framer import Framer, Frame
 
-
 class Tiler:
     def __init__(self, loader, tsize, tstep=None,
                  fsize=None, fstep=None):
