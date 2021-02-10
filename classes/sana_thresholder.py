@@ -58,5 +58,30 @@ class Thresholder:
 #
 # end of Thresholder
 
+class TissueThresholder(Thresholder):
+    def __init__(self, frame, blur=5):
+        self.frame = frame
+
+        # convert to grayscale and blur
+        self.frame.to_gray()
+        self.frame.gauss_blur(blur)
+
+        # flatten the data
+        data = self.frame.img.flatten()[:, None]
+
+        # initialize the thresholder
+        super().__init__(data, 2)
+
+    def mask_frame(self):
+
+        # run the gmm algorithm to define the means and vars of the data
+        self.gmm()
+
+        # define threshold as 1 std from the mean
+        self.close_right()
+        self.tissue_threshold = self.thresholds[0]
+
+        # threshold the frame to generate a tissue mask
+        self.frame.threshold(self.tissue_threshold, x=1, y=0)
 #
 # end of class

@@ -4,8 +4,8 @@ import sys
 import cv2
 import numpy as np
 from scipy.ndimage.filters import gaussian_filter
+
 from sana_color_deconvolution import StainSeparator
-from sana_thresholder import Thresholder
 
 # TODO: this should probably be it's own file
 # TODO: see where else cv2 can be used
@@ -82,30 +82,8 @@ class Frame:
         # blur as needed
         if blur != 0:
             self.gauss_blur(blur)
-
-    # TODO: move most of this code to a TissueThresholder class in sana_thresholder??
-    def tissue_mask(self, blur=5):
-
-        # convert to grayscale and blur
-        self.to_gray()
-        self.gauss_blur(blur)
-
-        # flatten the data for the thresholder
-        data = self.img.flatten()[:, None]
-
-        # create a thresholder for 2 distributions
-        thresholder = Thresholder(data, 2)
-
-        # run the gmm algorithm to define means and vars
-        thresholder.gmm()
-
-        # threshold the means and vars
-        thresholder.close_right()
-
-        # threshold the img, anything darker than threshold is tissue
-        self.tissue_threshold = thresholder.thresholds[0]
-        self.threshold(self.tissue_threshold, x=1, y=0)
 #
 # end of Frame
 
+#
 # end of file
