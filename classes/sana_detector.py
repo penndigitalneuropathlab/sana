@@ -71,6 +71,20 @@ class Detector:
 #
 # end of Detector
 
+class TissueDetector(Detector):
+    def __init__(self, loader):
+        super().__init__(loader)
+
+    def run(self, frame, min_body_area, min_hole_area):
+
+        # perform the object detection
+        self.detect(frame)
+
+        # filter the tissue detections based on the given areas
+        self.filter(min_body_area, min_hole_area)
+#
+# end of TissueDetector
+
 class Detection:
     def __init__(self, polygon, hierarchy):
         self.polygon = polygon

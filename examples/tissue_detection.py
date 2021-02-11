@@ -8,7 +8,7 @@ import seaborn as sns; sns.set()
 
 from sana_loader import Loader
 from sana_thresholder import TissueThresholder
-from sana_detector import Detector
+from sana_detector import TissueDetector
 
 SRC = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 DATA = os.path.join(SRC, 'examples', 'data')
@@ -39,11 +39,8 @@ def main(argv):
     tissue_threshold = thresholder.tissue_threshold
 
     # perform object detection on the tissue mask
-    detector = Detector(loader)
-    detector.detect(frame)
-
-    # filter the detections based on the given areas
-    detector.filter(min_body_area=1e7, min_hole_area=1e6)
+    detector = TissueDetector(loader)
+    detector.run(frame, min_body_area=1e7, min_hole_area=1e6)
 
     # get the tissue body detections
     tissue_detections = detector.get_bodies()
