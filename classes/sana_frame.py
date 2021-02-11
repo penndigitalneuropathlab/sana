@@ -38,6 +38,9 @@ class Frame:
                                            bins=256, range=(0, 255))[0]
         return histogram
 
+    def crop(self, loc, size):
+        return Frame(self.img[loc[1]+size[1]:loc[0]+size[0]])
+
     # calculates the background color as the most common color
     #  in the grayscale space
     def get_bg_color(self):
@@ -46,8 +49,10 @@ class Frame:
         return np.tile(np.argmax(histo), 3)
 
     # apply a binary mask to the image
-    def mask(self, mask):
+    def mask(self, mask, value=None):
         self.img = cv2.bitwise_and(self.img, self.img, mask=mask.img)
+        if value is not None:
+            self.img[self.img == 0] = value
 
     # TODO: use cv2
     # TODO: define sigma in terms of microns
@@ -66,12 +71,12 @@ class Frame:
         self.img = np.where(self.img < threshold, x, y)
 
     # separates the stain from the image, grays and blurs the frame
-    def to_dab_gray(self, frame, blur=0):
+    def to_dab_gray(self, blur=0):
 
         # perform the stain separation
         separator = StainSeparator('H-DAB')
         _, dab, _ = separator.run(
-            frame.img, ret=(False, True, False), rescale=False)
+            self.img, ret=(False, True, False), rescale=False)
 
         # set the new img
         self.img = dab

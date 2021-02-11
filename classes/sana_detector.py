@@ -4,6 +4,7 @@ import sys
 import cv2
 import numpy as np
 from numba import jit
+from PIL import Image, ImageDraw
 
 import sana_geo
 from sana_frame import Frame
@@ -48,19 +49,20 @@ class Detector:
         return polygon
 
     # TODO: profile this
-    @jit(nopython=True)
-    def generate_mask(self, size, x=0, y=1):
-        mask = np.full(size, x, dtype=np.uint8)
-        for i in range(size[0]):
-            for j in range(size[1]):
-                for d in self.detections:
-                    flag = False
-                    if sana_geo.ray_tracing(i, j, d.polygon.vertices()):
-                        flag = True
-                        break
-                if flag:
-                    mask[i][j] = y
-        return Frame(mask)
+    def generate_mask(self, size, x=0, y=1, lvl=None):
+
+        # get all the polygons to use for the mask, rescale and shift if needed
+        # NOTE: PIL needs the vertices to be tuples
+        polys = []
+        for d in self.get_bodies():
+            if lvl is not None:
+                d.polygon.to_pixels(lvl)
+                d.polygon.round()
+            polys.append([tuple(v) for v in d.polygon.vertices()])
+        mask = Image.new('L', (size[0], size[1]), x)
+        for poly in polys:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+        return Frame(np.array(mask))
 
     def get_bodies(self):
         bodies = []

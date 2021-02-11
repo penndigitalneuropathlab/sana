@@ -110,8 +110,8 @@ class Polygon:
     def round(self):
         if self.x.dtype == np.int:
             return
-        self.x = np.rint(x, out=x).astype(dtype=np.int, copy=False)
-        self.y = np.rint(y, out=y).astype(dtype=np.int, copy=False)
+        self.x = np.rint(self.x, out=self.x).astype(dtype=np.int, copy=False)
+        self.y = np.rint(self.y, out=self.y).astype(dtype=np.int, copy=False)
 
     # rescales a point to a new
     def rescale(self, lvl):

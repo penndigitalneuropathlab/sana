@@ -84,4 +84,34 @@ class TissueThresholder(Thresholder):
         # threshold the frame to generate a tissue mask
         self.frame.threshold(self.tissue_threshold, x=1, y=0)
 #
-# end of class
+# end of TissueThresholder
+
+class NeuronThresholder(Thresholder):
+    def __init__(self, frame, tissue_mask, blur=0):
+        self.frame = frame
+
+        # convert to grayscale dab stain
+        self.frame.to_dab_gray(blur)
+
+        # mask out any slide background
+        self.frame.mask(tissue_mask, value=255)
+
+        # flatten the data and remove masked data from the analysis
+        data = self.frame.img[self.frame.img != 255].flatten()[:, None]
+
+        # initalize the thresholder
+        super().__init__(data, 2)
+
+    def mask_frame(self):
+
+        # run the gmm algorithm to define the means and vars of the data
+        self.gmm()
+
+        # define threshold as the crossing between PDFs
+        self.mle()
+        self.neuron_threshold = self.thresholds[0]
+
+        # threshold the frame to generate the neuron mask
+        self.frame.threshold(self.neuron_threshold, x=255, y=0)
+#
+# end of file
