@@ -3,8 +3,10 @@ import os
 import sys
 import cv2
 import numpy as np
+from copy import copy
 from scipy.ndimage.filters import gaussian_filter
 
+import sana_geo
 from sana_color_deconvolution import StainSeparator
 
 # TODO: this should probably be it's own file
@@ -12,7 +14,7 @@ from sana_color_deconvolution import StainSeparator
 class Frame:
     def __init__(self, img):
         self.img = img
-        self.size = np.array((img.shape[1], img.shape[0]))
+        self.size = np.array((self.img.shape[1], self.img.shape[0]))
         if img.shape[-1] == 3:
             self.color_histo = self.histogram()
 
@@ -39,7 +41,20 @@ class Frame:
         return histogram
 
     def crop(self, loc, size):
-        return Frame(self.img[loc[1]+size[1]:loc[0]+size[0]])
+        loc = sana_geo.round(copy(loc))
+        size = sana_geo.round(copy(size))
+        return Frame(self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]])
+
+    def rescale(self, ds, size=None):
+        img = np.kron(self.img[:, :, 0], np.ones((ds, ds), dtype=np.uint8))
+        img = img[:, :, None]
+
+        # NOTE: sometimes the rounding is off by a pixel
+        # TODO: make sure this doesn't cause alignment issues
+        if size is not None:
+            img = img[:size[0], :size[1]]
+
+        return Frame(img)
 
     # calculates the background color as the most common color
     #  in the grayscale space
@@ -50,7 +65,8 @@ class Frame:
 
     # apply a binary mask to the image
     def mask(self, mask, value=None):
-        self.img = cv2.bitwise_and(self.img, self.img, mask=mask.img)
+        self.img = cv2.bitwise_and(
+            self.img, self.img, mask=mask.img)[:, :, None]
         if value is not None:
             self.img[self.img == 0] = value
 
@@ -87,6 +103,7 @@ class Frame:
         # blur as needed
         if blur != 0:
             self.gauss_blur(blur)
+
 #
 # end of Frame
 

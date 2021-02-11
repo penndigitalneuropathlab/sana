@@ -30,16 +30,16 @@ class Framer:
             sana_geo.to_pixels(self.step, loader.lvl)
         else:
             sana_geo.rescale(self.size, loader.lvl)
-        self.size = sana_geo.round(self.size)
-        self.step = sana_geo.round(self.step)
 
         # store the padding and shifting for center-alignment
         if fpad is None:
-            self.fpad = Point(0, 0, self.loader.mpp, self.loader.ds, is_micron=False, lvl=self.loader.lvl)
+            self.fpad = sana_geo.Point(0, 0, self.loader.mpp, self.loader.ds,
+                                       is_micron=False, lvl=self.loader.lvl)
             self.fshift = np.copy(self.fpad)
         else:
             self.fpad = fpad
             self.fshift = fshift
+
 
         # define the locations of the frames
         if locs is None:
@@ -59,14 +59,19 @@ class Framer:
                                        lvl=self.loader.lvl)
         else:
             self.n = len(locs)
-            self.ds = self.loader.get_dim() / self.n
             self.locs = locs
+            for i in range(self.n):
+                sana_geo.to_pixels(self.locs[i], self.loader.lvl)
+            self.i = 0
 
-    def load(self, i, j):
+    def load(self, i, j=None):
+        if j is None:
+            loc = self.locs[i]
+        else:
+            loc = self.locs[i][j]
 
         # load the frame, apply the shifting and padding
-        return self.loader.load_frame(
-            self.locs[i][j]-self.fshift, self.size+self.fpad,
+        return self.loader.load_frame(loc-self.fshift, self.size+self.fpad,
             pad_color=self.loader.slide_color)
 #
 # end of Framer

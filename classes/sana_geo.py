@@ -15,6 +15,11 @@ def round(point):
         return point
     return np.rint(point, out=point).astype(dtype=np.int, copy=False)
 
+def to_float(point):
+    if point.dtype == np.float:
+        return point
+    return point.astype(dtype=np.float, copy=False)
+
 # rescales a point to a new
 def rescale(point, lvl):
     if point.lvl == lvl:
@@ -70,16 +75,25 @@ def ray_tracing(x,y,poly):
 # defines an (x, y) point in terms of microns
 # TODO: could instead make a Unit class instead of point class
 # TODO: could just expand this to be an array
+# NOTE: this follows the following guide - https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
 class Point(np.ndarray):
     def __new__(self, x, y, mpp, ds, order=1, is_micron=True, lvl=0):
-        self.mpp = mpp
-        self.ds = ds
-        self.order = order
+        obj = super().__new__(self, shape=(2,), dtype=float,
+                              buffer=np.array([x, y], dtype=float))
+        obj.mpp = mpp
+        obj.ds = ds
+        obj.order = order
+        obj.is_micron = is_micron
+        obj.lvl = lvl
+        return obj
 
-        self.is_micron = is_micron
-        self.lvl = lvl
-        return super().__new__(self, shape=(2,), dtype=float,
-                               buffer=np.array([x, y], dtype=float))
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.mpp = getattr(obj, 'mpp', None)
+        self.ds = getattr(obj, 'ds', None)
+        self.order = getattr(obj, 'order', None)
+        self.is_micron = getattr(obj, 'is_micron', None)
+        self.lvl = getattr(obj, 'lvl', None)
 #
 # end of Point
 

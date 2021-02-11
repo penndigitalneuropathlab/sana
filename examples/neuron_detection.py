@@ -6,7 +6,9 @@ from copy import copy
 from matplotlib import pyplot as plt
 import seaborn as sns; sns.set()
 
+import sana_geo
 from sana_loader import Loader
+from sana_framer import Framer
 from sana_thresholder import TissueThresholder, NeuronThresholder
 from sana_detector import TissueDetector#, NeuronDetector
 
@@ -28,45 +30,63 @@ def main(argv):
 
     # initialize the Loader
     loader = Loader(filename)
-    loader.set_lvl(loader.lc-1)
+    loader.set_lvl(0)
 
-    # load the frames for the tissue mask and neuron detections
-    tissue_frame = copy(loader.thumbnail)
-    neuron_frame = copy(loader.thumbnail)
+    # initialize the framer for the neuron ROIs
+    fsize = sana_geo.Point(1500, 1500, loader.mpp, loader.ds)
+    flocs = [sana_geo.Point(9500, 10500, loader.mpp, loader.ds)]
+    framer = Framer(loader, fsize, locs=flocs)
 
     # create the tissue mask
+    tissue_frame = copy(loader.thumbnail)
     thresholder = TissueThresholder(tissue_frame, blur=5)
     thresholder.mask_frame()
-    detector = TissueDetector(loader)
+    detector = TissueDetector(loader.mpp, loader.ds, loader.lc-1)
     detector.run(tissue_frame, min_body_area=1e7, min_hole_area=1e6)
-    tissue_mask = detector.generate_mask(neuron_frame.size, lvl=2)
+    tissue_mask = detector.generate_mask(tissue_frame.size)
 
-    # threshold the frame and generate the neuron mask
-    thresholder = NeuronThresholder(neuron_frame, tissue_mask)
-    thresholder.mask_frame()
-    neuron_threshold = thresholder.neuron_threshold
+    for i in range(framer.n):
 
-    # # perform object detection on the tissue mask
-    # detector = TissueDetector(loader)
-    # detector.run(frame, min_body_area=1e7, min_hole_area=1e6)
-    #
-    # # get the tissue body detections
-    # tissue_detections = detector.get_bodies()
-    #
-    # # get just the polygons and convert back to pixel resolution
-    # polygons = [d.polygon for d in tissue_detections]
-    # [p.to_pixels(loader.lvl) for p in polygons]
+        # load the frame
+        frame = framer.load(i)
+        neuron_mask = copy(frame)
 
-    # plot the original thumbnail along with the tissue mask
-    plot1(loader.thumbnail, neuron_frame, neuron_threshold)
+        # TODO: this really needs cleaned up
+        # crop and rescale the tissue mask into the proper location
+        crop_loc = copy(framer.locs[i])
+        crop_size = copy(framer.size)
+        sana_geo.rescale(crop_loc, loader.lc-1)
+        sana_geo.rescale(crop_size, loader.lc-1)
+        tissue_mask = tissue_mask.crop(crop_loc, crop_size)
+        ds = int(round(loader.ds[loader.lc-1] / loader.ds[loader.lvl]))
+        tissue_mask = tissue_mask.rescale(ds, size=neuron_mask.size)
 
-    # plot the thresholded thumbnail along with the tissue detections
-    # plot2(loader.thumbnail, frame, polygons)
+        # threshold the frame and generate the neuron mask
+        thresholder = NeuronThresholder(neuron_mask, tissue_mask)
+        thresholder.mask_frame()
+        neuron_threshold = thresholder.neuron_threshold
 
-    # finally, show the plot
-    plt.show()
+        # # perform object detection on the tissue mask
+        # detector = TissueDetector(loader)
+        # detector.run(frame, min_body_area=1e7, min_hole_area=1e6)
+        #
+        # # get the tissue body detections
+        # tissue_detections = detector.get_bodies()
+        #
+        # # get just the polygons and convert back to pixel resolution
+        # polygons = [d.polygon for d in tissue_detections]
+        # [p.to_pixels(loader.lvl) for p in polygons]
 
-def plot1(thumbnail, frame, threshold):
+        # plot the original roi with the neuron mask
+        plot1(frame, neuron_mask, neuron_threshold)
+
+        # plot the thresholded thumbnail along with the tissue detections
+        # plot2(loader.thumbnail, frame, polygons)
+
+        # finally, show the plot
+        plt.show()
+
+def plot1(frame, mask, threshold):
 
     fig = plt.figure(constrained_layout=True)
     gs = fig.add_gridspec(2,2)
@@ -76,20 +96,20 @@ def plot1(thumbnail, frame, threshold):
     ax0.plot(frame.color_histo[:, 0], color='red')
     ax0.plot(frame.color_histo[:, 1], color='green')
     ax0.plot(frame.color_histo[:, 2], color='blue')
-    ax0.plot(frame.gray_histo, color='black')
+    ax0.plot(mask.mask_histo[:255, 0], color='black')
     ax0.axvline(threshold, linestyle='dashed', color='purple')
     ax0.set_title('Histogram of Slide')
 
     # plot the thumbnail
     ax1 = fig.add_subplot(gs[1,0])
-    ax1.imshow(thumbnail.img)
-    ax1.set_title('Slide Thumbnail')
+    ax1.imshow(frame.img)
+    ax1.set_title('Original Slide')
     ax1.axis('off')
     ax1.grid('off')
 
     # plot the tissue mask
     ax2 = fig.add_subplot(gs[1,1])
-    ax2.matshow(frame.img)
+    ax2.matshow(mask.img)
     ax2.set_title('Neuron Detection Mask')
     ax2.get_shared_x_axes().join(ax1, ax2)
     ax2.get_shared_y_axes().join(ax1, ax2)

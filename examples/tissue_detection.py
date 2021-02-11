@@ -39,7 +39,7 @@ def main(argv):
     tissue_threshold = thresholder.tissue_threshold
 
     # perform object detection on the tissue mask
-    detector = TissueDetector(loader)
+    detector = TissueDetector(loader.mpp, loader.ds, loader.lvl)
     detector.run(frame, min_body_area=1e7, min_hole_area=1e6)
 
     # get the tissue body detections

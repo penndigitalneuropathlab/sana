@@ -10,8 +10,10 @@ import sana_geo
 from sana_frame import Frame
 
 class Detector:
-    def __init__(self, loader):
-        self.loader = loader
+    def __init__(self, mpp, ds, lvl):
+        self.mpp = mpp
+        self.ds = ds
+        self.lvl = lvl
 
     # detects objects from a masked frame
     def detect(self, frame):
@@ -43,8 +45,8 @@ class Detector:
     def contour_to_polygon(self, contour):
         x = np.array([float(v[0][0]) for v in contour])
         y = np.array([float(v[0][1]) for v in contour])
-        polygon = sana_geo.Polygon(x, y, self.loader.mpp, self.loader.ds,
-                                   is_micron=False, lvl=self.loader.lvl)
+        polygon = sana_geo.Polygon(x, y, self.mpp, self.ds,
+                                   is_micron=False, lvl=self.lvl)
         polygon.to_microns()
         return polygon
 
@@ -55,14 +57,13 @@ class Detector:
         # NOTE: PIL needs the vertices to be tuples
         polys = []
         for d in self.get_bodies():
-            if lvl is not None:
-                d.polygon.to_pixels(lvl)
-                d.polygon.round()
+            d.polygon.to_pixels(self.lvl)
+            d.polygon.round()
             polys.append([tuple(v) for v in d.polygon.vertices()])
         mask = Image.new('L', (size[0], size[1]), x)
         for poly in polys:
             ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
-        return Frame(np.array(mask))
+        return Frame(np.array(mask)[:, :, None])
 
     def get_bodies(self):
         bodies = []
@@ -74,8 +75,8 @@ class Detector:
 # end of Detector
 
 class TissueDetector(Detector):
-    def __init__(self, loader):
-        super().__init__(loader)
+    def __init__(self, mpp, ds, lvl):
+        super().__init__(mpp, ds, lvl)
 
     def run(self, frame, min_body_area, min_hole_area):
 

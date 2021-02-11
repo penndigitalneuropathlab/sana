@@ -68,7 +68,8 @@ class Loader(openslide.OpenSlide):
             sana_geo.rescale(size, lvl)
 
         # prepare variables to padding
-        size = np.copy(size)
+        loc = copy(loc)
+        size = copy(size)
         h, w = self.get_dim(lvl)
         padx1, pady1, padx2, pady2 = 0, 0, 0, 0
 

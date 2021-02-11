@@ -95,6 +95,7 @@ class NeuronThresholder(Thresholder):
 
         # mask out any slide background
         self.frame.mask(tissue_mask, value=255)
+        self.frame.mask_histo = self.frame.histogram()
 
         # flatten the data and remove masked data from the analysis
         data = self.frame.img[self.frame.img != 255].flatten()[:, None]
