@@ -1,4 +1,5 @@
 
+import math
 import numpy as np
 from numba import jit
 
@@ -6,6 +7,8 @@ ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale point in micron units")
 ERR_MICRONS = ERR % ("Point is already in micron units")
 ERR_PIXELS = ERR % ("Point is already in pixel units")
+ERR_COMPARE = ERR % ("Objects are not in the same resolution")
+
 class UnitException(Exception):
     def __init__(self, message):
         self.message = message
@@ -51,6 +54,13 @@ def to_pixels(point, lvl):
     point.is_micron = False
     rescale(point, lvl)
 
+def rotate_point(origin, point, angle):
+    ox, oy = origin
+    px, py = point
+    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
+    return np.array((qx, qy))
+
 @jit(nopython=True)
 def ray_tracing(x,y,poly):
     n = len(poly)
@@ -71,6 +81,10 @@ def ray_tracing(x,y,poly):
         p1x,p1y = p2x,p2y
 
     return inside
+
+# calculates the angle of rotation (degrees) given 2 coordinates forming a line
+def find_angle(a, b):
+    return np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
 
 # defines an (x, y) point in terms of microns
 # TODO: could instead make a Unit class instead of point class
@@ -112,14 +126,39 @@ class Polygon:
         return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
 
     def centroid(self):
-        A = self.area(self.x, self.y)
+        A = self.area()
         x0, x1, y0, y1 = self.x, np.roll(self.x,1), self.y, np.roll(self.y,1)
         cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
         cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
         c = Point(cx, cy, self.mpp, self.ds, self.is_micron, self.lvl)
         d = np.sqrt((c[0] - self.x)**2 + (c[1] - self.y)**2)
-        r = np.max(dist)
+        r = np.max(d)
         return c, r
+
+    def linear_regression(self):
+        ss_xy = np.sum(self.y * self.x) - \
+            self.n * np.mean(self.y) * np.mean(self.x)
+        ss_xx = np.sum(self.x**2) - self.n * np.mean(self.x)**2
+        m = ss_xy/ss_xx
+        b = np.mean(self.y) - m * np.mean(self.x)
+        return m, b
+
+    def translate(self, p):
+        if p.lvl != self.lvl or p.is_micron != self.is_micron:
+            raise UnitException(ERR_COMPARE)
+        self.x -= p[0]
+        self.y -= p[1]
+
+    def rotate(self, centroid, angle):
+        x1, y1 = np.zeros(self.n), np.zeros(self.n)
+        th = math.radians(-angle)
+        for i in range(self.n):
+            p0 = Point(self.x[i], self.y[i], self.mpp, self.ds,
+                      self.is_micron, self.lvl)
+            p1 = rotate_point(centroid, p0, th)
+            x1[i] = p1[0]
+            y1[i] = p1[1]
+        return Polygon(x1, y1, self.mpp, self.ds, self.is_micron, self.lvl)
 
     def round(self):
         if self.x.dtype == np.int:

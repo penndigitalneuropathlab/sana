@@ -57,13 +57,34 @@ class Detector:
         # NOTE: PIL needs the vertices to be tuples
         polys = []
         for d in self.get_bodies():
-            d.polygon.to_pixels(self.lvl)
+            if d.polygon.is_micron:
+                d.polygon.to_pixels(self.lvl)
+            else:
+                d.polygon.rescale(self.lvl)
             d.polygon.round()
             polys.append([tuple(v) for v in d.polygon.vertices()])
+
+        size = np.copy(size)
+        size = sana_geo.round(size)
         mask = Image.new('L', (size[0], size[1]), x)
         for poly in polys:
             ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
         return Frame(np.array(mask)[:, :, None])
+
+    def ray_trace_vertices(self, p1):
+        x, y = [], []
+        for d in self.detections:
+            p0 = d.polygon
+            if p0.is_micron:
+                p0.to_pixels(p1.lvl)
+            else:
+                p0.rescale(p1.lvl)
+            for v in p0.vertices():
+                if sana_geo.ray_tracing(v[0], v[1], p1.vertices()):
+                    x.append(v[0])
+                    y.append(v[1])
+        return sana_geo.Polygon(np.array(x), np.array(y),
+                       self.mpp, self.ds, False, self.lvl)
 
     def get_bodies(self):
         bodies = []
@@ -78,7 +99,7 @@ class TissueDetector(Detector):
     def __init__(self, mpp, ds, lvl):
         super().__init__(mpp, ds, lvl)
 
-    def run(self, frame, min_body_area, min_hole_area):
+    def run(self, frame, min_body_area=0, min_hole_area=0):
 
         # perform the object detection
         self.detect(frame)

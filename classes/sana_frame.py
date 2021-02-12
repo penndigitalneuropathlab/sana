@@ -3,6 +3,7 @@ import os
 import sys
 import cv2
 import numpy as np
+from scipy import ndimage
 from copy import copy
 from scipy.ndimage.filters import gaussian_filter
 
@@ -54,6 +55,11 @@ class Frame:
         if size is not None:
             img = img[:size[0], :size[1]]
 
+        return Frame(img)
+
+    # NOTE: reshape=False might cause alignment issue down the line
+    def rotate(self, angle):
+        img = ndimage.rotate(self.img, angle, reshape=False, mode='nearest')
         return Frame(img)
 
     # calculates the background color as the most common color

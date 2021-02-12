@@ -61,7 +61,8 @@ class Framer:
             self.n = len(locs)
             self.locs = locs
             for i in range(self.n):
-                sana_geo.to_pixels(self.locs[i], self.loader.lvl)
+                if self.locs[i].is_micron:
+                    sana_geo.to_pixels(self.locs[i], self.loader.lvl)
             self.i = 0
 
     def load(self, i, j=None):
