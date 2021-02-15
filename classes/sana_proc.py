@@ -107,17 +107,15 @@ def rotate_roi(loader, anno, layer_0):
 
     # find the rotation of the best fit
     angle = sana_geo.find_angle(a, b)
-    angle = angle - (90 * (angle//90))
+    quadrant = angle//90
+    if quadrant > 1:
+        angle -= 180
 
-    # TODO: calcualte rotation based on quadrant, don't do the line above
     # rotate layer 0 detection, modify the angle such that layer 0 is that the
     #  top of the frame instead of the left or right
     layer_0_rot = layer_0.rotate(centroid, angle)
-    # if np.mean(layer_0_rot.x) >= frame.size[0]//2:
-    #     angle += 90
-    # else:
-    #     angle += 270
-
+    if np.mean(layer_0_rot.y) >= frame.size[1]//2:
+        angle -= 180
     # rotate the frame, roi, and layer 0 detection
     frame_rot = frame.rotate(angle)
     anno_rot = anno.rotate(centroid, angle)

@@ -56,8 +56,8 @@ def main(argv):
         slides += sana_io.read_list_file(list_f)
 
     # loop through the slides
-    for slide_f in slides:
-        print("--> Processing: %s" % os.path.basename(slide_f))
+    for slide_i, slide_f in enumerate(slides):
+        print("--> Processing: %s (%d/%d)" % (os.path.basename(slide_f), slide_i+1, len(slides)))
 
         # get the annotation file
         # NOTE: this will either be a series of candidate ROIs, or simply
@@ -76,12 +76,16 @@ def main(argv):
         # loop through the annotations
         annos = sana_io.read_qupath_annotations(anno_f, loader.mpp, loader.ds)
         for anno_i, anno in enumerate(annos):
-            print("----> Processing ROI %d/%d" % (anno_i+1, len(annos)))
+            print("----> Processing ROI (%d/%d)" % (anno_i+1, len(annos)))
 
             # get the thumbnail resolution detections of the tissue in the ROI
             print("------> Detecting Layer 0 Boundary in ROI")
             layer_0, tissue_mask_tb = sana_proc.detect_layer_0_roi(
                 slide_f, anno, tissue_threshold)
+
+            if layer_0.n == 0:
+                print("WARNING: No Slide Background Detected in ROI. Skipping ROI...")
+                continue
 
             # TODO: need to crop the image as well based on the radius?
             # get a rotated version of the roi defined by the annotation and the
