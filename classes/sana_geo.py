@@ -143,6 +143,15 @@ class Polygon:
         b = np.mean(self.y) - m * np.mean(self.x)
         return m, b
 
+    def bounding_box(self):
+        x0, y0 = np.min(self.x), np.min(self.y)
+        x1, y1 = np.max(self.x), np.max(self.y)
+        loc = Point(x0, y0, self.mpp, self.ds,
+                    is_micron=self.is_micron, lvl=self.lvl)
+        size = Point(x1-x0, y1-y0, self.mpp, self.ds,
+                     is_micron=self.is_micron, lvl=self.lvl)
+        return loc, size
+
     def translate(self, p):
         if p.lvl != self.lvl or p.is_micron != self.is_micron:
             raise UnitException(ERR_COMPARE)

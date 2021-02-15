@@ -6,11 +6,12 @@ import numpy as np
 from scipy import ndimage
 from copy import copy
 from scipy.ndimage.filters import gaussian_filter
+from PIL import Image
 
+import sana_io
 import sana_geo
 from sana_color_deconvolution import StainSeparator
 
-# TODO: this should probably be it's own file
 # TODO: see where else cv2 can be used
 class Frame:
     def __init__(self, img):
@@ -62,6 +63,11 @@ class Frame:
         img = ndimage.rotate(self.img, angle, reshape=False, mode='nearest')
         return Frame(img)
 
+    def save(self, fname):
+        sana_io.create_directory(fname)
+        im = Image.fromarray(self.img)
+        im.save(fname)
+
     # calculates the background color as the most common color
     #  in the grayscale space
     def get_bg_color(self):
@@ -91,24 +97,6 @@ class Frame:
             y = np.full_like(self.img, y)
 
         self.img = np.where(self.img < threshold, x, y)
-
-    # separates the stain from the image, grays and blurs the frame
-    def to_dab_gray(self, blur=0):
-
-        # perform the stain separation
-        separator = StainSeparator('H-DAB')
-        _, dab, _ = separator.run(
-            self.img, ret=(False, True, False), rescale=False)
-
-        # set the new img
-        self.img = dab
-
-        # convert to grayscale
-        self.to_gray()
-
-        # blur as needed
-        if blur != 0:
-            self.gauss_blur(blur)
 
 #
 # end of Frame

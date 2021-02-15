@@ -5,9 +5,11 @@ from matplotlib import pyplot as plt
 
 import sana_geo
 from sana_loader import Loader
+from sana_color_deconvolution import StainSeparator
 from sana_thresholder import TissueThresholder
 from sana_detector import TissueDetector
 from sana_framer import Framer
+from sana_frame import Frame
 
 # TODO: need to optimize this - shouldn't need to use gmm()
 def get_tissue_threshold(filename):
@@ -106,21 +108,41 @@ def rotate_roi(loader, anno, layer_0):
     angle = sana_geo.find_angle(a, b)
     angle = angle - (90 * (angle//90))
 
+    # TODO: calcualte rotation based on quadrant, don't do the line above
     # rotate layer 0 detection, modify the angle such that layer 0 is that the
     #  top of the frame instead of the left or right
     layer_0_rot = layer_0.rotate(centroid, angle)
-    if np.mean(layer_0_rot.x) >= frame.size[0]//2:
-        angle += 90
-    else:
-        angle += 270
+    # if np.mean(layer_0_rot.x) >= frame.size[0]//2:
+    #     angle += 90
+    # else:
+    #     angle += 270
 
     # rotate the frame, roi, and layer 0 detection
     frame_rot = frame.rotate(angle)
     anno_rot = anno.rotate(centroid, angle)
+    anno_rot.round()
+
+    # crop the frame based on the new bounding box of the ROI
+    loc, size = anno_rot.bounding_box()
+    frame_rot = frame_rot.crop(loc, size)
 
     return frame, anno, frame_rot, anno_rot, a, b
 #
 # end of rotate_roi
+
+# TODO: this nshould probabbly just be a function in Frame
+def separate_roi(frame, stain_type, stain_target):
+
+    # initialize the color deconvolution algorithm
+    separator = StainSeparator(stain_type, stain_target)
+
+    # run it on the given frame
+    return Frame(separator.run(frame.img)[0])
+#
+# end of separate_roi
+
+def threshold_roi(loader, frame):
+    pass
 
 #
 # end of file

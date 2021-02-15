@@ -7,7 +7,7 @@ from numpy.linalg import det, inv
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
-    def __init__(self, stain_type):
+    def __init__(self, stain_type, stain_target):
 
         # define the staining vector
         # TODO: estimate the stain vector, dont just use the default
@@ -17,12 +17,22 @@ class StainSeparator:
                 [0.27, 0.57, 0.78],
                 [0.00, 0.00, 0.00],
             ])
+            self.stains = ['HEM', 'DAB', 'RES']
+
         elif stain_type == 'HED':
             stain_v = np.array([
                 [0.65, 0.70, 0.29],
                 [0.07, 0.99, 0.11],
                 [0.27, 0.57, 0.78]
             ])
+            self.stains = ['HEM', 'EOS', 'DAB']
+
+        # define which stains to return
+        if stain_target.upper() == 'ALL':
+            self.ret = [True, True, True]
+        else:
+            self.ret = list(map(lambda x: x == stain_target.upper(),
+                                self.stains))
 
         # normalize the vectors
         # NOTE: usually the stain vector will already be normalized
@@ -50,7 +60,7 @@ class StainSeparator:
         else:
             return v
 
-    def run(self, img, ret=[True, True, True], rescale=False):
+    def run(self, img, rescale=False):
         s1, s2, s3 = None, None, None
 
         # separate the stains, convert from rgb to stains
@@ -58,25 +68,29 @@ class StainSeparator:
 
         # convert each stain channel individually back to a new rgb image
         #  using the original stain vector
+        ret = []
         z = np.zeros_like(stains[:, :, 0])
-        if ret[0]:
+        if self.ret[0]:
             s1 = self.combine_stains(
                 np.stack((stains[:, :, 0], z, z), axis=-1))
-        if ret[1]:
+            ret.append(s1)
+        if self.ret[1]:
             s2 = self.combine_stains(
                 np.stack((z, stains[:, :, 1], z), axis=-1))
-        if ret[2]:
+            ret.append(s2)
+        if self.ret[2]:
             s3 = self.combine_stains(
                 np.stack((z, z, stains[:, :, 2]), axis=-1))
+            ret.append(s3)
 
-        if not rescale:
-            return s1, s2, s3
-        else:
+        if rescale:
             h = rescale_intensity(stains[:, :, 0], out_range=(0, 1),
                       in_range=(0, np.percentile(stains[:, :, 0], 99)))
             d = rescale_intensity(stains[:, :, 1], out_range=(0, 1),
                       in_range=(0, np.percentile(stains[:, :, 1], 99)))
-            return s1, s2, s3, np.dstack((z, d, h))
+            ret.append(np.dstack((z, d, h)))
+
+        return ret
 
     # performs color denconvolution using a rgb image and a inverted stain vector
     def separate_stains(self, rgb):
