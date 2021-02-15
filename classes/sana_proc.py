@@ -6,7 +6,7 @@ from matplotlib import pyplot as plt
 import sana_geo
 from sana_loader import Loader
 from sana_color_deconvolution import StainSeparator
-from sana_thresholder import TissueThresholder
+from sana_thresholder import TissueThresholder, CellThresholder
 from sana_detector import TissueDetector
 from sana_framer import Framer
 from sana_frame import Frame
@@ -16,7 +16,7 @@ def get_tissue_threshold(filename):
 
     # initialize the Loader
     loader = Loader(filename)
-
+    loader.set_lvl(loader.lc-1)
     # calculate the tissue masking threshold
     tissue_frame = copy(loader.thumbnail)
     thresholder = TissueThresholder(tissue_frame, blur=5)
@@ -55,7 +55,8 @@ def detect_layer_0_roi(filename, anno, tissue_threshold):
     frame.gauss_blur(5)
     frame.threshold(tissue_threshold, x=255, y=0)
     detector = TissueDetector(loader.mpp, loader.ds, loader.lvl)
-    detector.run(frame)
+    min_body_size = 1e5
+    detector.run(frame, min_body_size)
 
     # shift the annotation to the relative position
     anno.translate(framer.locs[0])
@@ -120,17 +121,28 @@ def rotate_roi(loader, anno, layer_0):
     # rotate the frame, roi, and layer 0 detection
     frame_rot = frame.rotate(angle)
     anno_rot = anno.rotate(centroid, angle)
-    anno_rot.round()
 
     # crop the frame based on the new bounding box of the ROI
     loc, size = anno_rot.bounding_box()
     frame_rot = frame_rot.crop(loc, size)
+    anno_rot.translate(loc)
+    anno_rot.round()
 
     return frame, anno, frame_rot, anno_rot, a, b
 #
 # end of rotate_roi
 
-# TODO: this nshould probabbly just be a function in Frame
+# TODO: all below functions should probabbly be in Frame
+def get_tissue_mask(frame, tissue_threshold, mpp, ds, lvl):
+    tissue_frame = frame.copy()
+    tissue_frame.to_gray()
+    tissue_frame.gauss_blur(5)
+    tissue_frame.threshold(tissue_threshold, x=255, y=0)
+    detector = TissueDetector(mpp, ds, lvl)
+    min_body_size = 1e5
+    detector.run(tissue_frame, min_body_size)
+    return detector.generate_mask(tissue_frame.size)
+
 def separate_roi(frame, stain_type, stain_target):
 
     # initialize the color deconvolution algorithm
@@ -141,8 +153,13 @@ def separate_roi(frame, stain_type, stain_target):
 #
 # end of separate_roi
 
-def threshold_roi(loader, frame):
-    pass
+def threshold_roi(frame, tissue_mask, blur=0):
+
+    # perform the thresholding
+    thresholder = CellThresholder(frame, tissue_mask, blur)
+    thresholder.mask_frame()
+#
+# end of threshold_roi
 
 #
 # end of file

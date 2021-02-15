@@ -4,7 +4,7 @@ import sys
 import numpy as np
 from sklearn.mixture import GaussianMixture
 from scipy.stats import multivariate_normal
-
+from sana_color_deconvolution import StainSeparator
 class Thresholder:
     def __init__(self, data, k):
         self.data = data
@@ -86,12 +86,12 @@ class TissueThresholder(Thresholder):
 #
 # end of TissueThresholder
 
-class NeuronThresholder(Thresholder):
+class CellThresholder(Thresholder):
     def __init__(self, frame, tissue_mask, blur=0):
         self.frame = frame
 
-        # convert to grayscale dab stain
-        self.frame.to_dab_gray(blur)
+        self.frame.to_gray()
+        self.frame.gauss_blur(blur)
 
         # mask out any slide background
         self.frame.mask(tissue_mask, value=255)
@@ -110,9 +110,9 @@ class NeuronThresholder(Thresholder):
 
         # define threshold as the crossing between PDFs
         self.mle()
-        self.neuron_threshold = self.thresholds[0]
+        self.cell_threshold = self.thresholds[0]
 
         # threshold the frame to generate the neuron mask
-        self.frame.threshold(self.neuron_threshold, x=255, y=0)
+        self.frame.threshold(self.cell_threshold, x=255, y=0)
 #
 # end of file

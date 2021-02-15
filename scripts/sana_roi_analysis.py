@@ -12,6 +12,7 @@ import sana_geo
 import sana_proc
 from sana_loader import Loader
 
+DEF_DEBUG = False
 DEF_DETECT_ROI = False
 DEF_FILETYPE = '.png'
 DEF_LEVEL = 2
@@ -29,8 +30,10 @@ DEF_WRITE_THRESH = False
 
 def main(argv):
 
+    # debugger = SanaDebugger()
     parser = argparse.ArgumentParser()
     parser.add_argument('files', type=str, nargs='*')
+    parser.add_argument('-debug', action='store_true', default=DEF_DEBUG)
     parser.add_argument('-detect_roi', type=bool, default=DEF_DETECT_ROI)
     parser.add_argument('-level', type=int, default=DEF_LEVEL)
     parser.add_argument('-filetype', type=str, default=DEF_FILETYPE)
@@ -54,6 +57,7 @@ def main(argv):
 
     # loop through the slides
     for slide_f in slides:
+        print("--> Processing: %s" % os.path.basename(slide_f))
 
         # get the annotation file
         # NOTE: this will either be a series of candidate ROIs, or simply
@@ -65,23 +69,32 @@ def main(argv):
         loader.set_lvl(args.level)
 
         # pre-calculate the tissue threshold
+        print("----> Pre-Calculating the Tissue/Slide Threshold")
         tissue_threshold = sana_proc.get_tissue_threshold(slide_f)
 
         # TODO: need to handle writing multiple ROI's per image
         # loop through the annotations
         annos = sana_io.read_qupath_annotations(anno_f, loader.mpp, loader.ds)
-        for anno in annos:
+        for anno_i, anno in enumerate(annos):
+            print("----> Processing ROI %d/%d" % (anno_i+1, len(annos)))
 
             # get the thumbnail resolution detections of the tissue in the ROI
-            layer_0, tissue_mask = sana_proc.detect_layer_0_roi(
+            print("------> Detecting Layer 0 Boundary in ROI")
+            layer_0, tissue_mask_tb = sana_proc.detect_layer_0_roi(
                 slide_f, anno, tissue_threshold)
 
             # TODO: need to crop the image as well based on the radius?
             # get a rotated version of the roi defined by the annotation and the
             #  direction of the tissue boundary
+            print("------> Rotating/Cropping ROI by Angle of Layer 0 Boundary")
             frame, anno, frame_rot, anno_rot, a, b = sana_proc.rotate_roi(
                 loader, anno, layer_0)
             centroid, radius = anno.centroid()
+
+            # generate a current resolution tissue mask from the rotated ROI
+            print("------> Generating Tissue Mask for the ROI")
+            tissue_mask = sana_proc.get_tissue_mask(
+                frame_rot, tissue_threshold, loader.mpp, loader.ds, loader.lvl)
 
             # decide whether or not to process this frame
             # TODO: not implemented yet, need to check the parallelness
@@ -89,27 +102,33 @@ def main(argv):
                 pass
 
             if args.write_roi:
+                print("--------> Writing Rotated/Cropped ROI")
                 roi_f = sana_io.get_ofname(slide_f, args.filetype,
                                            DEF_NAME_ROI,
                                            args.odir, args.rdir)
                 frame_rot.save(roi_f)
 
             # perform color deconvolution on the ROI
+            print("------> Separating %s from the %s Stained ROI" % \
+                  (args.target, args.stain))
             frame_stain = sana_proc.separate_roi(
                 frame_rot, args.stain, args.target)
             if args.write_stain:
+                print("--------> Writing Stain Separated ROI")
                 stain_f = sana_io.get_ofname(slide_f, args.filetype,
                                              DEF_NAME_STAIN,
                                              args.odir, args.rdir)
                 frame_stain.save(stain_f)
 
-            # # perform the thresholding on the stain separated ROI
-            # frame_thresh = sana_proc.threshold_roi(loader, frame_stain)
-            # if args.write_thresh:
-            #     thresh_f = sana_io.get_ofname(slide_f, args.filetype,
-            #                                   DEF_NAME_THRESH,
-            #                                   args.odir, args.rdir)
-            #     frame_thresh.save(thresh_f)
+            # perform the thresholding on the stain separated ROI
+            print("------> Thresholding the Stain Separated ROI")
+            sana_proc.threshold_roi(frame_stain, tissue_mask, blur=1)
+            if args.write_thresh:
+                print("--------> Writing Thresholded ROI")
+                thresh_f = sana_io.get_ofname(slide_f, args.filetype,
+                                              DEF_NAME_THRESH,
+                                              args.odir, args.rdir)
+                frame_stain.save(thresh_f)
         #
         # end of annos loop
     #
@@ -118,7 +137,7 @@ def main(argv):
 # end of main
 
 def plot1(frame, anno, centroid, radius,
-          tissue_mask, a, b, frame_rot, anno_rot):
+          tissue_mask_tb, a, b, frame_rot, anno_rot):
 
     fig = plt.figure(constrained_layout=True)
     gs = fig.add_gridspec(1, 3)
@@ -137,7 +156,7 @@ def plot1(frame, anno, centroid, radius,
     sana_geo.rescale(b, 2)
 
     ax1 = fig.add_subplot(gs[0, 1])
-    ax1.imshow(tissue_mask.img)
+    ax1.imshow(tissue_mask_tb.img)
     ax1.plot((a[0], b[0]), (a[1], b[1]), color='red')
     ax1.set_title('Tissue Detection')
 

@@ -20,6 +20,9 @@ class Frame:
         if img.shape[-1] == 3:
             self.color_histo = self.histogram()
 
+    def copy(self):
+        return Frame(np.copy(self.img))
+
     def to_gray(self):
         if self.img.shape[-1] >= 3:
             float_img = self.img.astype(np.float64)
@@ -65,7 +68,11 @@ class Frame:
 
     def save(self, fname):
         sana_io.create_directory(fname)
-        im = Image.fromarray(self.img)
+        if self.img.ndim == 3 and self.img.shape[2] == 1:
+            im = self.img[:, :, 0]
+        else:
+            im = self.img
+        im = Image.fromarray(im)
         im.save(fname)
 
     # calculates the background color as the most common color
@@ -97,7 +104,6 @@ class Frame:
             y = np.full_like(self.img, y)
 
         self.img = np.where(self.img < threshold, x, y)
-
 #
 # end of Frame
 
