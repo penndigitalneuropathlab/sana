@@ -140,49 +140,6 @@ def main(argv):
 #
 # end of main
 
-def plot1(frame, anno, centroid, radius,
-          tissue_mask_tb, a, b, frame_rot, anno_rot):
-
-    fig = plt.figure(constrained_layout=True)
-    gs = fig.add_gridspec(1, 3)
-
-    # plot the color and grayscale histos
-    ax0 = fig.add_subplot(gs[0,0])
-    ax0.imshow(frame.img)
-    plot_vertices(ax0, anno.vertices())
-    ax0.plot(centroid[0], centroid[1], '.')
-    circle = plt.Circle(centroid, radius, color='black', fill=False)
-    ax0.add_patch(circle)
-    ax0.set_title('User Annotated ROI')
-
-    # plot the tissue mask, with the detected line of best fit
-    sana_geo.rescale(a, 2)
-    sana_geo.rescale(b, 2)
-
-    ax1 = fig.add_subplot(gs[0, 1])
-    ax1.imshow(tissue_mask_tb.img)
-    ax1.plot((a[0], b[0]), (a[1], b[1]), color='red')
-    ax1.set_title('Tissue Detection')
-
-    # plot the rotated neuron mask and annotation
-    ax2 = fig.add_subplot(gs[0, 2])
-    ax2.imshow(frame_rot.img)
-    plot_vertices(ax2, anno_rot.vertices())
-    ax2.set_title('Orthogonal Neuron Detection Mask')
-
-    for ax in [ax0, ax2]:
-        ax.grid(False)
-        ax.set_xticks([])
-        ax.set_yticks([])
-        ax.set_aspect('equal')
-        ax.set_xlim([0, frame.size[0]])
-        ax.set_ylim([frame.size[1], 0])
-    plt.show()
-
-def plot_vertices(ax, v):
-    for i in range(v.shape[0] - 1):
-        ax.plot([v[i][0], v[i+1][0]], [v[i][1], v[i+1][1]], color='red')
-
 if __name__ == "__main__":
     main(sys.argv)
 

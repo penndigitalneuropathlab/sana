@@ -2,4 +2,7 @@
 *~
 workspace/
 __pycache__/
+
+examples/data/
+*.json
 *.svs

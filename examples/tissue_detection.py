@@ -13,7 +13,7 @@ from sana_detector import TissueDetector
 SRC = os.path.split(os.path.dirname(os.path.abspath(__file__)))[0]
 DATA = os.path.join(SRC, 'examples', 'data')
 
-DEF_FILENAME = os.path.join(DATA, '2011-024-37F_STC_NeuN_1K_11-04-2020_RL.svs')
+DEF_FILENAME = os.path.join(DATA, 'images', '2011-024-37F_STC_NeuN_1K_11-04-2020_RL.svs')
 
 def main(argv):
 
@@ -49,63 +49,49 @@ def main(argv):
     polygons = [d.polygon for d in tissue_detections]
     [p.to_pixels(loader.lvl) for p in polygons]
 
-    # plot the original thumbnail along with the tissue mask
-    plot1(loader.thumbnail, frame, tissue_threshold)
-
-    # plot the thresholded thumbnail along with the tissue detections
-    plot2(loader.thumbnail, frame, polygons)
+    # plot the original thumbnail along with the tissue mask, and the objects
+    plot1(loader.thumbnail, frame, tissue_threshold, polygons)
 
     # finally, show the plot
     plt.show()
 
-def plot1(thumbnail, frame, threshold):
+def plot1(thumbnail, frame, threshold, polygons):
 
     fig = plt.figure(constrained_layout=True)
-    gs = fig.add_gridspec(2,2)
+    gs = fig.add_gridspec(2,3)
 
     # plot the color and grayscale histos
     ax0 = fig.add_subplot(gs[0,:])
+    ax0.bar(list(range(0, 256)), frame.blur_histo[:, 0], color='black', label='Intensity Histogram')
     ax0.plot(frame.color_histo[:, 0], color='red')
     ax0.plot(frame.color_histo[:, 1], color='green')
     ax0.plot(frame.color_histo[:, 2], color='blue')
-    ax0.plot(frame.blur_histo, color='black')
-    ax0.axvline(threshold, linestyle='dashed', color='purple')
-    ax0.set_title('Histogram of Slide')
+    ax0.axvline(threshold, linestyle='dashed', color='purple', label='Tissue/Slide Threshold')
+    ax0.set_xlim([180, 255])
+    ax0.get_yaxis().set_visible(False)
+    ax0.legend()
 
     # plot the thumbnail
     ax1 = fig.add_subplot(gs[1,0])
     ax1.imshow(thumbnail.img)
-    ax1.set_title('Slide Thumbnail')
     ax1.axis('off')
     ax1.grid('off')
 
     # plot the tissue mask
     ax2 = fig.add_subplot(gs[1,1])
-    ax2.matshow(frame.img)
-    ax2.set_title('Tissue Detection Mask')
+    ax2.matshow(1 - frame.img)
     ax2.get_shared_x_axes().join(ax1, ax2)
     ax2.get_shared_y_axes().join(ax1, ax2)
     ax2.axis('off')
     ax2.grid('off')
 
-def plot2(thumbnail, frame, polygons):
-
-    fig = plt.figure(constrained_layout=True)
-    gs = fig.add_gridspec(1, 2)
-
-    ax0 = fig.add_subplot(gs[0, 0])
-    ax0.matshow(frame.img)
-    ax0.set_title('Tissue Detection Mask')
-    ax0.axis('off')
-    ax0.grid('off')
-
-    ax1 = fig.add_subplot(gs[0, 1])
-    ax1.imshow(thumbnail.img)
-    ax1.set_title('Tissue Object Detections')
-    ax1.axis('off')
-    ax1.grid('off')
+    # plot the tissue objects
+    ax3 = fig.add_subplot(gs[1, 2])
+    ax3.imshow(thumbnail.img)
+    ax3.axis('off')
+    ax3.grid('off')
     for p in polygons:
-        ax1.plot(p.x, p.y, color='black')
+        ax3.plot(p.x, p.y, color='black')
 
 if __name__ == "__main__":
     main(sys.argv)
