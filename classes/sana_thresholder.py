@@ -6,9 +6,10 @@ from sklearn.mixture import GaussianMixture
 from scipy.stats import multivariate_normal
 from sana_color_deconvolution import StainSeparator
 class Thresholder:
-    def __init__(self, data, k):
+    def __init__(self, data, k, n):
         self.data = data
         self.k = k
+        self.n = n
 
     def run_gmm(self):
         self.gmm()
@@ -19,13 +20,19 @@ class Thresholder:
         gmm = GaussianMixture(
             n_components=self.k, covariance_type='full').fit(self.data)
 
-        # get the sorted means and corresponding variances
-        inds = gmm.means_[:, 0].argsort()
+        # get the sorted variances and corresponding means
+        inds = gmm.covariances_[:, 0, 0].argsort()
         means = gmm.means_[:, 0][inds]
         vars = gmm.covariances_[:, 0, 0][inds]
 
-        self.means = np.rint(means).astype(int)
-        self.vars = vars
+        # take the top N distributions
+        means = np.rint(means[:self.n]).astype(int)
+        vars = vars[:self.n]
+
+        # sort the distributionsn by the means
+        inds = means.argsort()
+        self.means = means[inds]
+        self.vars = vars[inds]
 
     # finds the optimal boundaries between a set of means and vars
     def mle(self):
@@ -34,7 +41,7 @@ class Thresholder:
         # NOTE: this is finding the crossing of the PDFs between the means
         t = np.arange(0, 256, 1)
         thresholds = []
-        for i in range(self.k-1):
+        for i in range(self.n-1):
 
             # generate the pdfs
             p1 = multivariate_normal(self.means[i], self.vars[i]).pdf(t)
@@ -52,39 +59,85 @@ class Thresholder:
     # defines the threshold as 1 std above the mean
     def close_right(self):
         thresholds = []
-        for i in range(self.k-1):
+        for i in range(self.n-1):
             thresholds.append(self.means[i] + 2*np.sqrt(self.vars[i]))
         self.thresholds = thresholds
 #
 # end of Thresholder
 
 class TissueThresholder(Thresholder):
-    def __init__(self, frame, blur=5):
+    def __init__(self, frame, blur=5, mi=0, mx=255):
         self.frame = frame
+        self.mi = mi
+        self.mx = mx
 
         # convert to grayscale and blur
         self.frame.to_gray()
         self.frame.gauss_blur(blur)
 
         # flatten the data
-        data = self.frame.img.flatten()[:, None]
+        # TODO: downsampling the data is not a great solution...
+        data = self.frame.img.flatten()
+        data = data[data >= self.mi]
+        data = data[data <= self.mx]
+        data = data[::500]
+        data = data[:, None]
 
         # initialize the thresholder
-        super().__init__(data, 2)
+        super().__init__(data, 8, 2)
 
     def mask_frame(self):
 
         # run the gmm algorithm to define the means and vars of the data
         self.gmm()
 
-        # define threshold as 1 std from the mean
-        self.close_right()
+        # use mle to define the crossing of PDFs
+        self.mle()
         self.tissue_threshold = self.thresholds[0]
 
         # threshold the frame to generate a tissue mask
         self.frame.threshold(self.tissue_threshold, x=1, y=0)
 #
 # end of TissueThresholder
+
+class StainThresholder(Thresholder):
+    def __init__(self, frame, blur=0, mi=0, mx=255):
+        self.frame = frame
+        self.mi = mi
+        self.mx = mx
+
+        # convert to grayscale and blur
+        self.frame.to_gray()
+        self.frame.gauss_blur(blur)
+
+        # flatten the data
+        data = self.frame.img.flatten()
+        data = data[data >= self.mi]
+        data = data[data <= self.mx]
+        data = data[::1000]
+        data = data[:, None]
+
+        # initialize the thresholder
+        super().__init__(data, 3, 3)
+
+    def mask_frame(self):
+
+        # run the gmm algorithm to define the means and vars of the data
+        self.gmm()
+
+        # use mle to define the crossing of PDFs
+        self.mle()
+        self.stain_threshold, self.tissue_threshold = \
+            self.thresholds
+
+        # threshold the frame to generate a tissue mask
+        self.frame.threshold(
+            self.tissue_threshold, x=np.copy(self.frame.img), y=255)
+        self.frame.threshold(
+            self.stain_threshold, x=0, y=np.copy(self.frame.img))
+
+#
+# end of StainThresholder
 
 class CellThresholder(Thresholder):
     def __init__(self, frame, tissue_mask, blur=0):
@@ -101,7 +154,7 @@ class CellThresholder(Thresholder):
         data = self.frame.img[self.frame.img != 255].flatten()[:, None]
 
         # initalize the thresholder
-        super().__init__(data, 2)
+        super().__init__(data, 2, 2)
 
     def mask_frame(self):
 
@@ -110,7 +163,7 @@ class CellThresholder(Thresholder):
 
         # define threshold as the crossing between PDFs
         self.mle()
-        self.cell_threshold = self.thresholds[0]
+        self.cell_threshold = self.thresholds[0]-5
 
         # threshold the frame to generate the neuron mask
         self.frame.threshold(self.cell_threshold, x=255, y=0)
