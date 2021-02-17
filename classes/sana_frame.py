@@ -66,6 +66,13 @@ class Frame:
         img = ndimage.rotate(self.img, angle, reshape=False, mode='nearest')
         return Frame(img)
 
+    def pad(self, pad):
+        before = pad//2
+        after = pad - before
+        return Frame(np.pad(self.img,
+                            ((before[1],after[1]),(before[0],after[0]),(0,0)),
+                            mode='wrap'))
+
     def save(self, fname):
         sana_io.create_directory(fname)
         if self.img.ndim == 3 and self.img.shape[2] == 1:
