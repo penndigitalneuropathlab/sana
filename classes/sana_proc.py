@@ -9,6 +9,7 @@ from sana_color_deconvolution import StainSeparator
 from sana_thresholder import TissueThresholder, CellThresholder
 from sana_detector import TissueDetector
 from sana_framer import Framer
+from sana_tiler import Tiler
 from sana_frame import Frame
 
 # TODO: need to optimize this - shouldn't need to use gmm()
@@ -101,7 +102,7 @@ def rotate_roi(loader, anno, layer_0):
     m0, b0 = layer_0.linear_regression()
     a = sana_geo.Point(0, m0*0 + b0, loader.mpp, loader.ds,
                        is_micron=False, lvl=loader.lvl)
-    b = sana_geo.Point(frame.size[1], m0*frame.size[1] + b0,
+    b = sana_geo.Point(frame.size[0], m0*frame.size[0] + b0,
                        loader.mpp, loader.ds,
                        is_micron=False, lvl=loader.lvl)
 
@@ -159,5 +160,19 @@ def threshold_roi(frame, tissue_mask, blur=0):
 #
 # end of threshold_roi
 
+def density_roi(loader, frame, tsize, tstep):
+
+    # initialize the tiler
+    tsize = sana_geo.Point(tsize[0], tsize[1], loader.mpp, loader.ds)
+    tstep = sana_geo.Point(tstep[0], tstep[1], loader.mpp, loader.ds)
+    tiler = Tiler(loader, tsize, tstep)
+
+    # load the tiles
+    tiles = tiler.load_tiles(frame, pad=True)
+    print(tiles.shape)
+    # calculate the density of the stain in the roi
+    density = np.mean(tiles, axis=(2, 3))
+
+    return Frame(density)
 #
 # end of file
