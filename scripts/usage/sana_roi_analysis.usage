@@ -1,0 +1,5 @@
+usage:
+  sana_roi_analysis.py files.list -adir /path/to/annos
+  sana_roi_analysis.py files.list -detect_roi -adir /path/to/annos
+  sana_roi_analysis.py files.list -stain H-DAB -target HEM -adir /path/to/annos
+  sana_roi_analysis.py files.list -write_stain -write_thresh -adir /path/to/annos

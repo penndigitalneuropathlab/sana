@@ -29,31 +29,17 @@ DEF_WRITE_STAIN = False
 DEF_WRITE_THRESH = False
 
 def main(argv):
-
-    # debugger = SanaDebugger()
-    parser = argparse.ArgumentParser()
-    parser.add_argument('files', type=str, nargs='*')
-    parser.add_argument('-debug', action='store_true', default=DEF_DEBUG)
-    parser.add_argument('-detect_roi', type=bool, default=DEF_DETECT_ROI)
-    parser.add_argument('-level', type=int, default=DEF_LEVEL)
-    parser.add_argument('-filetype', type=str, default=DEF_FILETYPE)
-    parser.add_argument('-stain', type=str, default=DEF_STAIN)
-    parser.add_argument('-target', type=str, default=DEF_TARGET)
-    parser.add_argument('-adir', type=str, default=DEF_ADIR)
-    parser.add_argument('-odir', type=str, default=DEF_ODIR)
-    parser.add_argument('-rdir', type=str, default=DEF_RDIR)
-    parser.add_argument('-write_roi', action='store_true',
-                        default=DEF_WRITE_ROI)
-    parser.add_argument('-write_stain', action='store_true',
-                        default=DEF_WRITE_STAIN)
-    parser.add_argument('-write_thresh', action='store_true',
-                        default=DEF_WRITE_THRESH)
+    parser = cmdl_parser(argv)
     args = parser.parse_args()
 
     # get all the slide files to process
     slides = []
     for list_f in args.files:
         slides += sana_io.read_list_file(list_f)
+
+    if len(slides) == 0:
+        parser.print_usage()
+        exit()
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
@@ -139,6 +125,43 @@ def main(argv):
     # end of slides loop
 #
 # end of main
+
+def cmdl_parser(argv):
+    d = os.path.dirname(__file__)
+    f = os.path.basename(__file__)
+    usage = open(os.path.join(d, 'usage', f.replace('.py', '.usage'))).read()
+    parser = argparse.ArgumentParser(usage=usage)
+    parser.add_argument('files', type=str, nargs='*')
+    parser.add_argument('-debug', action='store_true', default=DEF_DEBUG,
+                        help="show debugging info")
+    parser.add_argument('-detect_roi', type=bool, default=DEF_DETECT_ROI,
+                        help="filter candidate ROIs into a single ROI")
+    parser.add_argument('-level', type=int, default=DEF_LEVEL,
+                        help="specify the slide level to process on\n[default: 0]")
+    parser.add_argument('-stain', type=str, default=DEF_STAIN,
+                        help="define the Stain type (H-DAB, HED)\n[default: H-DAB]")
+    parser.add_argument('-target', type=str, default=DEF_TARGET,
+                        help="define the Stain target (HEM, DAB, EOS, RES, ALL) \n[default: DAB]")
+    parser.add_argument('-adir', type=str, default=DEF_ADIR,
+                        help="specify the location of annotation files\n[default: same as slide]")
+    parser.add_argument('-odir', type=str, default=DEF_ODIR,
+                        help="specify the location to write files to\n[default: same as slide]")
+    parser.add_argument('-rdir', type=str, default=DEF_RDIR,
+                        help="specify directory path to replace\n[default: ""]")
+    parser.add_argument('-filetype', type=str, default=DEF_FILETYPE,
+                        help="output image file extension\n[default: .png]")
+    parser.add_argument('-write_roi', action='store_true',
+                        default=DEF_WRITE_ROI,
+                        help="outputs the raw slide ROI")
+    parser.add_argument('-write_stain', action='store_true',
+                        default=DEF_WRITE_STAIN,
+                        help="outputs the stain separated ROI")
+    parser.add_argument('-write_thresh', action='store_true',
+                        default=DEF_WRITE_THRESH,
+                        help="outputs the thresholded ROI")
+    return parser
+#
+# end of cmdl_parser
 
 if __name__ == "__main__":
     main(sys.argv)
