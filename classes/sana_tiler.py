@@ -4,6 +4,7 @@ import sys
 import cv2
 from copy import copy
 import numpy as np
+from matplotlib import pyplot as plt
 
 import sana_geo
 from sana_framer import Framer, Frame
@@ -28,9 +29,9 @@ class Tiler:
         else:
             sana_geo.rescale(self.size, loader.lvl)
         if self.step.is_micron:
-            sana_geo.to_pixels(self.size, loader.lvl)
+            sana_geo.to_pixels(self.step, loader.lvl)
         else:
-            sana_geo.rescale(self.size, loader.lvl)
+            sana_geo.rescale(self.step, loader.lvl)
         self.size = sana_geo.round(self.size)
         self.step = sana_geo.round(self.step)
 
@@ -46,24 +47,27 @@ class Tiler:
     def load_frame(self, i, j):
         return self.framer.load(i, j)
 
-    def load_tiles(self, frame):
+    def load_tiles(self, frame, pad=False):
+        if pad:
+            frame = frame.pad(self.fpad)
 
         # set the frame and calculate the number of tiles in the frame
         self.frame = frame
+        self.frame.img = self.frame.img[:, :, 0]
         self.n = ((self.frame.size - self.size) // self.step) + 1
         self.ds = (self.frame.size - self.fpad) / self.n
 
         # define the output shape
-        shape = (self.n[0], self.n[1], self.size[0], self.size[1])
+        shape = (self.n[1], self.n[0], self.size[1], self.size[0])
 
         # size of each element in the frame
         N = self.frame.img.itemsize
 
         # number of bytes between tile rows
-        s0 = N * self.frame.size[0] * self.step[0]
+        s0 = N * self.frame.size[0] * self.step[1]
 
         # number of bytes between tile cols
-        s1 = N * self.step[1]
+        s1 = N * self.step[0]
 
         # number of bytes between element rows
         s2 = N * self.frame.size[0]
@@ -77,9 +81,8 @@ class Tiler:
         # perform the tiling
         # NOTE: this is pretty complicated... but very fast
         #       23) in this article -> https://towardsdatascience.com/advanced-numpy-master-stride-tricks-with-25-illustrated-exercises-923a9393ab20
-        self.tiles = np.lib.stride_tricks.as_strided(
+        return np.lib.stride_tricks.as_strided(
             self.frame.img, shape=shape, strides=strides)
-        return self.tiles
 #
 # end of Tiler
 
