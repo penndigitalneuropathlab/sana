@@ -12,10 +12,13 @@ import sana_geo
 import sana_proc
 from sana_loader import Loader
 
-DEF_DEBUG = False
+USAGE = os.path.expanduser(
+    '~/neuropath/src/sana/scripts/usage/sana_roi_analysis.usage')
 DEF_DETECT_ROI = False
 DEF_FILETYPE = '.png'
 DEF_LEVEL = 2
+DEF_TSIZE = (500, 300)
+DEF_TSTEP = (25, 25)
 DEF_NAME_ROI = '_ORIG'
 DEF_NAME_STAIN = '_STAIN'
 DEF_NAME_THRESH = '_THRESH'
@@ -24,11 +27,9 @@ DEF_TARGET = 'DAB'
 DEF_ADIR = None
 DEF_ODIR = None
 DEF_RDIR = None
-DEF_WRITE_ROI = False
-DEF_WRITE_STAIN = False
-DEF_WRITE_THRESH = False
 
 def main(argv):
+    info = [['filename', 'tissue threshold', 'stain threshold', 'angle', 'tsize', 'tstep']]
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
@@ -77,8 +78,8 @@ def main(argv):
             # get a rotated version of the roi defined by the annotation and the
             #  direction of the tissue boundary
             print("------> Rotating/Cropping ROI by Angle of Layer 0 Boundary")
-            frame, anno, frame_rot, anno_rot, a, b = sana_proc.rotate_roi(
-                loader, anno, layer_0)
+            frame, anno, frame_rot, anno_rot, a, b, angle, trans_loc0, trans_loc1 = \
+                sana_proc.rotate_roi(loader, anno, layer_0)
             centroid, radius = anno.centroid()
 
             # generate a current resolution tissue mask from the rotated ROI
@@ -112,32 +113,54 @@ def main(argv):
 
             # perform the thresholding on the stain separated ROI
             print("------> Thresholding the Stain Separated ROI")
-            sana_proc.threshold_roi(frame_stain, tissue_mask, blur=1)
+            stain_threshold = sana_proc.threshold_roi(
+                frame_stain, tissue_mask, blur=1)
             if args.write_thresh:
                 print("--------> Writing Thresholded ROI")
                 thresh_f = sana_io.get_ofname(slide_f, args.filetype,
                                               DEF_NAME_THRESH,
                                               args.odir, args.rdir)
                 frame_stain.save(thresh_f)
+
+            # perform the tiled density calculation
+            frame_density, tds = sana_proc.density_roi(
+                loader, frame_stain, args.tsize, args.tstep, round=True)
+            print("------> Calculating Density of Thresholded ROI")
+            if args.write_density:
+                print("--------> Writing Density")
+                density_f = sana_io.get_ofname(slide_f, ftype=args.filetype,
+                                               odir=args.odir, rdir=args.rdir)
+                frame_density.save(density_f)
+
+            # store information about the processing that occurred
+            info.append(map(str, [slide_f, loader.mpp, loader.ds, loader.lvl, list(trans_loc0), list(trans_loc1), list(centroid), radius, angle, list(tds), tissue_threshold, stain_threshold, angle, list(args.tsize), list(args.tstep)]))
         #
         # end of annos loop
     #
     # end of slides loop
+
+    # write the info related to the processing parameters
+    info_of = sana_io.get_ofname(
+        'information.csv', odir=args.odir, rdir=args.rdir)
+    fp = open(info_of, 'w')
+    for x in info:
+        fp.write('\t'.join(x) + '\n')
+    fp.close()
+
 #
 # end of main
 
 def cmdl_parser(argv):
-    d = os.path.dirname(__file__)
-    f = os.path.basename(__file__)
-    usage = open(os.path.join(d, 'usage', f.replace('.py', '.usage'))).read()
-    parser = argparse.ArgumentParser(usage=usage)
+    parser = argparse.ArgumentParser(usage=open(USAGE).read())
     parser.add_argument('files', type=str, nargs='*')
-    parser.add_argument('-debug', action='store_true', default=DEF_DEBUG,
-                        help="show debugging info")
     parser.add_argument('-detect_roi', type=bool, default=DEF_DETECT_ROI,
                         help="filter candidate ROIs into a single ROI")
     parser.add_argument('-level', type=int, default=DEF_LEVEL,
                         help="specify the slide level to process on\n[default: 0]")
+    parser.add_argument('-tsize', type=int, nargs=2, default=DEF_TSIZE,
+                        help="tile size for analysis\n[default: 500 300]")
+    parser.add_argument('-tstep', type=int, nargs=2, default=DEF_TSTEP,
+                        help="tile step for analysis\n[default: 25 25]")
     parser.add_argument('-stain', type=str, default=DEF_STAIN,
                         help="define the Stain type (H-DAB, HED)\n[default: H-DAB]")
     parser.add_argument('-target', type=str, default=DEF_TARGET,
@@ -151,14 +174,13 @@ def cmdl_parser(argv):
     parser.add_argument('-filetype', type=str, default=DEF_FILETYPE,
                         help="output image file extension\n[default: .png]")
     parser.add_argument('-write_roi', action='store_true',
-                        default=DEF_WRITE_ROI,
                         help="outputs the raw slide ROI")
     parser.add_argument('-write_stain', action='store_true',
-                        default=DEF_WRITE_STAIN,
                         help="outputs the stain separated ROI")
     parser.add_argument('-write_thresh', action='store_true',
-                        default=DEF_WRITE_THRESH,
                         help="outputs the thresholded ROI")
+    parser.add_argument('-write_density', action='store_true',
+                        help="outputs the tiled thresholded ROI density")
     return parser
 #
 # end of cmdl_parser

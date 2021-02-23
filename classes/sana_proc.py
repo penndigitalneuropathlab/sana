@@ -127,7 +127,7 @@ def rotate_roi(loader, anno, layer_0):
     anno_rot.translate(loc)
     anno_rot.round()
 
-    return frame, anno, frame_rot, anno_rot, a, b
+    return frame, anno, frame_rot, anno_rot, a, b, angle, framer.locs[0], loc
 #
 # end of rotate_roi
 
@@ -155,12 +155,13 @@ def separate_roi(frame, stain_type, stain_target):
 def threshold_roi(frame, tissue_mask, blur=0):
 
     # perform the thresholding
-    thresholder = CellThresholder(frame, tissue_mask, blur)
+    thresholder = CellThresholder(frame, tissue_mask, blur, mx=245)
     thresholder.mask_frame()
+    return thresholder.cell_threshold
 #
 # end of threshold_roi
 
-def density_roi(loader, frame, tsize, tstep):
+def density_roi(loader, frame, tsize, tstep, round=False):
 
     # initialize the tiler
     tsize = sana_geo.Point(tsize[0], tsize[1], loader.mpp, loader.ds)
@@ -169,10 +170,12 @@ def density_roi(loader, frame, tsize, tstep):
 
     # load the tiles
     tiles = tiler.load_tiles(frame, pad=True)
-    print(tiles.shape)
-    # calculate the density of the stain in the roi
-    density = np.mean(tiles, axis=(2, 3))
 
-    return Frame(density)
+    # calculate the density of the stain in the roi
+    density = Frame(np.mean(tiles, axis=(2, 3)))
+    if round:
+        density.round()
+
+    return density, tiler.ds
 #
 # end of file

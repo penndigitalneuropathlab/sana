@@ -5,6 +5,8 @@ import numpy as np
 from sklearn.mixture import GaussianMixture
 from scipy.stats import multivariate_normal
 from sana_color_deconvolution import StainSeparator
+from matplotlib import pyplot as plt
+
 class Thresholder:
     def __init__(self, data, k, n):
         self.data = data
@@ -114,7 +116,7 @@ class StainThresholder(Thresholder):
         data = self.frame.img.flatten()
         data = data[data >= self.mi]
         data = data[data <= self.mx]
-        data = data[::1000]
+        data = data[::500]
         data = data[:, None]
 
         # initialize the thresholder
@@ -140,9 +142,9 @@ class StainThresholder(Thresholder):
 # end of StainThresholder
 
 class CellThresholder(Thresholder):
-    def __init__(self, frame, tissue_mask, blur=0):
+    def __init__(self, frame, tissue_mask, blur=0, mi=0, mx=255):
         self.frame = frame
-
+        self.mx = mx
         self.frame.to_gray()
         self.frame.gauss_blur(blur)
 
@@ -151,7 +153,9 @@ class CellThresholder(Thresholder):
         self.frame.mask_histo = self.frame.histogram()
 
         # flatten the data and remove masked data from the analysis
-        data = self.frame.img[self.frame.img != 255].flatten()[:, None]
+        data = self.frame.img[self.frame.img != 255].flatten()
+        data = data[data <= self.mx]
+        data = data[:, None]
 
         # initalize the thresholder
         super().__init__(data, 2, 2)
