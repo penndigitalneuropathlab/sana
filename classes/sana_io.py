@@ -13,20 +13,26 @@ def create_directory(f):
     if not os.path.exists(os.path.dirname(f)):
         os.makedirs(os.path.dirname(f))
 
-def get_ofname(ifname, ftype, oname, odir=None, rdir=None):
+def get_ofname(ifname, ftype=None, oname=None, odir=None, rdir=None):
 
     # modify the basename and the filetype
-    ofname = ifname.replace('.svs', '%s%s' % (oname, ftype))
+    if ftype is None:
+        ftype = os.path.splitext(ifname)[1]
+    ofname = os.path.splitext(os.path.basename(ifname))[0]
+    if oname is None:
+        ofname += ftype
+    else:
+        ofname = '%s%s%s' % (ofname, oname, ftype)
 
     # modify the dirpath
     if odir is None:
-        d = os.path.dirname(ofname)
-    if rdir is None:
+        d = os.path.dirname(ifname)
+    elif rdir is None:
         d = odir
     else:
-        d = os.path.dirname(ofname).replace(rdir, odir)
+        d = os.path.dirname(ifname).replace(rdir, odir)
 
-    return get_fullpath(os.path.join(d, os.path.basename(ofname)))
+    return get_fullpath(os.path.join(d, ofname))
 
 def slide_to_anno(slide_f, format=None, adir=None, rdir=None):
 
@@ -65,7 +71,7 @@ def fix_qupath_annotations(ifname):
         fp.write(data)
         fp.close()
 
-def read_qupath_annotations(ifname, mpp, ds):
+def read_qupath_annotations(ifname, mpp=None, ds=None, name=None):
 
     # remove unnecessary bytes at beginning of file if they exist
     fix_qupath_annotations(ifname)
@@ -79,6 +85,9 @@ def read_qupath_annotations(ifname, mpp, ds):
     # TODO: handle the multipolygon better than this, why is there sometimes 2 sets of coords
     annotations = []
     for annotation in data:
+        if name is not None:
+            if annotation['properties']['classification']['name'] != name:
+                continue
         geo = annotation['geometry']
         if geo['type'] == 'MultiPolygon':
             coords_list = geo['coordinates']
@@ -91,5 +100,26 @@ def read_qupath_annotations(ifname, mpp, ds):
             annotations.append(poly)
     return annotations
 
+def write_qupath_annotations(ofname, annos, name=None):
+    annotations = []
+    for anno in annos:
+        verts = []
+        for i in range(anno.n):
+            verts.append([anno.x[i], anno.y[i]])
+        annotation = {
+            "type": "Feature",
+            "id": "PathAnnotationObject",
+            "geometry": {
+              "type": "Polygon",
+              "coordinates": [verts]
+            },
+            "properties": {
+              "classification": {
+                "name": name,
+              },
+            }
+        }
+        annotations.append(annotation)
+    json.dump(annotations, open(ofname, 'w'))
 #
 # end of file
