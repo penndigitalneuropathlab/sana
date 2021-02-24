@@ -123,14 +123,30 @@ def main(argv):
                 frame_stain.save(thresh_f)
 
             # perform the tiled density calculation
+            print("------> Calculating Density of Thresholded ROI")
             frame_density, tds = sana_proc.density_roi(
                 loader, frame_stain, args.tsize, args.tstep, round=True)
-            print("------> Calculating Density of Thresholded ROI")
             if args.write_density:
                 print("--------> Writing Density")
                 density_f = sana_io.get_ofname(slide_f, ftype=args.filetype,
                                                odir=args.odir, rdir=args.rdir)
                 frame_density.save(density_f)
+
+            # find the layer 6 boundary (GM/WM border)
+            centroid_rot, _ = anno_rot.centroid()
+            loc_rot = trans_loc1
+            print("------> Detecting Layer 6 Boundary")
+            layer_6 = sana_proc.detect_layer_6_roi(
+                frame_density, loader.mpp, loader.ds, loader.lvl,
+                tds, centroid_rot, angle, loc_rot)
+            plt.imshow(frame.img)
+            v = layer_6.vertices()
+            for i in range(v.shape[0] - 1):
+                plt.plot([v[i][0], v[i+1][0]], [v[i][1], v[i+1][1]], color='black')
+            v = layer_0.vertices()
+            for i in range(v.shape[0] - 1):
+                plt.plot([v[i][0], v[i+1][0]], [v[i][1], v[i+1][1]], color='black')
+            plt.show()
 
             # store information about the processing that occurred
             info.append(map(str, [slide_f, loader.mpp, loader.ds, loader.lvl, list(trans_loc0), list(trans_loc1), list(centroid), radius, angle, list(tds), tissue_threshold, stain_threshold, angle, list(args.tsize), list(args.tstep)]))

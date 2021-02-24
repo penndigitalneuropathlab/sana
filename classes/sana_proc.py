@@ -177,5 +177,39 @@ def density_roi(loader, frame, tsize, tstep, round=False):
         density.round()
 
     return density, tiler.ds
+
+def detect_layer_6_roi(density, mpp, ds, lvl, tds, centroid, angle, loc, threshold=0.2):
+
+    # normalize the density frame by the max of each column
+    density.img = density.img / np.max(density.img, axis=0)
+
+    # find the last index in each column that is above above the threshold
+    x = []
+    y = []
+    for i in range(density.img.shape[1]):
+        d = density.img[:, i]
+        inds = np.argwhere(d >= threshold)
+        if len(inds) == 0:
+            continue
+        else:
+            x.append(i)
+            y.append(inds[-1][0])
+
+    # create the polygon boundary for layer 6 detection
+    x = np.array(x, dtype=float)
+    y = np.array(y, dtype=float)
+    layer_6 = sana_geo.Polygon(x, y, mpp, ds, is_micron=False, lvl=lvl)
+
+    # scale the polygon up from the tile dimension
+    layer_6.x *= tds[0]
+    layer_6.y *= tds[1]
+
+    # rotate the polygon backwards around the given centroid
+    layer_6 = layer_6.rotate(centroid, -angle)
+
+    # translate back to the origin
+    layer_6.translate(-loc)
+
+    return layer_6
 #
 # end of file
