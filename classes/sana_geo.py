@@ -169,11 +169,33 @@ class Polygon:
             y1[i] = p1[1]
         return Polygon(x1, y1, self.mpp, self.ds, self.is_micron, self.lvl)
 
+    def filter(self, poly):
+        if poly.is_micron != self.is_micron or poly.lvl != self.lvl:
+            raise UnitException(ERR_COMPARE)
+
+        x, y = [], []
+        for v in self.vertices():
+            if ray_tracing(v[0], v[1], poly.vertices()):
+                x.append(v[0])
+                y.append(v[1])
+        return Polygon(np.array(x), np.array(y),
+           self.mpp, self.ds, self.is_micron, self.lvl)
+
+    def connect(self):
+        if self.x[0] != self.x[-1] or self.y[0] != self.y[-1]:
+            self.x = np.concatenate([self.x, [self.x[0]]])
+            self.y = np.concatenate([self.y, [self.y[0]]])
+            self.n += 1
+            
     def round(self):
         if self.x.dtype == np.int:
             return
         self.x = np.rint(self.x, out=self.x).astype(dtype=np.int, copy=False)
         self.y = np.rint(self.y, out=self.y).astype(dtype=np.int, copy=False)
+
+    def to_float(self):
+        self.x = to_float(self.x)
+        self.y = to_float(self.y)
 
     # rescales a point to a new
     def rescale(self, lvl):
