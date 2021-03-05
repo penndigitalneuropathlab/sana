@@ -66,12 +66,15 @@ class Frame:
         img = ndimage.rotate(self.img, angle, reshape=False, mode='nearest')
         return Frame(img)
 
+    # NOTE: changing the mode affects the GM detection
+    #        - 'wrap' causes sharp peaks at edge if the tissue isn't parallel
+    #        - 'symmetric' seems to be the best, the edges are very flat
     def pad(self, pad):
         before = pad//2
         after = pad - before
         return Frame(np.pad(self.img,
                             ((before[1],after[1]),(before[0],after[0]),(0,0)),
-                            mode='wrap'))
+                            mode='symmetric'))
 
     def save(self, fname):
         sana_io.create_directory(fname)
