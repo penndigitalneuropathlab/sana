@@ -15,7 +15,7 @@ class Detector:
         self.ds = ds
         self.lvl = lvl
 
-    # detects objects from a masked frame
+    # detects objects from a masked
     def detect(self, frame):
 
         # use opencv to find the contours in the image
@@ -73,7 +73,7 @@ class Detector:
 
     def ray_trace_vertices(self, p1):
         x, y = [], []
-        for d in self.detections:
+        for d in self.get_bodies():
             p0 = d.polygon
             if p0.is_micron:
                 p0.to_pixels(p1.lvl)
@@ -99,7 +99,12 @@ class TissueDetector(Detector):
     def __init__(self, mpp, ds, lvl):
         super().__init__(mpp, ds, lvl)
 
-    def run(self, frame, min_body_area=0, min_hole_area=0):
+    def run(self, frame, tissue_threshold, min_body_area=0, min_hole_area=0):
+
+        # threshold the frame using the given tissue threshold
+        frame.to_gray()
+        frame.gauss_blur(1)
+        frame.threshold(tissue_threshold, x=255, y=0)
 
         # perform the object detection
         self.detect(frame)
