@@ -53,7 +53,7 @@ def main(argv):
 
             # read or generate the GM segmentations
             gm_segs, _, gm_names = sana_io.read_annotations(
-                anno_f, loader.mpp, loader.ds, class_name='GM_SEG')[0]
+                anno_f, loader.mpp, loader.ds, class_name=args.gm_class)[0]
             if args.segment_gm or len(gm_segs) == 0:
 
                 # loop through the GM ROIs and generate the segmentations
@@ -66,7 +66,9 @@ def main(argv):
                     gm_seg, angle = sana_proc.segment_gm(
                         args, slide_f, gm_roi, tissue_threshold, count=gm_roi_i)
                     gm_segs.append(gm_seg)
-            sana_io.append_annotations(anno_f, gm_segs, class_name='GM_SEG', anno_names=gm_names)
+            sana_io.append_annotations(anno_f, gm_segs,
+                                       class_name=args.gm_class,
+                                       anno_names=gm_names)
 
             # process the GM segmentations
             for gm_seg_i, gm_seg in enumerate(gm_segs):
@@ -112,6 +114,8 @@ def cmdl_parser(argv):
                         help="uses the GM_ROI annotations to create segmentations")
     parser.add_argument('-type', type=str, choices=['gm', 'wm'], default='GM',
                         help="type of roi analysis to perform")
+    parser.add_argument('-gm_class', type=str, default='GM_SEG',
+                        help="class name of the GM region to process")
     parser.add_argument('-tsize', type=int, nargs=2, default=(500, 300),
                         help="tile size for analysis\n[default: 500 300]")
     parser.add_argument('-tstep', type=int, nargs=2, default=(25, 25),
