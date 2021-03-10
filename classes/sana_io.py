@@ -111,7 +111,8 @@ def read_annotations(ifname, mpp=None, ds=None, class_name=None):
     class_names = []
     anno_names = []
     for annotation in data:
-        if class_name is not None:
+        if class_name is not None and  \
+            'classification' in annotation['properties']:
             if annotation['properties']['classification']['name'] != class_name:
                 continue
         geo = annotation['geometry']
@@ -119,16 +120,24 @@ def read_annotations(ifname, mpp=None, ds=None, class_name=None):
             coords_list = geo['coordinates']
         elif geo['type'] == 'Polygon':
             coords_list = [geo['coordinates']]
+        else:
+            continue
         for coords in coords_list:
             x = np.array([float(c[0]) for c in coords[0]])
             y = np.array([float(c[1]) for c in coords[0]])
             poly = Polygon(x, y, mpp, ds, is_micron=False)
             annotations.append(
                 poly)
-            class_names.append(
-                annotation['properties']['classification']['name'])
-            anno_names.append(
-                'ROI_'+str(len(anno_names)))
+            if 'classification' in annotation['properties']:
+                class_names.append(
+                    annotation['properties']['classification']['name'])
+            else:
+                class_names.append('')
+            if 'name' in annotation['properties']:
+                anno_names.append(annotation['properties']['name'])
+            else:
+                anno_names.append(
+                    'ROI_'+str(len(anno_names)))
     return annotations, class_names, anno_names
 
 def write_annotations(ofname, annos, class_name=None):
