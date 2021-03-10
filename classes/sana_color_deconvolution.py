@@ -2,29 +2,35 @@
 import os
 import sys
 import numpy as np
-from numpy.linalg import det, inv
+from numpy.linalg import det, inv, eig, svd
 
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
-    def __init__(self, stain_type, stain_target):
+    def __init__(self, stain_type, stain_target, stain_v=None, od=False):
 
         # define the staining vector
         # TODO: estimate the stain vector, dont just use the default
         if stain_type == 'H-DAB':
-            stain_v = np.array([
-                [0.65, 0.70, 0.29],
-                [0.27, 0.57, 0.78],
-                [0.00, 0.00, 0.00],
-            ])
+            if stain_v is None:
+                stain_v = np.array([
+                    [0.65, 0.70, 0.29],
+                    [0.27, 0.57, 0.78],
+                    [0.00, 0.00, 0.00],
+                ])
+            else:
+                stain_v = np.array(stain_v)
             self.stains = ['HEM', 'DAB', 'RES']
 
         elif stain_type == 'HED':
-            stain_v = np.array([
-                [0.65, 0.70, 0.29],
-                [0.07, 0.99, 0.11],
-                [0.27, 0.57, 0.78]
-            ])
+            if stain_v is None:
+                stain_v = np.array([
+                    [0.65, 0.70, 0.29],
+                    [0.07, 0.99, 0.11],
+                    [0.27, 0.57, 0.78]
+                ])
+            else:
+                stain_v = np.array(stain_v)
             self.stains = ['HEM', 'EOS', 'DAB']
 
         # define which stains to return
@@ -33,6 +39,7 @@ class StainSeparator:
         else:
             self.ret = list(map(lambda x: x == stain_target.upper(),
                                 self.stains))
+        self.od = od
 
         # normalize the vectors
         # NOTE: usually the stain vector will already be normalized
@@ -66,21 +73,25 @@ class StainSeparator:
         # separate the stains, convert from rgb to stains
         stains = self.separate_stains(img)
 
-        # convert each stain channel individually back to a new rgb image
-        #  using the original stain vector
-        ret = []
-        z = np.zeros_like(stains[:, :, 0])
-        if self.ret[0]:
+        if self.od:
+            s1, s2, s3 = stains[:, :, 0], stains[:, :, 1], stains[:, :, 2]
+        else:
+            # convert each stain channel individually back to a new rgb image
+            #  using the original stain vector
+            z = np.zeros_like(stains[:, :, 0])
             s1 = self.combine_stains(
                 np.stack((stains[:, :, 0], z, z), axis=-1))
-            ret.append(s1)
-        if self.ret[1]:
             s2 = self.combine_stains(
                 np.stack((z, stains[:, :, 1], z), axis=-1))
-            ret.append(s2)
-        if self.ret[2]:
             s3 = self.combine_stains(
                 np.stack((z, z, stains[:, :, 2]), axis=-1))
+
+        ret = []
+        if self.ret[0]:
+            ret.append(s1)
+        if self.ret[1]:
+            ret.append(s2)
+        if self.ret[2]:
             ret.append(s3)
 
         if rescale:
@@ -92,22 +103,67 @@ class StainSeparator:
 
         return ret
 
+    # NOTE: http://wwwx.cs.unc.edu/~mn/sites/default/files/macenko2009.pdf
+    def estimate_stain_vector(self, img):
+        mx, mi = 1.0, 0.001
+        alpha = 1 / 100.0
+
+        # flatten the image
+        img = img.reshape(img.shape[0]*img.shape[1], 3)
+
+        # convert to od
+        od = self.to_od(img)
+
+        # remove data too faintly or densely stained
+        mag = np.sum(od**2, axis=-1)
+        od = od[np.where(np.logical_and(mag < mx, mag >= mi))]
+
+        # perform singular value decomposition, find 2 SVD direction vectors with the highest singular values
+        cov = np.cov(od, rowvar=False)
+        w, v = eig(cov)
+        inds = np.argsort(w)
+        v1 = v[:, inds[-1]]
+        v2 = v[:, inds[-2]]
+
+        # find the angle of each pixel, find the min and max extrema
+        phi = np.arctan2(od @ v1, od @ v2)
+        inds = np.argsort(phi)
+        ind1 = inds[int(alpha*phi.shape[0])]
+        ind2 = inds[int((1-alpha)*phi.shape[0])]
+
+        # construct the stain vector
+        stain_vector = [
+            list(od[ind1]),
+            list(od[ind2]),
+            [0.0, 0.0, 0.0],
+        ]
+        return stain_vector
+
+    def to_od(self, rgb):
+        rgb = rgb.astype(np.float64) / 255
+        np.maximum(rgb, 1e-6, out=rgb)
+        log_adjust = np.log10(1e-6)
+        return np.log10(rgb) / log_adjust
+
     # performs color denconvolution using a rgb image and a inverted stain vector
     def separate_stains(self, rgb):
         v = self.rgb_to_stain
 
-        # scale rgb image from 0 to 1
-        rgb = rgb.astype(np.float64) / 255
+        od = self.to_od(rgb)
+        stains = od @ v
+        return np.maximum(stains, 0)
 
-        # handle log errors
-        np.maximum(rgb, 1e-6, out=rgb)
-        log_adjust = np.log(1e-6)
-
-        # calculate the optical density, then multiply the inverted stain vector
-        stains = (np.log(rgb) / log_adjust) @ v
+        # # scale between 0 and 1, ensure there are no zeros in the analysis
+        # rgb = np.maximum(rgb, 1).astype(np.float64) / 255
+        #
+        # # calculate optical density, ensure 0 is not sent to the log10 function
+        # od = np.maximum(0, -np.log10(rgb))
+        #
+        # # apply the stain vector to the OD
+        # stains = od @ v
 
         # make sure there are no negative stain values
-        return np.maximum(stains, 0)
+        return stains
 
     # converts the stain separated image back to an rgb image using the stain vector
     def combine_stains(self, stain):
