@@ -8,7 +8,7 @@ import sana_io
 import sana_geo
 from sana_loader import Loader
 from sana_color_deconvolution import StainSeparator
-from sana_thresholder import TissueThresholder, CellThresholder
+from sana_thresholder import TissueThresholder, CellThresholder, StainThresholder
 from sana_detector import TissueDetector
 from sana_framer import Framer
 from sana_tiler import Tiler
@@ -31,12 +31,39 @@ def get_tissue_threshold(filename):
 #
 # end of get_tissue_threshold
 
+def estimate_stain_vector(est, stain, target):
+    separator = StainSeparator(stain, target)
+    stain_vector = separator.estimate_stain_vector(est)
+    return stain_vector
+
+def calc_ao(frame, stain, target, slide_color,
+            stain_vector=None, threshold=None):
+    stain = separate_roi(frame, stain, target, stain_vector, od=True)
+
+    # perform the thresholding
+    thresholder = StainThresholder(stain.copy(), mx=slide_color)
+    thresholder.mask_frame(threshold)
+    thresh = thresholder.frame
+
+    ao = np.mean(thresh.img)
+
+    # if ao > 0.6:
+    #     fig, axs = plt.subplots(1, 3)
+    #     axs[0].imshow(stain.img)
+    #     axs[1].imshow(thresh.img)
+    #     axs[2].axvline(thresholder.stain_threshold, color='black')
+    #     axs[2].axvline(thresholder.thresholds[-1], color='gray')
+    #     axs[2].hist(stain.img.flatten(), bins=200)
+    #     plt.show()
+
+
+    return ao, thresholder.stain_threshold
+#
+# end of calc_ao
+
 def segment_gm(args, filename, anno, tissue_threshold, gm_threshold=0.2, count=0):
     loader = Loader(filename)
     loader.set_lvl(args.level)
-    v = anno.vertices()
-    for i in range(len(v)-1):
-        plt.plot([v[i][0], v[i+1][0]], [v[i][1], v[i+1][1]], color='blue')
 
     # get the rotation of the roi based on the tissue boundary
     angle = detect_rotation(filename, anno, tissue_threshold)
@@ -224,10 +251,11 @@ def rotate_roi(loader, anno, angle):
 #
 # end of rotate_roi
 
-def separate_roi(frame, stain_type, stain_target):
+def separate_roi(frame, stain_type, stain_target, stain_vector=None, od=False):
 
     # initialize the color deconvolution algorithm
-    separator = StainSeparator(stain_type, stain_target)
+    separator = StainSeparator(stain_type, stain_target,
+                               stain_v=stain_vector, od=od)
 
     # run it on the given frame
     return Frame(separator.run(frame.img)[0])
