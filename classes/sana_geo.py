@@ -2,6 +2,7 @@
 import math
 import numpy as np
 from numba import jit
+from matplotlib import pyplot as plt
 
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale point in micron units")
@@ -85,6 +86,21 @@ def ray_tracing(x,y,poly):
 # calculates the angle of rotation (degrees) given 2 coordinates forming a line
 def find_angle(a, b):
     return np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
+
+def linearity(x, y):
+    n = len(x)
+    x, y = np.array(x), np.array(y)
+    ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
+    ss_xx = np.sum(x**2) - n * np.mean(x)**2
+    m = ss_xy/ss_xx
+    b = np.mean(y) - m * np.mean(x)
+    f = m * x + b
+    ss_tot = np.sum((y - np.mean(y))**2)
+    ss_res = np.sum((y - f)**2)
+    rms = np.sqrt(np.mean((y-f)**2))
+    r_2 = 1 - ss_res/ss_tot
+
+    return rms
 
 # defines an (x, y) point in terms of microns
 # TODO: could instead make a Unit class instead of point class
@@ -186,7 +202,7 @@ class Polygon:
             self.x = np.concatenate([self.x, [self.x[0]]])
             self.y = np.concatenate([self.y, [self.y[0]]])
             self.n += 1
-            
+
     def round(self):
         if self.x.dtype == np.int:
             return
