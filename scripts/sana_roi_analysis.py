@@ -46,30 +46,30 @@ def main(argv):
         # pre-calculate the tissue threshold
         print("----> Pre-Calculating the Tissue/Slide Threshold")
         tissue_threshold = sana_proc.get_tissue_threshold(slide_f)
-        print(tissue_threshold)
 
         # case 1: GM Analysis
         if args.type == 'gm':
 
             # read or generate the GM segmentations
             gm_segs, _, gm_names = sana_io.read_annotations(
-                anno_f, loader.mpp, loader.ds, class_name=args.gm_class)[0]
+                anno_f, loader.mpp, loader.ds, class_name=args.gm_class)
             if args.segment_gm or len(gm_segs) == 0:
 
                 # loop through the GM ROIs and generate the segmentations
                 gm_segs = []
+                gm_seg_metrics = []
                 gm_rois, _, gm_names = sana_io.read_annotations(
                     anno_f, loader.mpp, loader.ds, class_name='GM_ROI')
                 for gm_roi_i, gm_roi in enumerate(gm_rois):
                     print("----> Segmenting GM ROI (%d/%d)" % \
                           (gm_roi_i+1, len(gm_rois)))
-                    gm_seg, angle = sana_proc.segment_gm(
+                    gm_seg, angle, metrics = sana_proc.segment_gm(
                         args, slide_f, gm_roi, tissue_threshold, count=gm_roi_i)
                     gm_segs.append(gm_seg)
+                    gm_seg_metrics.append(metrics)
             sana_io.append_annotations(anno_f, gm_segs,
                                        class_name=args.gm_class,
                                        anno_names=gm_names)
-
             # process the GM segmentations
             for gm_seg_i, gm_seg in enumerate(gm_segs):
                 print("----> Processing GM Segmentation (%d/%d)" % \

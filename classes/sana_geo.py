@@ -2,7 +2,6 @@
 import math
 import numpy as np
 from numba import jit
-from matplotlib import pyplot as plt
 
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale point in micron units")

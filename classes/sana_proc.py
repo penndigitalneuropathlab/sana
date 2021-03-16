@@ -108,17 +108,55 @@ def segment_gm(args, filename, anno, tissue_threshold, gm_threshold=0.2, count=0
                                        args.odir, args.rdir)
         frame_density.save(density_f)
 
-    # get the layer 0 detections from the tissue mask
-    x_0, y_0 = detect_layer_0_roi(tissue_mask)
+    # rotate and translate the original roi to the current position
+    center = anno.centroid()[0]
+    anno = anno.rotate(center, angle)
+    anno.rescale(args.level)
+    anno.translate(frame_loc+crop_loc)
 
     # get the layer 6 detections from the stain density
     x_6, y_6 = detect_layer_6_roi(frame_density, gm_threshold, tds)
 
-    # smooth the detections
-    y_0 = signal.medfilt(y_0, 71)
+    # get the layer 0 detections from the tissue mask
+    x_0, y_0 = detect_layer_0_roi(tissue_mask, xvals=x_6)
 
-    # TODO: upscale and interpolate
+    # smooth the detections
+    y_0 = signal.medfilt(y_0, 31)
     y_6 = signal.medfilt(y_6, 31)
+
+    v_0 = [(x, y) for x, y in zip(x_0, y_0)]
+    v_6 = [(x, y) for x, y in zip(x_6, y_6)]
+
+    # filter the layer 0 and 6 detections based on the original ROI
+    v_0 = [v for v in v_0 if sana_geo.ray_tracing(v[0], v[1], anno.vertices())]
+    v_6 = [v for v in v_6 if sana_geo.ray_tracing(v[0], v[1], anno.vertices())]
+    left = max(v_0[0][0], v_6[0][0])
+    right = min(v_0[-1][0], v_6[-1][0])
+    v_0 = [v for v in v_0 if v[0] >= left and v[0] <= right]
+    v_6 = [v for v in v_6 if v[0] >= left and v[0] <= right]
+    x_0, y_0 = zip(*v_0)
+    x_6, y_6 = zip(*v_6)
+
+    # reset the original roi
+    anno.translate(-(frame_loc+crop_loc))
+    anno.rescale(0)
+    anno = anno.rotate(center, -angle)
+
+    # calculate the ROI metrics
+    #  GM_thickness - mean value in microns of 6 - 0
+    #  GM_parallel - std value in microns of 6 - 0
+    #  linearity_x - R^2 value of linear regression of layer x
+    thickness = []
+    for i in range(len(v_0)):
+        thickness.append(v_6[i][1] - v_0[i][1])
+    thickness = np.array(thickness, dtype=float)
+    thickness *= loader.ds[args.level] / loader.ds[0]
+    thickness *= loader.mpp
+    gm_thickness = np.mean(thickness)
+    gm_parallel = np.std(thickness)
+    linearity_0 = sana_geo.linearity(x_0, y_0)
+    linearity_6 = sana_geo.linearity(x_6, y_6)
+    roi_metrics = [gm_thickness, gm_parallel, linearity_0, linearity_6]
 
     # build the gm detection by combining layers 0 and 6
     x = np.concatenate([x_0[::-1], x_6])
@@ -130,15 +168,12 @@ def segment_gm(args, filename, anno, tissue_threshold, gm_threshold=0.2, count=0
     gm.to_float()
     gm.translate(-(crop_loc+frame_loc))
     gm.rescale(0)
-    gm = gm.rotate(anno.centroid()[0], -angle)
-
-    # remove any detections outside the given ROI
-    gm = gm.filter(anno)
+    gm = gm.rotate(center, -angle)
 
     # connect the last point to the first point
     gm.connect()
 
-    return gm, angle
+    return gm, angle, roi_metrics
 #
 # end of segment_gm
 
@@ -289,14 +324,16 @@ def density_roi(loader, frame, tsize, tstep, round=False):
     return density, tiler.ds
 
 # TODO: might need to shift the detection based on the amount of blur?
-def detect_layer_0_roi(tissue_mask):
+def detect_layer_0_roi(tissue_mask, xvals=None):
 
     # get the infra section of the tissue_mask
     infra = tissue_mask.img[:tissue_mask.img.shape[0]//2, :]
 
     # loop through the columns of the mask
     x, y = [], []
-    for i in range(infra.shape[1]):
+    if xvals is None:
+        xvals = range(infra.shape[1])
+    for i in xvals:
 
         # last index of zeros in the mask is the start of tissue
         inds = np.argwhere(infra[:, i] == 0)
@@ -325,7 +362,8 @@ def detect_layer_6_roi(density, threshold, tds):
         if len(inds) != 0:
             x.append(i * tds[0])
             y.append((density.img.shape[0]//2 + inds[0][0]) * tds[1])
-
+    x = list(map(int, x))
+    y = list(map(int, y))
     return x, y
 
 #
