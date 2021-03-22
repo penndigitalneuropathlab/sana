@@ -140,43 +140,31 @@ class StainSeparator:
         return stain_vector
 
     def to_od(self, rgb):
-        rgb = rgb.astype(np.float64) / 255
-        np.maximum(rgb, 1e-6, out=rgb)
-        log_adjust = np.log10(1e-6)
-        return np.log10(rgb) / log_adjust
+
+        # scale the data by the max, ensure no zeros
+        rgb = np.clip(rgb.astype(np.float64), 1, 255) / 255
+
+        # get the OD, ensure no negatives
+        return np.clip(-np.log10(rgb), 0, None)
 
     # performs color denconvolution using a rgb image and a inverted stain vector
     def separate_stains(self, rgb):
         v = self.rgb_to_stain
 
+        # apply the stain vector to the OD, ensure no negative stain values
         od = self.to_od(rgb)
         stains = od @ v
-        return np.maximum(stains, 0)
-
-        # # scale between 0 and 1, ensure there are no zeros in the analysis
-        # rgb = np.maximum(rgb, 1).astype(np.float64) / 255
-        #
-        # # calculate optical density, ensure 0 is not sent to the log10 function
-        # od = np.maximum(0, -np.log10(rgb))
-        #
-        # # apply the stain vector to the OD
-        # stains = od @ v
-
-        # make sure there are no negative stain values
-        return stains
+        return np.clip(stains, 0, None)
 
     # converts the stain separated image back to an rgb image using the stain vector
     def combine_stains(self, stain):
         v = self.stain_to_rgb
 
-        # handle log errors
-        log_adjust = -np.log(1e-6)
-
         # generate the rgb image using the stain intensity and the stain vector
-        rgb = np.exp(-(stain * log_adjust) @ v)
+        rgb = np.exp(-stain @ v)
 
         # clip values from 0 to 255, then convert to 8 bit ints
-        return np.rint(255 * np.clip(rgb, a_min=0, a_max=1)).astype(np.uint8)
+        return np.rint(255 * np.clip(rgb, 0, 1)).astype(np.uint8)
 #
 # end of StainSeparator
 
