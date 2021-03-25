@@ -195,12 +195,10 @@ class StainThresholder(Thresholder):
         if thresholds is None:
             # run the gmm algorithm to define the means and vars of the data
             self.gmm()
-            print(self.means, self.vars)
 
             # use mle to define the crossing of PDFs
             self.mle()
             self.stain_threshold = self.thresholds[-1]
-            print(self.stain_threshold)
 
             # self.kittler(self.frame.img)
         else:

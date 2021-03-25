@@ -7,65 +7,24 @@ from numpy.linalg import det, inv, eig, svd
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
-    def __init__(self, stain_type, stain_target, stain_v=None, od=False):
+    def __init__(self, stain_type, stain_target,
+                 stain_vector=None, ret_od=False):
 
-        # define the staining vector
-        # TODO: estimate the stain vector, dont just use the default
-        if stain_type == 'H-DAB':
-            if stain_v is None:
-                stain_v = np.array([
-                    [0.65, 0.70, 0.29],
-                    [0.27, 0.57, 0.78],
-                    [0.00, 0.00, 0.00],
-                ])
-            else:
-                stain_v = np.array(stain_v)
-            self.stains = ['HEM', 'DAB', 'RES']
-
-        elif stain_type == 'HED':
-            if stain_v is None:
-                stain_v = np.array([
-                    [0.65, 0.70, 0.29],
-                    [0.07, 0.99, 0.11],
-                    [0.27, 0.57, 0.78]
-                ])
-            else:
-                stain_v = np.array(stain_v)
-            self.stains = ['HEM', 'EOS', 'DAB']
+        # define the stain vector
+        self.stain_type = stain_type
+        self.stain_target = stain_target
+        self.stain_vector = StainVector(
+            self.stain_type, self.stain_target, stain_vector)
+        self.stain_to_rgb = self.stain_vector.v
+        self.rgb_to_stain = self.stain_vector.v_inv
 
         # define which stains to return
-        if stain_target.upper() == 'ALL':
+        if self.stain_target.upper() == 'ALL':
             self.ret = [True, True, True]
         else:
-            self.ret = list(map(lambda x: x == stain_target.upper(),
-                                self.stains))
-        self.od = od
-
-        # normalize the vectors
-        # NOTE: usually the stain vector will already be normalized
-        stain_v[0, :] = self.norm(stain_v[0, :])
-        stain_v[1, :] = self.norm(stain_v[1, :])
-        stain_v[2, :] = self.norm(stain_v[2, :])
-
-        # 3rd color is unspecified, create an orthogonal residual color
-        # NOTE: this color will sometimes have negative components, thats okay
-        #        since we will check for this later on
-        if all(stain_v[2, :] == 0):
-            stain_v[2, :] = np.cross(stain_v[0, :], stain_v[1, :])
-
-        # generate the inverse for converting rgb to stain separation
-        stain_v_inv = inv(stain_v)
-
-        # store the vectors convert rgb to stain and vice versa
-        self.stain_to_rgb = stain_v
-        self.rgb_to_stain = stain_v_inv
-
-    def norm(self, v):
-        k = (np.sqrt(np.sum(v**2)))
-        if k != 0:
-            return v / k
-        else:
-            return v
+            self.ret = list(map(lambda x: x == self.stain_target.upper(),
+                                self.stain_vector.stains))
+        self.ret_od = ret_od
 
     def run(self, img, rescale=False):
         s1, s2, s3 = None, None, None
@@ -73,18 +32,21 @@ class StainSeparator:
         # separate the stains, convert from rgb to stains
         stains = self.separate_stains(img)
 
-        if self.od:
+        if self.ret_od:
             s1, s2, s3 = stains[:, :, 0], stains[:, :, 1], stains[:, :, 2]
         else:
             # convert each stain channel individually back to a new rgb image
             #  using the original stain vector
             z = np.zeros_like(stains[:, :, 0])
-            s1 = self.combine_stains(
-                np.stack((stains[:, :, 0], z, z), axis=-1))
-            s2 = self.combine_stains(
-                np.stack((z, stains[:, :, 1], z), axis=-1))
-            s3 = self.combine_stains(
-                np.stack((z, z, stains[:, :, 2]), axis=-1))
+            if self.ret[0]:
+                s1 = self.combine_stains(
+                    np.stack((stains[:, :, 0], z, z), axis=-1))
+            if self.ret[1]:
+                s2 = self.combine_stains(
+                    np.stack((z, stains[:, :, 1], z), axis=-1))
+            if self.ret[2]:
+                s3 = self.combine_stains(
+                    np.stack((z, z, stains[:, :, 2]), axis=-1))
 
         ret = []
         if self.ret[0]:
@@ -105,7 +67,7 @@ class StainSeparator:
 
     # NOTE: http://wwwx.cs.unc.edu/~mn/sites/default/files/macenko2009.pdf
     def estimate_stain_vector(self, img):
-        mx, mi = 1.0, 0.001
+        mx, mi = 1.0, 0.05
         alpha = 1 / 100.0
 
         # flatten the image
@@ -114,12 +76,16 @@ class StainSeparator:
         # convert to od
         od = self.to_od(img)
 
-        # remove data too faintly or densely stained
+        # remove data that is too faint
+        od = od[np.where(np.logical_or(
+            od[:, 0] >= mi, od[:, 1] >= mi, od[:, 2] >= mi))]
+
+        # remove data that is too dense
         mag = np.sum(od**2, axis=-1)
-        od = od[np.where(np.logical_and(mag < mx, mag >= mi))]
+        od = od[np.where(mag <= mx**2)]
 
         # perform singular value decomposition, find 2 SVD direction vectors with the highest singular values
-        cov = np.cov(od, rowvar=False)
+        cov = np.cov(od.T)
         w, v = eig(cov)
         inds = np.argsort(w)
         v1 = v[:, inds[-1]]
@@ -130,14 +96,30 @@ class StainSeparator:
         inds = np.argsort(phi)
         ind1 = inds[int(alpha*phi.shape[0])]
         ind2 = inds[int((1-alpha)*phi.shape[0])]
+        v1 = od[ind1]
+        v2 = od[ind2]
 
-        # construct the stain vector
-        stain_vector = [
-            list(od[ind1]),
-            list(od[ind2]),
+        # make sure the vectors are in the expected order
+        #  i.e. it should be v1=HEM, v2=DAB, sometimes it's switched
+        a11 = self.stain_vector.angle(0, v1)
+        a12 = self.stain_vector.angle(0, v2)
+        a21 = self.stain_vector.angle(1, v1)
+        a22 = self.stain_vector.angle(1, v2)
+        if min(a12, a21) < min(a11, a22):
+            v = v2.copy()
+            v2 = v1.copy()
+            v1 = v
+
+        # construct the new stain vector
+        stain_v = [
+            v1,
+            v2,
             [0.0, 0.0, 0.0],
         ]
-        return stain_vector
+        self.stain_vector = StainVector(
+            self.stain_type, self.stain_target, stain_v)
+        self.stain_to_rgb = self.stain_vector.v
+        self.rgb_to_stain = self.stain_vector.v_inv
 
     def to_od(self, rgb):
 
@@ -161,12 +143,66 @@ class StainSeparator:
         v = self.stain_to_rgb
 
         # generate the rgb image using the stain intensity and the stain vector
-        rgb = np.exp(-stain @ v)
+        rgb = np.power(10, -stain @ v)
+        # rgb = np.exp(-stain @ v)
 
         # clip values from 0 to 255, then convert to 8 bit ints
         return np.rint(255 * np.clip(rgb, 0, 1)).astype(np.uint8)
 #
 # end of StainSeparator
+
+class StainVector:
+    def __init__(self, stain_type, stain_target, stain_vector=None):
+        self.stain_type = stain_type
+        self.stain_target = stain_target
+        if self.stain_type == 'H-DAB':
+            if stain_vector is None:
+                self.v = stain_v = np.array([
+                    [0.65, 0.70, 0.29],
+                    [0.27, 0.57, 0.78],
+                    [0.00, 0.00, 0.00],
+                ])
+            else:
+                self.v = np.array(stain_vector)
+            self.stains = ['HEM', 'DAB', 'RES']
+        if self.stain_type == 'HED':
+            if stain_vector is None:
+                self.v = np.array([
+                    [0.65, 0.70, 0.29],
+                    [0.07, 0.99, 0.11],
+                    [0.27, 0.57, 0.78]
+                ])
+            else:
+                self.v = np.array(stain_vector)
+            self.stains = ['HEM', 'EOS', 'DAB']
+
+        # 3rd color is unspecified, create an orthogonal residual color
+        # NOTE: this color will sometimes have negative components, thats okay
+        #        since we will check for this later on
+        if all(self.v[2, :] == 0):
+            self.v[2, :] = np.cross(self.v[0, :], self.v[1, :])
+
+        # normalize the vector
+        self.v[0, :] = self.norm(self.v[0, :])
+        self.v[1, :] = self.norm(self.v[1, :])
+        self.v[2, :] = self.norm(self.v[2, :])
+
+        # store the inverse of the vector
+        self.v_inv = inv(self.v)
+
+    def norm(self, v):
+        k = (np.sqrt(np.sum(v**2)))
+        if k != 0:
+            return v / k
+        else:
+            return v
+    def length(self, v):
+        return np.sqrt(np.dot(v, v))
+
+    def angle(self, i, v2):
+        v1 = self.v[i, :]
+        return np.arccos(np.dot(v1, v2) / (self.length(v1) * self.length(v2)))
+
 
 #
 # end of file

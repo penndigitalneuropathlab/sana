@@ -33,12 +33,12 @@ def get_tissue_threshold(filename):
 
 def estimate_stain_vector(est, stain, target):
     separator = StainSeparator(stain, target)
-    stain_vector = separator.estimate_stain_vector(est)
-    return stain_vector
+    separator.estimate_stain_vector(est)
+    return separator.stain_vector
 
 def calc_ao(frame, stain, target, slide_color,
-            stain_vector=None, threshold=None):
-    stain = separate_roi(frame, stain, target, stain_vector, od=True)
+            stain_vector=None, threshold=None, od=False):
+    stain = separate_roi(frame, stain, target, stain_vector, od=od)
 
     # perform the thresholding
     thresholder = StainThresholder(stain.copy(), mx=slide_color)
