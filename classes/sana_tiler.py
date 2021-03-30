@@ -1,12 +1,7 @@
 
-import os
-import sys
-import cv2
 from copy import copy
 import numpy as np
-from matplotlib import pyplot as plt
 
-import sana_geo
 from sana_framer import Framer, Frame
 
 class Tiler:
@@ -15,8 +10,9 @@ class Tiler:
 
         # store the slide loader
         self.loader = loader
+        self.converter = self.loader.converter
 
-        # define the tile size and step
+        # define the tile size and step size
         self.size = tsize
         if tstep is None:
             self.step = copy(self.size)
@@ -25,15 +21,14 @@ class Tiler:
 
         # convert the dimensions to pixels and round
         if self.size.is_micron:
-            sana_geo.to_pixels(self.size, loader.lvl)
-        else:
-            sana_geo.rescale(self.size, loader.lvl)
+            self.converter.to_pixels(self.size, lself.oader.lvl)
+        self.converter.rescale(self.size, self.loader.lvl)
         if self.step.is_micron:
-            sana_geo.to_pixels(self.step, loader.lvl)
-        else:
-            sana_geo.rescale(self.step, loader.lvl)
-        self.size = sana_geo.round(self.size)
-        self.step = sana_geo.round(self.step)
+            self.converter.to_pixels(self.step, self.loader.lvl)
+        self.converter.rescale(self.step, self.loader.lvl)
+
+        self.size = np.rint(self.size, dtype=np.int)
+        self.step = np.rint(self.step, dtype=np.int)
 
         # define the amount to pad/shift the frames for center-alignment
         self.fpad = self.size - 1

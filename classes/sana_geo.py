@@ -1,65 +1,87 @@
 
-import math
 import numpy as np
 from numba import jit
 
 ERR = "---> %s <---"
-ERR_RESCALE = ERR % ("Cannot rescale point in micron units")
-ERR_MICRONS = ERR % ("Point is already in micron units")
-ERR_PIXELS = ERR % ("Point is already in pixel units")
+ERR_RESCALE = ERR % ("Cannot rescale data in micron units")
+ERR_MICRONS = ERR % ("Data is already in micron units")
+ERR_PIXELS = ERR % ("Data is already in pixel units")
 ERR_COMPARE = ERR % ("Objects are not in the same resolution")
 
 class UnitException(Exception):
     def __init__(self, message):
         self.message = message
 
-def round(point):
-    if point.dtype == np.int:
-        return point
-    return np.rint(point, out=point).astype(dtype=np.int, copy=False)
+def area(self, poly):
+    x0, y0 = poly[:, 0], poly[:, 1]
+    x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
+    return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
 
-def to_float(point):
-    if point.dtype == np.float:
-        return point
-    return point.astype(dtype=np.float, copy=False)
+def centroid(self, poly):
+    A = self.area()
+    x0, y0 = poly[:, 0], poly[:, 1]
+    x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
+    cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
+    cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
+    c = Array(np.array([cx, cy]), poly.is_micron, poly.lvl, poly.order)
+    d = np.sqrt((c[0] - x0)**2 + (c[1] - y0)**2)
+    r = np.max(d)
+    return c, r
 
-# rescales a point to a new
-def rescale(point, lvl):
-    if point.lvl == lvl:
-        return
+def linear_regression(self, poly):
+    x, y, n = poly[: ,0], poly[:, 1], poly.n
+    ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
+    ss_xx = np.sum(x**2) - n * np.mean(x)**2
+    m = ss_xy/ss_xx
+    b = np.mean(y) - m * np.mean(x)
+    return m, b
 
-    # make sure we only rescale points that are in pixel units
-    if point.is_micron:
-        raise UnitException(ERR_RESCALE)
+def bounding_box(self, poly):
+    x, y = poly[: ,0], poly[:, 1]
+    x0, y0 = np.min(x), np.min(y)
+    x1, y1 = np.max(x), np.max(y)
+    loc = Array(np.array([x0, y0]), poly.is_micron, poly.lvl, poly.order)
+    size = Array(np.array([x1-x0, y1-y0]), poly.is_micron, poly.lvl, poly.order)
+    return loc, size
 
-    # scale the point by curr_ds / new_ds
-    point *= (point.ds[point.lvl] / point.ds[lvl])**point.order
-    point.lvl = lvl
+def translate(self, x, y):
+    if x.lvl != y.lvl or x.is_micron != y.is_micron:
+        raise UnitException(ERR_COMPARE)
+    x -= y
 
-def to_microns(point):
-    if point.is_micron:
-        raise UnitException(ERR_MICRONS)
+def rotate(self, p, centroid, angle):
+    if p.ndim == 1:
+        x0, y0 = p[0], p[1]
+    else:
+        x0, y0 = p[:, 0], p[:, 1]
+    obj = type(p)
+    xc, yc = centroid
+    th = math.radians(-angle)
 
-    # rescale to the original resolution, then convert to microns
-    rescale(point, 0)
-    point *= point.mpp**point.order
-    point.is_micron = True
+    x1 = xc + np.cos(th) * (x0 - xc) - np.sin(th) * (y0 - yc)
+    y1 = yc + np.sin(th) * (x0 - xc) + np.cos(th) * (y0 - yc)
 
-def to_pixels(point, lvl):
-    if not point.is_micron:
-        raise UnitException(ERR_PIXELS)
+    arr = np.array([x1, y1])
+    if arr.ndim == 2:
+        arr = arr.T
+    return Array(arr, p.is_micron, p.lvl, p.order)
 
-    # convert to pixels, then downscale to the a certain resolution
-    point /= point.mpp**point.order
-    point.is_micron = False
-    rescale(point, lvl)
+def filter(self, poly, filt):
+    if poly.is_micron != filt.is_micron or poly.lvl != filt.lvl:
+        raise UnitException(ERR_COMPARE)
 
-def rotate_point(origin, point, angle):
-    ox, oy = origin
-    px, py = point
-    qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
-    qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
-    return np.array((qx, qy))
+    x, y = [], []
+    for i in range(poly.n):
+        if ray_tracing(poly[i][0], poly[i][1], np.array(filt)):
+            x.append(poly[i][0])
+            y.append(poly[i][1])
+    return Array(np.array(x, y).T, poly.is_micron, poly.lvl, poly.order)
+
+def connect(self, poly):
+    if poly[0, 0] != poly[-1, 0] or poly[0, 1] != poly[-1, 1]:
+        poly = np.concatenate([poly, [poly[0,0], poly[1,1]]], axis=0)
+        poly.n += 1
+    return poly
 
 @jit(nopython=True)
 def ray_tracing(x,y,poly):
@@ -101,155 +123,58 @@ def linearity(x, y):
 
     return rms
 
-# defines an (x, y) point in terms of microns
-# TODO: could instead make a Unit class instead of point class
-# TODO: could just expand this to be an array
+class Converter:
+    def __init__(self, mpp, ds):
+        self.mpp = mpp
+        self.ds = ds
+
+    def to_float(self, x):
+        if x.dtype == np.float:
+            return x
+        return x.astype(dtype=np.float, copy=False)
+
+    def rescale(self, x, lvl):
+        if x.lvl == lvl:
+            return
+        if x.is_micron:
+            raise UnitException(ERR_RESCALE)
+
+        x *= (self.ds[x.lvl] / self.ds[lvl])**x.order
+        x.lvl = lvl
+
+    def to_microns(self, x):
+        if x.is_micron:
+            raise UnitException(ERR_MICRONS)
+
+        self.rescale(x, 0)
+        x *= (self.mpp)**x.order
+        x.is_micron = True
+
+    def to_pixels(self, x, lvl):
+        if not x.is_micron:
+            raise UnitException(ERR_PIXELS)
+
+        x /= (self.mpp)**x.order
+        x.is_micron = False
+        self.rescale(x, lvl)
+
 # NOTE: this follows the following guide - https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
-class Point(np.ndarray):
-    def __new__(self, x, y, mpp, ds, order=1, is_micron=True, lvl=0):
-        obj = super().__new__(self, shape=(2,), dtype=float,
-                              buffer=np.array([x, y], dtype=float))
-        obj.mpp = mpp
-        obj.ds = ds
-        obj.order = order
+class Array(np.ndarray):
+    def __new__(self, arr, is_micron=False, lvl=0, order=1):
+        obj = super().__new__(
+            self, shape=arr.shape, dtype=arr.dtype, buffer=arr)
         obj.is_micron = is_micron
         obj.lvl = lvl
+        obj.order = order
         return obj
 
     def __array_finalize__(self, obj):
         if obj is None: return
-        self.mpp = getattr(obj, 'mpp', None)
-        self.ds = getattr(obj, 'ds', None)
-        self.order = getattr(obj, 'order', None)
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
+        self.order = getattr(obj, 'order', None)
 #
-# end of Point
-
-class Polygon:
-    def __init__(self, x, y, mpp, ds, is_micron=True, lvl=0):
-        self.x = x
-        self.y = y
-        self.n = len(x)
-        self.mpp = mpp
-        self.ds = ds
-        self.is_micron = is_micron
-        self.lvl = lvl
-
-    def area(self):
-        x0, x1, y0, y1 = self.x, np.roll(self.x,1), self.y, np.roll(self.y,1)
-        return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-
-    def centroid(self):
-        A = self.area()
-        x0, x1, y0, y1 = self.x, np.roll(self.x,1), self.y, np.roll(self.y,1)
-        cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
-        cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
-        c = Point(cx, cy, self.mpp, self.ds, self.is_micron, self.lvl)
-        d = np.sqrt((c[0] - self.x)**2 + (c[1] - self.y)**2)
-        r = np.max(d)
-        return c, r
-
-    def linear_regression(self):
-        ss_xy = np.sum(self.y * self.x) - \
-            self.n * np.mean(self.y) * np.mean(self.x)
-        ss_xx = np.sum(self.x**2) - self.n * np.mean(self.x)**2
-        m = ss_xy/ss_xx
-        b = np.mean(self.y) - m * np.mean(self.x)
-        return m, b
-
-    def bounding_box(self):
-        x0, y0 = np.min(self.x), np.min(self.y)
-        x1, y1 = np.max(self.x), np.max(self.y)
-        loc = Point(x0, y0, self.mpp, self.ds,
-                    is_micron=self.is_micron, lvl=self.lvl)
-        size = Point(x1-x0, y1-y0, self.mpp, self.ds,
-                     is_micron=self.is_micron, lvl=self.lvl)
-        return loc, size
-
-    def translate(self, p):
-        if p.lvl != self.lvl or p.is_micron != self.is_micron:
-            raise UnitException(ERR_COMPARE)
-        self.x -= p[0]
-        self.y -= p[1]
-
-    def rotate(self, centroid, angle):
-        x1, y1 = np.zeros(self.n), np.zeros(self.n)
-        th = math.radians(-angle)
-        for i in range(self.n):
-            p0 = Point(self.x[i], self.y[i], self.mpp, self.ds,
-                      self.is_micron, self.lvl)
-            p1 = rotate_point(centroid, p0, th)
-            x1[i] = p1[0]
-            y1[i] = p1[1]
-        return Polygon(x1, y1, self.mpp, self.ds, self.is_micron, self.lvl)
-
-    def filter(self, poly):
-        if poly.is_micron != self.is_micron or poly.lvl != self.lvl:
-            raise UnitException(ERR_COMPARE)
-
-        x, y = [], []
-        for v in self.vertices():
-            if ray_tracing(v[0], v[1], poly.vertices()):
-                x.append(v[0])
-                y.append(v[1])
-        return Polygon(np.array(x), np.array(y),
-           self.mpp, self.ds, self.is_micron, self.lvl)
-
-    def connect(self):
-        if self.x[0] != self.x[-1] or self.y[0] != self.y[-1]:
-            self.x = np.concatenate([self.x, [self.x[0]]])
-            self.y = np.concatenate([self.y, [self.y[0]]])
-            self.n += 1
-
-    def round(self):
-        if self.x.dtype == np.int:
-            return
-        self.x = np.rint(self.x, out=self.x).astype(dtype=np.int, copy=False)
-        self.y = np.rint(self.y, out=self.y).astype(dtype=np.int, copy=False)
-
-    def to_float(self):
-        self.x = to_float(self.x)
-        self.y = to_float(self.y)
-
-    # rescales a point to a new
-    def rescale(self, lvl):
-        if self.lvl == lvl:
-            return
-
-        # make sure we only rescale if we are in pixels
-        if self.is_micron:
-            raise UnitException(ERR_RESCALE)
-
-        # scale the point by curr_ds / new_ds
-        self.x *= self.ds[self.lvl] / self.ds[lvl]
-        self.y *= self.ds[self.lvl] / self.ds[lvl]
-        self.lvl = lvl
-
-    def to_microns(self):
-        if self.is_micron:
-            raise UnitException(ERR_MICRONS)
-
-        # rescale to the original resolution, then convert to microns
-        self.rescale(0)
-        self.x *= self.mpp
-        self.y *= self.mpp
-        self.is_micron = True
-
-    def to_pixels(self, lvl):
-        if not self.is_micron:
-            raise UnitException(ERR_PIXELS)
-
-        # convert to pixels, then downscale to the a certain resolution
-        self.x /= self.mpp
-        self.y /= self.mpp
-        self.is_micron = False
-        self.rescale(lvl)
-
-    def vertices(self):
-        return np.array([[self.x[i], self.y[i]] for i in range(self.n)])
-#
-# end of Polygon
+# end of Array
 
 #
 # end of file

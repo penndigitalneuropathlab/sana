@@ -6,7 +6,7 @@ import openslide
 import numpy as np
 
 import sana_io
-import sana_geo
+from sana_geo import Converter, Point
 from sana_framer import Frame
 
 class Loader(openslide.OpenSlide):
@@ -21,6 +21,7 @@ class Loader(openslide.OpenSlide):
         self.dim = self.level_dimensions
         self.ds = self.level_downsamples
         self.mpp = float(self.properties['aperio.MPP'])
+        self.converter = Converter(self.mpp, self.ds)
 
         # pre-load the thumbnail for easy access
         self.thumbnail = self.load_thumbnail()
@@ -44,11 +45,9 @@ class Loader(openslide.OpenSlide):
 
     def load_thumbnail(self):
         lvl = self.lc - 1
-        loc = sana_geo.Point(0, 0, self.mpp, self.ds,
-                             is_micron=False, lvl=lvl)
         h, w = self.get_dim(lvl)
-        size = sana_geo.Point(h, w, self.mpp, self.ds,
-                              is_micron=False, lvl=lvl)
+        loc = Point(0, 0, False, lvl)
+        size = Point(h, w, False, lvl)
         return self.load_frame(loc, size, lvl)
 
     def load_frame(self, loc, size, lvl=None, pad_color=None):
@@ -59,15 +58,13 @@ class Loader(openslide.OpenSlide):
 
         # make sure loc and size are in current pixel resolution
         if loc.is_micron:
-            sana_geo.to_pixels(loc, lvl)
-        else:
-            sana_geo.rescale(loc, lvl)
+            self.converter.to_pixels(loc, lvl)
+        self.converter.rescale(loc, lvl)
         if size.is_micron:
-            sana_geo.to_pixels(size, lvl)
-        else:
-            sana_geo.rescale(size, lvl)
+            self.converter.to_pixels(size, lvl)
+        self.converter.rescale(size, lvl)
 
-        # prepare variables to padding
+        # prepare variables to calculate padding
         loc = copy(loc)
         size = copy(size)
         h, w = self.get_dim(lvl)
@@ -93,9 +90,9 @@ class Loader(openslide.OpenSlide):
 
         # load the region
         # NOTE: upscale the location before accessing the image
-        sana_geo.rescale(loc, 0)
-        loc = sana_geo.round(loc)
-        size = sana_geo.round(size)
+        self.converter.rescale(loc, 0)
+        loc = np.rint(loc, dtype=np.int)
+        size = np.rint(size, dtype=np.int)
         img = np.array(self.read_region(
             location=loc, level=lvl, size=size))[:, :, :3]
 

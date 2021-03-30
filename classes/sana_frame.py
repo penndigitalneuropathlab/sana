@@ -16,18 +16,19 @@ from sana_color_deconvolution import StainSeparator
 class Frame:
     def __init__(self, img):
         self.img = img
-        self.size = np.array((self.img.shape[1], self.img.shape[0]))
         if img.shape[-1] == 3:
             self.color_histo = self.histogram()
+
+    def size(self):
+        return np.array((self.img.shape[1], self.img.shape[0]))
 
     def copy(self):
         return Frame(np.copy(self.img))
 
     def to_gray(self):
-        if self.img.shape[-1] >= 3:
+        if self.img.shape[-1] == 3:
             float_img = self.img.astype(np.float64)
-            self.img = np.dot(
-                float_img[:, :, :3], [0.2989, 0.5870, 0.1140])[:, :, None]
+            self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
             self.gray_histo = self.histogram()
 
     def to_rgb(self):
@@ -46,8 +47,8 @@ class Frame:
         return histogram
 
     def crop(self, loc, size):
-        loc = sana_geo.round(copy(loc))
-        size = sana_geo.round(copy(size))
+        loc = np.rint(loc, dtype=np.int)
+        size = np.rint(size, dtype=np.int)
         return Frame(self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]])
 
     def rescale(self, ds, size=None):

@@ -8,19 +8,13 @@ from sana_color_deconvolution import StainSeparator
 from matplotlib import pyplot as plt
 
 class Thresholder:
-    def __init__(self, data, k, n):
+    def __init__(self, data):
         self.data = data
-        self.k = k
-        self.n = n
-
-    def run_gmm(self):
-        self.gmm()
-        self.mle()
 
     # generates the means and stdevs of the given data and pre-defined k value
-    def gmm(self):
+    def gmm(self, k, n):
         gmm = GaussianMixture(
-            n_components=self.k, covariance_type='full').fit(self.data)
+            n_components=k, covariance_type='full').fit(self.data)
 
         # get the sorted variances and corresponding means
         inds = gmm.covariances_[:, 0, 0].argsort()
@@ -29,10 +23,10 @@ class Thresholder:
 
         # take the top N distributions
         if self.data.dtype == np.uint8:
-            means = np.rint(means[:self.n]).astype(int)
+            means = np.rint(means[:n]).astype(int)
         else:
-            means = means[:self.n]
-        vars = vars[:self.n]
+            means = means[:n]
+        vars = vars[:n]
 
         # sort the distributionsn by the means
         inds = means.argsort()
@@ -42,31 +36,14 @@ class Thresholder:
     # finds the optimal boundaries between a set of means and vars
     def mle(self):
         if self.data.dtype != np.uint8:
-            self.mle_float()
-            return
+            t = np.linspace(0, 1, 1000)
+        else:
+            t = np.arange(0, 256, 1)
 
         # perform maximum likelihood estimation
         # NOTE: this is finding the crossing of the PDFs between the means
-        t = np.arange(0, 256, 1)
         thresholds = []
-        for i in range(self.n-1):
-
-            # generate the pdfs
-            p1 = multivariate_normal(self.means[i], self.vars[i]).pdf(t)
-            p2 = multivariate_normal(self.means[i+1], self.vars[i+1]).pdf(t)
-
-            # only evaluate the pdfs between the 2 means
-            p1 = p1.flatten()[self.means[i]:self.means[i+1]]
-            p2 = p2.flatten()[self.means[i]:self.means[i+1]]
-
-            # find the last x value where p1 is more probable than p2
-            thresholds.append(np.nonzero(p1 > p2)[0][-1] + self.means[i])
-        self.thresholds = thresholds
-
-    def mle_float(self):
-        t = np.linspace(0, 1, 1000)
-        thresholds = []
-        for i in range(self.n-1):
+        for i in range(len(self.means)-1):
 
             # generate the pdfs
             p1 = multivariate_normal(self.means[i], self.vars[i]).pdf(t)
@@ -75,20 +52,11 @@ class Thresholder:
             # only evaluate between the means
             a = np.where(t > self.means[i])[0][0]
             b = np.where(t < self.means[i+1])[0][-1]
-
             p1 = p1.flatten()[a:b]
             p2 = p2.flatten()[a:b]
 
-            # find the last x value wehre p1 is more probable than p2
-            try:
-                thresholds.append(t[np.nonzero(p1 > p2)[0][-1] + a])
-            except:
-                if i == 1:
-                    plt.hist(self.data, bins=256, range=(0,1), color='gray')
-                    plt.plot(t, multivariate_normal(self.means[i], self.vars[i]).pdf(t), color='red')
-                    plt.plot(t, multivariate_normal(self.means[i+1], self.vars[i+1]).pdf(t), color='blue')
-                    plt.xlim((self.means[i], self.means[i+1]))
-                    plt.show()
+            # find the last x value where p1 is more probable than p2
+            thresholds.append(np.nonzero(p1 > p2)[0][-1] + a)
         self.thresholds = thresholds
 
     # defines the threshold as 1 std above the mean
@@ -98,13 +66,9 @@ class Thresholder:
             thresholds.append(self.means[i] + 2*np.sqrt(self.vars[i]))
         self.thresholds = thresholds
 
-    def kittler(self, im):
-        if im.dtype != np.uint8:
-            mi, mx = np.min(im), np.max(im)
-            im = 255 * (im - mi) / (mx - mi)
-            im = im.astype(np.uint8)
-        np.maximum(im, 1, out=im)
-        h,g = np.histogram(im.ravel(),256,[0,256])
+    def kittler(self):
+        np.maximum(self.data, 1, out=self.data)
+        h,g = np.histogram(self.data,256,[0,256])
         h = h.astype(np.float)
         g = g.astype(np.float)
         g = g[:-1]
@@ -133,7 +97,6 @@ class Thresholder:
         v[~np.isfinite(v)] = np.inf
         idx = np.argmin(v)
         t = g[idx]
-        t = float(t) * ((mx - mi)/255) + mi
         self.thresholds = [t]
 #
 # end of Thresholder
@@ -157,12 +120,12 @@ class TissueThresholder(Thresholder):
         data = data[:, None]
 
         # initialize the thresholder
-        super().__init__(data, 8, 2)
+        super().__init__(data)
 
     def mask_frame(self):
 
         # run the gmm algorithm to define the means and vars of the data
-        self.gmm()
+        self.gmm(8, 2)
 
         # use mle to define the crossing of PDFs
         self.mle()

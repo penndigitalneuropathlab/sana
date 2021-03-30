@@ -1,18 +1,18 @@
 
-import os
-import sys
 from copy import copy
 import numpy as np
 
-import sana_geo
+from sana_geo import Point
 from sana_frame import Frame
 
 class Framer:
     def __init__(self, loader, size, step=None,
-                 fpad=None, fshift=None, locs=None):
+                 fpad=None, fshift=None, locs=None,
+                 loc0=None, size0=None):
 
         # store the slide loader
         self.loader = loader
+        self.converter = self.loader.converter
 
         # define the frame size and step
         self.size = size
@@ -23,30 +23,35 @@ class Framer:
 
         # convert the dimensions to pixels and round
         if self.size.is_micron:
-            sana_geo.to_pixels(self.size, loader.lvl)
-        else:
-            sana_geo.rescale(self.size, loader.lvl)
+            self.converter.to_pixels(self.size, self.loader.lvl)
+        self.converter.rescale(self.size, self.loader.lvl)
         if self.step.is_micron:
-            sana_geo.to_pixels(self.step, loader.lvl)
-        else:
-            sana_geo.rescale(self.size, loader.lvl)
+            self.converter.to_pixels(self.step, self.loader.lvl)
+        self.converter.rescale(self.size, self.loader.lvl)
+
+        self.size = np.rint(self.size, dtype=np.int)
+        self.step = np.rint(self.step, dtype=np.int)
 
         # store the padding and shifting for center-alignment
         if fpad is None:
-            self.fpad = sana_geo.Point(0, 0, self.loader.mpp, self.loader.ds,
-                                       is_micron=False, lvl=self.loader.lvl)
+            self.fpad = Point(0, 0, False, self.loader.lvl)
             self.fshift = np.copy(self.fpad)
         else:
             self.fpad = fpad
             self.fshift = fshift
 
-
         # define the locations of the frames
         if locs is None:
 
-            # calculate the number of frames in the slide
-            self.n = (self.loader.get_dim() // self.step) + 1
-            self.ds = self.loader.get_dim() / self.n
+            # define the origin and size of region to frame
+            if size0 is None:
+                size0 = self.loader.get_dim()
+            if loc0 is None:
+                loc0 = Point(0, 0, False, self.loader.lvl)
+
+            # calculate the number of frames in the region
+            self.n = (size0 // self.step) + 1
+            self.ds = size0 / self.n
 
             self.locs = [[[] for j in range(self.n[1])] \
                          for i in range(self.n[0])]
@@ -54,17 +59,16 @@ class Framer:
                 for j in range(self.n[1]):
                     x, y = i * self.step[0], j * self.step[1]
                     self.locs[i][j] = \
-                        sana_geo.Point(x, y, self.loader.mpp,
-                                       self.loader.ds, is_micron=False,
-                                       lvl=self.loader.lvl)
+                        Point(x, y, False, self.loader.lvl) + loc0
         else:
             self.n = len(locs)
             self.locs = locs
             for i in range(self.n):
                 if self.locs[i].is_micron:
-                    sana_geo.to_pixels(self.locs[i], self.loader.lvl)
-            self.i = 0
-
+                    self.convert.to_pixels(self.locs[i], self.loader.lvl)
+                self.converter.rescale(self.locs[i], self.loader.lvl)
+                self.locs[i] = np.rint(self.locs[i], dtype=np.int)
+                
     def load(self, i, j=None):
         if j is None:
             loc = self.locs[i]
@@ -74,6 +78,19 @@ class Framer:
         # load the frame, apply the shifting and padding
         return self.loader.load_frame(loc-self.fshift, self.size+self.fpad,
             pad_color=self.loader.slide_color)
+
+    def inds(self):
+        if type(self.n) is int:
+            for i in range(self.n):
+                yield i, None
+        else:
+            for i in range(self.n[0]):
+                for j in range(self.n[1]):
+                    yield i, j
+
+    def frames(self):
+        for i, j in self.inds():
+            yield self.load(i, j)
 #
 # end of Framer
 

@@ -6,13 +6,12 @@ import numpy as np
 from numba import jit
 from PIL import Image, ImageDraw
 
-import sana_geo
+from sana_geo import Array, ray_tracing
 from sana_frame import Frame
 
 class Detector:
-    def __init__(self, mpp, ds, lvl):
-        self.mpp = mpp
-        self.ds = ds
+    def __init__(self, is_micron, lvl):
+        self.is_micron = is_micron
         self.lvl = lvl
 
     # detects objects from a masked
@@ -45,8 +44,7 @@ class Detector:
     def contour_to_polygon(self, contour):
         x = np.array([float(v[0][0]) for v in contour])
         y = np.array([float(v[0][1]) for v in contour])
-        polygon = sana_geo.Polygon(x, y, self.mpp, self.ds,
-                                   is_micron=False, lvl=self.lvl)
+        polygon = Array(np.array([x, y]).T, self.is_micron, self.lvl)
         polygon.to_microns()
         return polygon
 
@@ -65,7 +63,7 @@ class Detector:
             polys.append([tuple(v) for v in d.polygon.vertices()])
 
         size = np.copy(size)
-        size = sana_geo.round(size)
+        size = np.rint(size, dtype=np.int)
         mask = Image.new('L', (size[0], size[1]), x)
         for poly in polys:
             ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
@@ -80,11 +78,11 @@ class Detector:
             else:
                 p0.rescale(p1.lvl)
             for v in p0.vertices():
-                if sana_geo.ray_tracing(v[0], v[1], p1.vertices()):
+                if ray_tracing(v[0], v[1], np.array(p1)):
                     x.append(v[0])
                     y.append(v[1])
-        return sana_geo.Polygon(np.array(x), np.array(y),
-                       self.mpp, self.ds, False, self.lvl)
+        x, y = np.array(x), np.array(y)
+        return Array(np.array([x, y]), self.is_micron, self.lvl)
 
     def get_bodies(self):
         bodies = []
@@ -96,8 +94,8 @@ class Detector:
 # end of Detector
 
 class TissueDetector(Detector):
-    def __init__(self, mpp, ds, lvl):
-        super().__init__(mpp, ds, lvl)
+    def __init__(self, is_micron, lvl):
+        super().__init__(is_micron, lvl)
 
     def run(self, frame, tissue_threshold, min_body_area=0, min_hole_area=0):
 

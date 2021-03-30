@@ -248,7 +248,7 @@ def detect_rotation(filename, anno, tissue_threshold):
 #
 # end of detect_rotation
 
-def rotate_roi(loader, anno, angle):
+def rotate_roi(loader, anno, angle, do_framing=False):
 
     # rescale the annotation to the given pixel resolution
     anno.rescale(loader.lvl)
@@ -256,27 +256,30 @@ def rotate_roi(loader, anno, angle):
     # define the frame size and location based on the centroid and radius
     #   of the polygonal annotation
     centroid, radius = anno.centroid()
-    fsize = sana_geo.Point(2*radius, 2*radius, loader.mpp, loader.ds,
+    size = sana_geo.Point(2*radius, 2*radius, loader.mpp, loader.ds,
                            is_micron=False, lvl=loader.lvl)
-    flocs = [sana_geo.Point(centroid[0]-radius, centroid[1]-radius,
+    loc = sana_geo.Point(centroid[0]-radius, centroid[1]-radius,
                             loader.mpp, loader.ds,
-                            is_micron=False, lvl=loader.lvl)]
+                            is_micron=False, lvl=loader.lvl)
 
-    # initalize the Framer and load the frame
-    framer = Framer(loader, fsize, locs=flocs)
-    frame = framer.load(0)
-
-    # shift the annotation to the relative position
-    anno.translate(framer.locs[0])
-    centroid -= framer.locs[0]
-
-    # rotate the frame
-    frame_rot = frame.rotate(angle)
+    # shift the annotation to the relative position, rotate it
+    anno.translate(loc)
+    centroid -= loc
     anno_rot = anno.rotate(centroid, angle)
 
-    # crop the frame based on the new bounding box of the ROI
-    crop_loc, crop_size = anno_rot.bounding_box()
-    frame_rot = frame_rot.crop(crop_loc, crop_size)
+    # initalize the Framer and load the frame
+    if do_framing:
+        fsize = sana_geo.Point(1000, 1000, loader.mpp, loader.ds,
+                              is_micron=False, lvl=loader.lvl)
+        framer = Framer(loader, fsize, loc0=loc, size0=size)
+    else:
+        framer = Framer(loader, size, locs=[loc])
+
+    for i, j in framer.gen_inds():
+        frame = framer.load(i, j)
+
+        # rotate the frame
+        frame_rot = frame.rotate(angle)
 
     # revert the annotation to the original scale
     anno.translate(-framer.locs[0])
@@ -286,11 +289,10 @@ def rotate_roi(loader, anno, angle):
 #
 # end of rotate_roi
 
-def separate_roi(frame, stain_type, stain_target, stain_vector=None, od=False):
+def separate_roi(frame, stain_type, stain_target, ret_od=False):
 
     # initialize the color deconvolution algorithm
-    separator = StainSeparator(stain_type, stain_target,
-                               stain_v=stain_vector, od=od)
+    separator = StainSeparator(stain_type, stain_target, ret_od=ret_od)
 
     # run it on the given frame
     return Frame(separator.run(frame.img)[0])
