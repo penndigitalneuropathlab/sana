@@ -12,77 +12,6 @@ class UnitException(Exception):
     def __init__(self, message):
         self.message = message
 
-def area(self, poly):
-    x0, y0 = poly[:, 0], poly[:, 1]
-    x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
-    return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-
-def centroid(self, poly):
-    A = self.area()
-    x0, y0 = poly[:, 0], poly[:, 1]
-    x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
-    cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
-    cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
-    c = Array(np.array([cx, cy]), poly.is_micron, poly.lvl, poly.order)
-    d = np.sqrt((c[0] - x0)**2 + (c[1] - y0)**2)
-    r = np.max(d)
-    return c, r
-
-def linear_regression(self, poly):
-    x, y, n = poly[: ,0], poly[:, 1], poly.n
-    ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
-    ss_xx = np.sum(x**2) - n * np.mean(x)**2
-    m = ss_xy/ss_xx
-    b = np.mean(y) - m * np.mean(x)
-    return m, b
-
-def bounding_box(self, poly):
-    x, y = poly[: ,0], poly[:, 1]
-    x0, y0 = np.min(x), np.min(y)
-    x1, y1 = np.max(x), np.max(y)
-    loc = Array(np.array([x0, y0]), poly.is_micron, poly.lvl, poly.order)
-    size = Array(np.array([x1-x0, y1-y0]), poly.is_micron, poly.lvl, poly.order)
-    return loc, size
-
-def translate(self, x, y):
-    if x.lvl != y.lvl or x.is_micron != y.is_micron:
-        raise UnitException(ERR_COMPARE)
-    x -= y
-
-def rotate(self, p, centroid, angle):
-    if p.ndim == 1:
-        x0, y0 = p[0], p[1]
-    else:
-        x0, y0 = p[:, 0], p[:, 1]
-    obj = type(p)
-    xc, yc = centroid
-    th = math.radians(-angle)
-
-    x1 = xc + np.cos(th) * (x0 - xc) - np.sin(th) * (y0 - yc)
-    y1 = yc + np.sin(th) * (x0 - xc) + np.cos(th) * (y0 - yc)
-
-    arr = np.array([x1, y1])
-    if arr.ndim == 2:
-        arr = arr.T
-    return Array(arr, p.is_micron, p.lvl, p.order)
-
-def filter(self, poly, filt):
-    if poly.is_micron != filt.is_micron or poly.lvl != filt.lvl:
-        raise UnitException(ERR_COMPARE)
-
-    x, y = [], []
-    for i in range(poly.n):
-        if ray_tracing(poly[i][0], poly[i][1], np.array(filt)):
-            x.append(poly[i][0])
-            y.append(poly[i][1])
-    return Array(np.array(x, y).T, poly.is_micron, poly.lvl, poly.order)
-
-def connect(self, poly):
-    if poly[0, 0] != poly[-1, 0] or poly[0, 1] != poly[-1, 1]:
-        poly = np.concatenate([poly, [poly[0,0], poly[1,1]]], axis=0)
-        poly.n += 1
-    return poly
-
 @jit(nopython=True)
 def ray_tracing(x,y,poly):
     n = len(poly)
@@ -160,9 +89,8 @@ class Converter:
 
 # NOTE: this follows the following guide - https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
 class Array(np.ndarray):
-    def __new__(self, arr, is_micron=False, lvl=0, order=1):
-        obj = super().__new__(
-            self, shape=arr.shape, dtype=arr.dtype, buffer=arr)
+    def __new__(cls, arr, is_micron=True, lvl=0, order=1):
+        obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
         obj.lvl = lvl
         obj.order = order
@@ -173,8 +101,94 @@ class Array(np.ndarray):
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
         self.order = getattr(obj, 'order', None)
+
+    def translate(self, p):
+        if self.lvl != p.lvl or self.is_micron != p.is_micron:
+            raise UnitException(ERR_COMPARE)
+        self -= p
+
+    def rotate(self, c, angle):
+        if self.ndim == 1:
+            x0, y0 = self[0], self[1]
+        else:
+            x0, y0 = self[:, 0], self[:, 1]
+        cls = type(self)
+        xc, yc = c
+        th = np.radians(-angle)
+
+        x1 = xc + np.cos(th) * (x0 - xc) - np.sin(th) * (y0 - yc)
+        y1 = yc + np.sin(th) * (x0 - xc) + np.cos(th) * (y0 - yc)
+
+        return cls(x1, y1, self.is_micron, self.lvl, self.order)
 #
 # end of Array
+
+class Point(Array):
+    def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
+        arr = np.array((x, y), dtype=np.float)
+        obj = Array(arr, is_micron, lvl, order).view(cls)
+        return obj
+#
+# end of Point
+
+class Polygon(Array):
+    def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
+        arr = np.array((x, y), dtype=np.float).T
+        obj = Array(arr, is_micron, lvl, order).view(cls)
+        return obj
+
+    def area(self):
+        x0, y0 = self[:, 0], self[:, 1]
+        x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
+        return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+
+    def centroid(self):
+        A = self.area()
+        x0, y0 = self[:, 0], self[:, 1]
+        x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
+        cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
+        cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
+        c = Point(cx, cy, self.is_micron, self.lvl, self.order)
+        d = np.sqrt((c[0] - x0)**2 + (c[1] - y0)**2)
+        r = np.max(d)
+        return c, r
+
+    def linear_regression(self):
+        x, y, n = self[:, 0], self[:, 1], self.shape[0]
+        ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
+        ss_xx = np.sum(x**2) - n * np.mean(x)**2
+        m = ss_xy/ss_xx
+        b = np.mean(y) - m * np.mean(x)
+        return m, b
+
+    def bounding_box(self):
+        x, y = self[:, 0], self[:, 1]
+        x0, y0 = np.min(x), np.min(y)
+        x1, y1 = np.max(x), np.max(y)
+        loc = Point(x0, y0, self.is_micron, self.lvl, self.order)
+        size = Point(x1-x0, y1-y0, self.is_micron, self.lvl, self.order)
+        return loc, size
+
+    def filter(self, p):
+        if self.is_micron != p.is_micron or self.lvl != p.lvl:
+            raise UnitException(ERR_COMPARE)
+
+        x, y = [], []
+        for i in range(self.n):
+            if ray_tracing(self[i][0], self[i][1], np.array(p)):
+                x.append(self[i][0])
+                y.append(self[i][1])
+        return Polygon(x, y, self.is_micron, self.lvl, self.order)
+
+    def connect(self):
+        if self[0, 0] != self[-1, 0] or self[0, 1] != self[-1, 1]:
+            p = np.array([self[0,0], self[0,1]])[None, :]
+            return Array(np.concatenate([self, p], axis=0),
+                         self.is_micron, self.lvl, self.order)
+        else:
+            return self
+#
+# end of Polygon
 
 #
 # end of file

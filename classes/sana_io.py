@@ -61,8 +61,8 @@ def read_list_file(list_f):
 
 def anno_to_json(anno, class_name=None, anno_name=None):
     verts = []
-    for i in range(anno.n):
-        verts.append([anno.x[i], anno.y[i]])
+    for i in range(anno.shape[0]):
+        verts.append([anno[i][0], anno[i][1]])
     annotation = {
         "type": "Feature",
         "id": "PathAnnotationObject",
@@ -95,7 +95,7 @@ def fix_annotations(ifname):
         fp.write(data)
         fp.close()
 
-def read_annotations(ifname, mpp=None, ds=None, class_name=None):
+def read_annotations(ifname, class_name=None):
 
     # remove unnecessary bytes at beginning of file if they exist
     fix_annotations(ifname)
@@ -125,7 +125,7 @@ def read_annotations(ifname, mpp=None, ds=None, class_name=None):
         for coords in coords_list:
             x = np.array([float(c[0]) for c in coords[0]])
             y = np.array([float(c[1]) for c in coords[0]])
-            poly = Polygon(x, y, mpp, ds, is_micron=False)
+            poly = Polygon(x, y, False, 0)
             annotations.append(
                 poly)
             if 'classification' in annotation['properties']:

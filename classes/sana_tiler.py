@@ -2,15 +2,13 @@
 from copy import copy
 import numpy as np
 
-from sana_framer import Framer, Frame
+from sana_framer import Framer
 
 class Tiler:
-    def __init__(self, loader, tsize, tstep=None,
-                 fsize=None, fstep=None):
-
-        # store the slide loader
-        self.loader = loader
-        self.converter = self.loader.converter
+    def __init__(self, lvl, converter, tsize, tstep=None,
+                 fsize=None, fstep=None, loader=None):
+        self.lvl = lvl
+        self.converter = converter
 
         # define the tile size and step size
         self.size = tsize
@@ -21,14 +19,14 @@ class Tiler:
 
         # convert the dimensions to pixels and round
         if self.size.is_micron:
-            self.converter.to_pixels(self.size, lself.oader.lvl)
-        self.converter.rescale(self.size, self.loader.lvl)
+            self.converter.to_pixels(self.size, self.lvl)
+        self.converter.rescale(self.size, self.lvl)
         if self.step.is_micron:
-            self.converter.to_pixels(self.step, self.loader.lvl)
-        self.converter.rescale(self.step, self.loader.lvl)
+            self.converter.to_pixels(self.step, self.lvl)
+        self.converter.rescale(self.step, self.lvl)
 
-        self.size = np.rint(self.size, dtype=np.int)
-        self.step = np.rint(self.step, dtype=np.int)
+        self.size = np.rint(self.size).astype(np.int)
+        self.step = np.rint(self.step).astype(np.int)
 
         # define the amount to pad/shift the frames for center-alignment
         self.fpad = self.size - 1
@@ -37,7 +35,7 @@ class Tiler:
         # generate the Framer object if needed
         if fsize is not None:
             self.framer = Framer(
-                self.loader, fsize, fstep, fpad=self.fpad, fshift=self.fshift)
+                loader, fsize, fstep, fpad=self.fpad, fshift=self.fshift)
 
     def load_frame(self, i, j):
         return self.framer.load(i, j)
@@ -49,8 +47,8 @@ class Tiler:
         # set the frame and calculate the number of tiles in the frame
         self.frame = frame
         self.frame.img = self.frame.img[:, :, 0]
-        self.n = ((self.frame.size - self.size) // self.step) + 1
-        self.ds = (self.frame.size - self.fpad) / self.n
+        self.n = ((self.frame.size() - self.size) // self.step) + 1
+        self.ds = (self.frame.size() - self.fpad) / self.n
 
         # define the output shape
         shape = (self.n[1], self.n[0], self.size[1], self.size[0])
@@ -59,13 +57,13 @@ class Tiler:
         N = self.frame.img.itemsize
 
         # number of bytes between tile rows
-        s0 = N * self.frame.size[0] * self.step[1]
+        s0 = N * self.frame.size()[0] * self.step[1]
 
         # number of bytes between tile cols
         s1 = N * self.step[0]
 
         # number of bytes between element rows
-        s2 = N * self.frame.size[0]
+        s2 = N * self.frame.size()[0]
 
         # number of bytes between element cols
         s3 = N * 1

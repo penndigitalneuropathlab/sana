@@ -7,7 +7,7 @@ import numpy as np
 
 import sana_io
 from sana_geo import Converter, Point
-from sana_framer import Frame
+from sana_frame import Frame
 
 class Loader(openslide.OpenSlide):
     def __init__(self, fname):
@@ -91,8 +91,8 @@ class Loader(openslide.OpenSlide):
         # load the region
         # NOTE: upscale the location before accessing the image
         self.converter.rescale(loc, 0)
-        loc = np.rint(loc, dtype=np.int)
-        size = np.rint(size, dtype=np.int)
+        loc = np.rint(loc).astype(np.int)
+        size = np.rint(size).astype(np.int)
         img = np.array(self.read_region(
             location=loc, level=lvl, size=size))[:, :, :3]
 
@@ -106,7 +106,7 @@ class Loader(openslide.OpenSlide):
         padx2 = np.full_like(img, pad_color, shape=(img.shape[0], padx2, 3))
         img = np.concatenate((padx1, img, padx2), axis=1)
 
-        return Frame(img)
+        return Frame(img, lvl, self.converter)
 #
 # end of Loader
 

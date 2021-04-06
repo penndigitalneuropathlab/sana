@@ -3,7 +3,6 @@ from copy import copy
 import numpy as np
 
 from sana_geo import Point
-from sana_frame import Frame
 
 class Framer:
     def __init__(self, loader, size, step=None,
@@ -68,7 +67,7 @@ class Framer:
                     self.convert.to_pixels(self.locs[i], self.loader.lvl)
                 self.converter.rescale(self.locs[i], self.loader.lvl)
                 self.locs[i] = np.rint(self.locs[i], dtype=np.int)
-                
+
     def load(self, i, j=None):
         if j is None:
             loc = self.locs[i]
