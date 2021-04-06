@@ -130,16 +130,29 @@ class Frame:
 
         self.img = np.where(self.img < threshold, x, y)
 
+    def to_mask(self, polygons=None, x=0, y=1):
+        if polygons is None:
+            polygons = [copy(d.polygon) for d in self.get_bodies()]
+        polys = []
+        for p in polygons:
+            if p.is_micron:
+                self.converter.to_pixels(p, self.lvl)
+            else:
+                self.converter.rescale(p, self.lvl)
+            p = np.rint(p).astype(np.int)
+            polys.append([tuple(p[i]) for i in range(p.shape[0])])
+        mask = Image.new('L', (self.size()[0], self.size()[1]), x)
+        for poly in polys:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+        self.img = np.array(mask)[:, :, None]
+
     def get_tissue_threshold(self, blur=0, mi=0, mx=255):
         self.gauss_blur(blur)
         data = self.img.flatten()
         data = data[data >= mi]
         data = data[data <= mx]
-        # data = data[::500]
         data = data[:, None]
         return sana_thresholds.kittler(data)[0]
-        # means, vars = sana_thresholds.gmm(data, 8, 2)
-        # return sana_thresholds.mle(means, vars)[0]
 
     def get_stain_threshold(self, tissue_mask, blur=0, mi=0, mx=255):
         self.to_gray()
@@ -224,20 +237,6 @@ class Frame:
             if d.body:
                 bodies.append(d)
         return bodies
-
-    def detection_mask(self, x=0, y=1):
-        polys = []
-        for d in self.get_bodies():
-            p = copy(d.polygon)
-            if p.is_micron:
-                self.converter.to_pixels(p, self.lvl)
-            else:
-                self.converter.rescale(p, self.lvl)
-            polys.append([tuple(p[i]) for i in range(p.shape[0])])
-        mask = Image.new('L', (self.size()[0], self.size()[1]), x)
-        for poly in polys:
-            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
-        self.img = np.array(mask)[:, :, None]
 
     def detect_tissue(self, threshold, min_body_area=0, min_hole_area=0):
 

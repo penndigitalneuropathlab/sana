@@ -101,7 +101,7 @@ def main(argv):
             t1 = time.time()
 
             print("------> Masking out Background: ", end="", flush=True)
-            tissue_mask.detection_mask(x=0, y=255)
+            tissue_mask.to_mask(x=0, y=255)
             print("%.3f sec" % (time.time() - t1))
             t1 = time.time()
 
@@ -202,7 +202,7 @@ def main(argv):
                                    anno_names=gm_names)
     #
     # end of slides loop
-    
+
         # store information about the processing that occurred
         # info.append(map(str, [slide_f, loader.mpp, loader.ds, loader.lvl, list(trans_loc0), list(trans_loc1), list(centroid), radius, angle, list(tds), tissue_threshold, stain_threshold, angle, list(args.tsize), list(args.tstep)]))
         #
