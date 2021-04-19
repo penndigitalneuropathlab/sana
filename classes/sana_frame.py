@@ -117,8 +117,8 @@ class Frame:
     # TODO: use cv2
     # TODO: define sigma in terms of microns
     def gauss_blur(self, sigma):
-        self.img = gaussian_filter(self.img, sigma=sigma)
-        self.blur_histo = self.histogram()
+        if sigma != 0:
+            self.img = gaussian_filter(self.img, sigma=sigma)
 
     def threshold(self, threshold, x, y):
 
@@ -155,7 +155,6 @@ class Frame:
         return sana_thresholds.kittler(data)[0]
 
     def get_stain_threshold(self, tissue_mask, blur=0, mi=0, mx=255):
-        self.to_gray()
         self.gauss_blur(blur)
         self.mask(tissue_mask, value=0)
         data = self.img.flatten()
@@ -189,8 +188,8 @@ class Frame:
 
         # rotate layer 0 detection, modify angle so that layer 0 is at the
         #  top of the frame instead of the left or right
-        layer_0_rot = layer_0.rotate(layer_0.centroid()[0], angle)
-        if np.mean(layer_0_rot[:, 1]) >= self.size()[1]//2:
+        layer_0_rot = layer_0.rotate(roi.centroid()[0], angle)
+        if np.mean(layer_0_rot[:, 1]) <= self.size()[1]//2:
             angle -= 180
         return angle
 
