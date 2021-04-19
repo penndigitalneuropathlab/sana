@@ -56,6 +56,13 @@ def mle(means, vars):
     return thresholds
 
 def kittler(data):
+    if data.dtype != np.uint8:
+        scaled = True
+        mi, mx = np.min(data), np.max(data)
+        data = 255 * (data - mi) / (mx - mi)
+        data = np.rint(data).astype(np.uint8)
+    else:
+        scaled = False
     np.maximum(data, 1, out=data)
     h,g = np.histogram(data,256,[0,256])
     h = h.astype(np.float)
@@ -86,4 +93,6 @@ def kittler(data):
     v[~np.isfinite(v)] = np.inf
     idx = np.argmin(v)
     t = g[idx]
+    if scaled:
+        t = t * (mx - mi) / 255 + mi
     return [t]
