@@ -28,8 +28,8 @@ class Framer:
             self.converter.to_pixels(self.step, self.loader.lvl)
         self.converter.rescale(self.size, self.loader.lvl)
 
-        self.size = np.rint(self.size, dtype=np.int)
-        self.step = np.rint(self.step, dtype=np.int)
+        self.size = np.rint(self.size).astype(np.int)
+        self.step = np.rint(self.step).astype(np.int)
 
         # store the padding and shifting for center-alignment
         if fpad is None:
@@ -47,11 +47,18 @@ class Framer:
                 size0 = self.loader.get_dim()
             if loc0 is None:
                 loc0 = Point(0, 0, False, self.loader.lvl)
+            if size0.is_micron:
+                self.converter.to_pixels(size0, self.loader.lvl)
+            self.converter.rescale(size0, self.loader.lvl)
+            if loc0.is_micron:
+                self.converter.to_pixels(loc0, self.loader.lvl)
+            self.converter.rescale(loc0, self.loader.lvl)
+            size0 = np.rint(size0).astype(np.int)
+            loc0 = np.rint(loc0).astype(np.int)
 
             # calculate the number of frames in the region
             self.n = (size0 // self.step) + 1
             self.ds = size0 / self.n
-
             self.locs = [[[] for j in range(self.n[1])] \
                          for i in range(self.n[0])]
             for i in range(self.n[0]):
