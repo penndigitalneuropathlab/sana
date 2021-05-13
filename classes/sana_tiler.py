@@ -40,7 +40,7 @@ class Tiler:
     def load_frame(self, i, j):
         return self.framer.load(i, j)
 
-    def load_tiles(self, frame, pad=False):
+    def set_frame(self, frame, pad=False):
         if pad:
             frame = frame.pad(self.fpad)
 
@@ -49,6 +49,22 @@ class Tiler:
         self.frame.img = self.frame.img[:, :, 0]
         self.n = ((self.frame.size() - self.size) // self.step) + 1
         self.ds = (self.frame.size() - self.fpad) / self.n
+
+    def get_tile_bounds(self, frame=None, pad=False):
+        if not frame is None:
+            self.set_frame(frame, pad)
+
+        for i in range(self.n[0]):
+            for j in range(self.n[1]):
+                x0 = i * self.step[0]
+                y0 = j * self.step[1]
+                x1 = x0 + self.size[0]
+                y1 = y0 + self.size[1]
+                yield i, j, x0, y0, x1, y1
+
+    def load_tiles(self, frame=None, pad=False):
+        if not frame is None:
+            self.set_frame(frame, pad)
 
         # define the output shape
         shape = (self.n[1], self.n[0], self.size[1], self.size[0])
