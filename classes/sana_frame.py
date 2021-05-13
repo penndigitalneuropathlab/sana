@@ -18,15 +18,15 @@ from matplotlib import pyplot as plt
 
 # TODO: see where else cv2 can be used
 class Frame:
-    def __init__(self, img, lvl, converter=None):
+    def __init__(self, img, lvl=-1, converter=None):
         if img.ndim < 3:
             img = img[:, :, None]
         self.img = img
         self.lvl = lvl
         self.converter = converter
         if img.shape[-1] == 3:
-            self.color_histo = self.histogram()
-
+            # self.color_histo = self.histogram()
+            pass
     def size(self):
         return np.array((self.img.shape[1], self.img.shape[0]))
 
@@ -37,7 +37,7 @@ class Frame:
         if self.img.shape[-1] == 3:
             float_img = self.img.astype(np.float64)
             self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
-            self.gray_histo = self.histogram()
+            # self.gray_histo = self.histogram()
 
     def to_rgb(self):
         if self.img.shape[-1] == 1:
@@ -93,12 +93,17 @@ class Frame:
 
     def save(self, fname):
         sana_io.create_directory(fname)
-        if self.img.ndim == 3 and self.img.shape[2] == 1:
-            im = self.img[:, :, 0]
+        if self.img.dtype == np.uint8:
+            if self.img.ndim == 3 and self.img.shape[2] == 1:
+                im = self.img[:, :, 0]
+            else:
+                im = self.img
+            if np.max(im) == 1:
+                im = 255 * im
+            im = Image.fromarray(im)
+            im.save(fname)
         else:
-            im = self.img
-        im = Image.fromarray(im)
-        im.save(fname)
+            np.save(fname.split('.')[0]+'.npy', self.img)
 
     # calculates the background color as the most common color
     #  in the grayscale space
@@ -129,6 +134,7 @@ class Frame:
             y = np.full_like(self.img, y)
 
         self.img = np.where(self.img < threshold, x, y)
+        self.round()
 
     def to_mask(self, polygons=None, x=0, y=1):
         if polygons is None:
@@ -154,9 +160,10 @@ class Frame:
         data = data[:, None]
         return sana_thresholds.kittler(data)[0]
 
-    def get_stain_threshold(self, tissue_mask, blur=0, mi=0, mx=255):
+    def get_stain_threshold(self, tissue_mask=None, blur=0, mi=0, mx=255):
         self.gauss_blur(blur)
-        self.mask(tissue_mask, value=0)
+        if not tissue_mask is None:
+            self.mask(tissue_mask, value=0)
         data = self.img.flatten()
         data = data[data != 0]
         data = data[data >= mi]
@@ -189,31 +196,49 @@ class Frame:
         # rotate layer 0 detection, modify angle so that layer 0 is at the
         #  top of the frame instead of the left or right
         layer_0_rot = layer_0.rotate(roi.centroid()[0], angle)
-        if np.mean(layer_0_rot[:, 1]) <= self.size()[1]//2:
+        if np.mean(layer_0_rot[:, 1]) >= self.size()[1]//2:
             angle -= 180
         return angle
 
-    def detect(self):
-        contours, hierarchies = cv2.findContours(
-            self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+    def detect(self, tree=True):
         self.detections = []
+        if tree:
+            retr = cv2.RETR_TREE
+        else:
+            retr = cv2.RETR_EXTERNAL
+        contours, hierarchies = cv2.findContours(
+            self.img, retr, cv2.CHAIN_APPROX_SIMPLE)
+        if hierarchies is None:
+            return
+
         for c, h in zip(contours, hierarchies[0]):
             self.detections.append(Detection(c, h, self.lvl, self.converter))
 
     # filter the detections into groups based on the area and the hierarchy
-    def filter(self, min_body_area, min_hole_area):
+    def filter(self, min_body_area=0, min_hole_area=0, max_body_area=None, max_hole_area=None):
 
         # find the body detections
         # NOTE: these are detections without a parent and above the min size
         for d in self.detections:
-            if d.hierarchy[3] == -1 and d.polygon.area() > min_body_area:
-                d.body = True
+            if d.hierarchy[3] != -1:
+                continue
+            if d.polygon.area() <= min_body_area:
+                continue
+            if not max_body_area is None and d.polygon.area() >= max_body_area:
+                continue
+            d.body = True
 
         # find the holes in the body detections
         for d in self.detections:
-            if not d.body and self.detections[d.hierarchy[3]].body and \
-                d.polygon.area() > min_hole_area:
-                d.hole = True
+            if d.body:
+                continue
+            if not self.detections[d.hierarchy[3]].body:
+                continue
+            if d.polygon.area() <= min_hole_area:
+                continue
+            if not max_hole_area is None and d.polygon.area() >= max_hole_area:
+                continue
+            d.hole = True
 
     def ray_trace_detections(self, p1):
         x, y = [], []
@@ -237,6 +262,17 @@ class Frame:
                 bodies.append(d)
         return bodies
 
+    def get_cells(self, x0, y0, x1, y1):
+        cells = []
+        for d in self.detections:
+            if not d.body:
+                continue
+            p = d.polygon
+            c = p.centroid()[0]
+            if c[0] >= x0 and c[0] <= x1 and c[1] >= y0 and c[1] <= y1:
+                cells.append(d)
+        return cells
+
     def detect_tissue(self, threshold, min_body_area=0, min_hole_area=0):
 
         # detect the objects on the thresholded image
@@ -246,7 +282,11 @@ class Frame:
         self.detect()
 
         # filter the detections based on the given areas
-        self.filter(min_body_area, min_hole_area)
+        self.filter(min_body_area=min_body_area, min_hole_area=min_hole_area)
+
+    def detect_cells(self, min_body=0, max_body=None):
+        self.detect(tree=False)
+        self.filter(min_body_area=min_body, max_body_area=max_body)
 
     # NOTE: this should be done on the tissue mask frame
     # TODO: detections may need to be shifted by the amount of blur?
