@@ -85,9 +85,14 @@ def fix_annotations(ifname):
     fp = open(ifname, 'rb')
     data = fp.read()
     fp.close()
-    ind = data.find(b'[\n')
-    fp = open(ifname, 'wb')
 
+    ind = data.find(b'[\n')
+    if ind == -1:
+        return
+
+    fp = open(ifname, 'wb')
+    fp.write(data[ind:])
+    fp.close()
 
 def read_annotations(ifname, class_name=None):
 
@@ -98,7 +103,10 @@ def read_annotations(ifname, class_name=None):
     fp = open(ifname, 'r')
 
     # load the data
-    data = json.loads(fp.read())
+    try:
+        data = json.loads(fp.read())
+    except:
+        return [], [], []
 
     # TODO: handle the multipolygon better than this, why is there sometimes 2 sets of coords
     annotations = []
