@@ -1,8 +1,10 @@
 
 import os
 import sys
+import cv2
 import numpy as np
 from sklearn.mixture import GaussianMixture
+from sklearn.neighbors import KNeighborsClassifier
 from scipy.stats import multivariate_normal
 from matplotlib import pyplot as plt
 
@@ -30,15 +32,17 @@ def gmm(data, k, n):
     return means, vars
 
 # finds the optimal boundaries between a set of means and vars
-def mle(means, vars):
+def mle(means, vars, mx=None):
     if means.dtype != np.uint8:
-        t = np.linspace(0, 1, 1000)
+        if mx is None:
+            mx = 1
+        t = np.linspace(0, mx, 1000)
     else:
         t = np.arange(0, 256, 1)
 
     # perform maximum likelihood estimation
     # NOTE: this is finding the crossing of the PDFs between the means
-    thresholds = []
+    thresholds = np.zeros(len(means)-1)
     for i in range(len(means)-1):
 
         # generate the pdfs
@@ -52,8 +56,27 @@ def mle(means, vars):
         p2 = p2.flatten()[a:b]
 
         # find the last x value where p1 is more probable than p2
-        thresholds.append(np.nonzero(p1 > p2)[0][-1] + a)
+        inds = np.nonzero(p1 > p2)[0]
+        if len(inds) == 0:
+            thresholds[i] = -1
+        else:
+            thresholds[i] = t[inds[-1] + a]
     return thresholds
+
+def knn(d, k):
+    criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 100, 0.2)
+
+    x = d.flatten()[:, None]
+    _, labels, (centers) = cv2.kmeans(
+        x.astype(np.float32), k, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
+    seg = centers[labels.flatten()].reshape(d.shape)
+    centers = np.sort(centers[:, 0])
+    
+    thresholds = []
+    for i in range(centers.shape[0]-1):
+        x, y = centers[i], centers[i+1]
+        thresholds.append((y-x)/2 + x)
+    return seg, thresholds
 
 def kittler(data):
     if data.dtype != np.uint8:
