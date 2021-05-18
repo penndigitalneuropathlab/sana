@@ -2,6 +2,7 @@
 
 import os
 import sys
+import cv2
 import time
 from copy import copy
 import numpy as np
@@ -156,7 +157,6 @@ def main(argv):
             seg = seg.rotate(roi.centroid()[0], -angle)
             seg.translate(-loc)
             loader.converter.rescale(seg, 0)
-            print(loc, crop_loc, roi.centroid(), seg.centroid())
 
             # connect the last point to the first point
             seg = seg.connect()
@@ -213,11 +213,8 @@ def get_density(args, loader, out_f, roi_i, roi):
         # load the frame based on the radius of the ROI
         print("------> Loading Frame: ", end="", flush=True)
         frame = loader.load_frame(loc, size)
-        print("%.3f sec" % (time.time() - t1))
-        t1 = time.time()
 
         # rotate the frame around the centroid of the ROI
-        print("------> Rotating Frame: ", end="", flush=True)
         rot_center = roi.centroid()[0]
         roi = roi.rotate(rot_center, angle)
         frame = frame.rotate(angle)
@@ -240,28 +237,60 @@ def get_density(args, loader, out_f, roi_i, roi):
             target = 'DAB'
         else:
             target = 'HEM'
-        separator = StainSeparator(args.stain, target, ret_od=True)
+        separator = StainSeparator(args.stain, target, ret_od=False)
         frame_stain = separator.run(frame.img)[0]
         frame_stain = Frame(frame_stain, loader.lvl, converter)
+        if frame_stain.img.dtype == np.uint8:
+            frame_stain.to_gray()
         frame_stain.save(out_f.replace('.json', '_%d_STAIN.png') % roi_i)
         print("%.3f sec" % (time.time() - t1))
         t1 = time.time()
 
-        print("------> Stain Thresholding: ", end="", flush=True)
-        stain_threshold = frame_stain.copy().get_stain_threshold(tissue_mask)
-        frame_thresh = frame_stain.copy()
-        frame_thresh.threshold(stain_threshold, x=0, y=1)
-        frame_thresh.save(out_f.replace('.json', '_%d_THRESH.png') % roi_i)
-        print("%.3f sec" % (time.time() - t1))
-        t1 = time.time()
+        # inverse image to create a cell prob. heatmap
+        print("------> Filtering/Thresholding: ", end="", flush=True)
+        frame_stain.img = 255 - frame_stain.img
 
-        print("------> Calculating Tile Features", end="", flush=True)
+        # anistrophic diffusion filter to smooth cell interiors
+        frame_filt = frame_stain.copy()
+        frame_filt.anisodiff()
+        frame_filt.round()
+
+        # threshold for the cells
+        thresh = frame_filt.copy().get_stain_threshold(tissue_mask, mi=8)
+        frame_filt.threshold(thresh, x=0, y=255)
+
+        # morphological filtering to clean up the background
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+        frame_filt.img = cv2.erode(frame_filt.img, kern)[:, :, None]
+        print("%.3f sec" % (time.time() - t1))
+
+        if target == 'DAB':
+            radius = 12
+        else:
+            radius = 5
+        gap = int(radius//3)
+
+        # apply distance transform to find centers of cells
+        dist = cv2.distanceTransform(
+            frame_filt.img, cv2.DIST_HUBER, cv2.DIST_MASK_PRECISE)
+        dist = cv2.copyMakeBorder(
+            dist, radius, radius, radius, radius,
+            cv2.BORDER_CONSTANT | cv2.BORDER_ISOLATED, 0)
+        dist = cv2.erode(dist, kern)
+        frame_dist = Frame(dist, loader.lvl, loader.converter)
+
+        # fig, axs = plt.subplots(1, 3)
+        # axs[0].imshow(frame_filt.img)
+        # axs[1].imshow(dist)
+        # axs[2].imshow(frame_corr.img)
+        # plt.show()
 
         # load the tiles
+        print("------> Calculating Tile Features", end="", flush=True)
         tsize = Point(args.tsize[0], args.tsize[1], True)
         tstep = Point(args.tstep[0], args.tstep[1], True)
         tiler = Tiler(loader.lvl, loader.converter, tsize, tstep)
-        tiler.set_frame(frame_thresh, pad=True)
+        tiler.set_frame(frame_dist, pad=True)
         tiles = tiler.load_tiles()
         frame_density = np.zeros((tiles.shape[0], tiles.shape[1]), dtype=float)
         frame_size = np.zeros((tiles.shape[0], tiles.shape[1]), dtype=float)
@@ -277,16 +306,13 @@ def get_density(args, loader, out_f, roi_i, roi):
                     tiles.shape[0]*tiles.shape[1])
                 print(s + "\b"*len(s), flush=True, end="")
                 frame = Frame(tiles[i][j], 0, converter)
-                frame.detect_cells(min_body=15, max_body=1000)
-                count = len(frame.get_bodies())
-                areas = np.array([c.polygon.area() for c in frame.get_bodies()])
-                areas = areas[areas > 50]
-                if len(areas) < 5:
-                    area = 0
-                else:
-                    area = np.mean(areas)
+
+                # TODO: get size of objects at each center
+                centers = frame.detect_cell_centers(radius, gap)
+                count = len(centers)
                 frame_density[i][j] = count
-                frame_size[i][j] = area
+                frame_size[i][j] = count
+
         np.save(out_f.replace('.json', '_%d_DENSITY.npy' % roi_i), frame_density)
         np.save(out_f.replace('.json', '_%d_SIZE.npy' % roi_i), frame_size)
         roi.translate(-crop_loc)
