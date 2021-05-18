@@ -76,9 +76,12 @@ class Frame:
 
         return Frame(img, self.lvl, self.converter)
 
-    # NOTE: reshape=False might cause alignment issue down the line
     def rotate(self, angle):
-        img = ndimage.rotate(self.img, angle, reshape=False, mode='nearest')
+        center = tuple(np.array([self.img.shape[0]//2, self.img.shape[1]//2]))
+        rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
+        img = cv2.warpAffine(
+            self.img, rot_mat, self.img.shape[0:2],
+            flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REFLECT)
         return Frame(img, self.lvl, self.converter)
 
     # NOTE: changing the mode affects the GM detection
@@ -124,6 +127,43 @@ class Frame:
     def gauss_blur(self, sigma):
         if sigma != 0:
             self.img = gaussian_filter(self.img, sigma=sigma)
+
+    # niter - number of iterations [1, 12]
+    # kappa - conduction coefficient (20-100) [50, 11]
+    # gamma - max value of .25 for stability [.1, 0.9]
+    # step  - distance between adjacent pixels [(1.,1.), (7., 7.)]
+    def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
+
+        self.img = self.img.astype(float)
+        deltaS = np.zeros_like(self.img)
+        deltaE = deltaS.copy()
+        NS = deltaS.copy()
+        EW = deltaS.copy()
+        gS = np.ones_like(self.img)
+        gE = gS.copy()
+
+        for ii in range(niter):
+
+            # calculate the diffs (change in pixels in both rows and cols)
+            deltaS[:-1, :] = np.diff(self.img, axis=0)
+            deltaE[:, :-1] = np.diff(self.img, axis=1)
+
+            # conduction gradients
+            gS = 1. / (1. + (deltaS/kappa)**2.) / step[0]
+            gE = 1. / (1. + (deltaE/kappa)**2.) / step[1]
+
+            # update matrices
+            S = gS * deltaS
+            E = gE * deltaE
+
+            # subtract a copy that has been shifted 'North/West' by one
+            # pixel. don't as questions. just do it. trust me.
+            NS[:] = S
+            EW[:] = E
+            NS[1:, :] -= S[:-1, :]
+            EW[:, 1:] -= E[:, :-1]
+
+            self.img += gamma * (NS + EW)
 
     def threshold(self, threshold, x, y):
 
@@ -287,6 +327,34 @@ class Frame:
     def detect_cells(self, min_body=0, max_body=None):
         self.detect(tree=False)
         self.filter(min_body_area=min_body, max_body_area=max_body)
+
+    def detect_cell_centers(self, radius, gap):
+
+        # apply template matching with a circle template
+        kern = cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (2*(radius-gap)+1, 2*(radius-gap)+1))
+        kern = cv2.copyMakeBorder(
+            kern, gap, gap, gap, gap,
+            cv2.BORDER_CONSTANT | cv2.BORDER_ISOLATED, 0)
+        temp = cv2.distanceTransform(
+            kern, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+        corr = cv2.matchTemplate(self.img, temp, cv2.TM_CCOEFF)
+
+        # threshold the peaks of the template matching
+        mn, mx, _, _ = cv2.minMaxLoc(corr)
+        th, peaks = cv2.threshold(corr, mx*0.5, 255, cv2.THRESH_BINARY)
+        peaks8u = cv2.convertScaleAbs(peaks)
+
+        # calculate the center of each thresholding peak
+        centers = []
+        contours, hierarchy = cv2.findContours(
+            peaks8u, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+        for i in range(len(contours)):
+            x, y, w, h = cv2.boundingRect(contours[i])
+            _, mx, _, mxloc = cv2.minMaxLoc(
+                self.img[y:y+h, x:x+w], peaks8u[y:y+h, x:x+w])
+            centers.append(np.array([mxloc[0]+x, mxloc[1]+y]))
+        return centers
 
     # NOTE: this should be done on the tissue mask frame
     # TODO: detections may need to be shifted by the amount of blur?
