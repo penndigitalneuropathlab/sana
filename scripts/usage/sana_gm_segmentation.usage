@@ -1,0 +1,3 @@
+  sana_gm_segmentation files.list -adir /path/to/annos
+  sana_gm_segmentation files.list -adir /path/to/annos -roi_class GM_ROI -seg_class GM_SEG
+  sana_gm_segmentation files.list -adir /path/to/annos -proc_tiles

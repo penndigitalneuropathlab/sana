@@ -4,7 +4,7 @@ import sys
 import json
 import numpy as np
 
-from sana_geo import Polygon
+from sana_geo import Polygon, Point
 
 def get_fullpath(f):
     return os.path.abspath(os.path.expanduser(f))
@@ -13,16 +13,16 @@ def create_directory(f):
     if not os.path.exists(os.path.dirname(f)):
         os.makedirs(os.path.dirname(f))
 
-def get_ofname(ifname, ftype="", oname="", odir="", rdir=""):
+def convert_fname(ifname, ext="", suffix="", odir="", rdir=""):
 
     # modify the basename and the filetype
-    if ftype == "":
-        ftype = os.path.splitext(ifname)[1]
+    if ext == "":
+        ext = os.path.splitext(ifname)[1]
     ofname = os.path.splitext(os.path.basename(ifname))[0]
-    if oname == "":
-        ofname += ftype
+    if suffix == "":
+        ofname += ext
     else:
-        ofname = '%s%s%s' % (ofname, oname, ftype)
+        ofname = '%s%s%s' % (ofname, suffix, ext)
 
     # modify the dirpath
     if odir == "":
@@ -34,30 +34,42 @@ def get_ofname(ifname, ftype="", oname="", odir="", rdir=""):
 
     return get_fullpath(os.path.join(d, ofname))
 
-def slide_to_anno(slide_f, format=None, adir="", rdir=""):
-
-    # modify the filetype
-    anno_f = slide_f.replace('.svs', '.json')
-
-    # modify the dirpath
-    if adir == "":
-        d = os.path.dirname(anno_f)
-    elif rdir == "":
-        d = adir
-    else:
-        d = os.path.dirname(anno_f).replace(rdir, adir)
-
-    # modify the basename format
-    if format is None:
-        f = os.path.basename(anno_f)
-    else:
-        f = format % os.path.basename(anno_f)
-
-    return get_fullpath(os.path.join(d, f))
-
 def read_list_file(list_f):
     f = get_fullpath(list_f)
     return [get_fullpath(l.rstrip()) for l in open(f, 'r')]
+
+def read_metrics_file(f):
+    if not os.path.exists(f):
+        return "", ["",""], ["",""], ["",""], "", ""
+    fp = open(f, 'r')
+    a, l0, l1, c0, c1, ds0, ds1, tt, st = \
+        fp.read().split('\n')[0].split(',')
+
+    # set crop_loc first
+    angle = "" if a == "" else float(a)
+    loc = ["",""] if l0 == "" else Point(float(l0), float(l1), False, 0)
+    crop_loc = ["",""] if c0 == "" else Point(float(c0), float(c1), False, 0)
+    ds = ["",""] if ds0 == "" else Point(float(ds0), float(ds1), False, 0)
+    tissue_threshold = "" if tt == "" else float(tt)
+    stain_threshold = "" if st == "" else float(st)
+    return angle, loc, crop_loc, ds, tissue_threshold, stain_threshold
+
+def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
+                       tissue_threshold=None, stain_threshold=None):
+    l, c, d = [["", ""]]*3
+    a, tt, st = [""]*3
+    if os.path.exists(f):
+        a, l, c, d, tt, st = read_metrics_file(f)
+    if not angle is None: a = angle
+    if not loc is None: l = loc
+    if not crop_loc is None: c = crop_loc
+    if not ds is None: d = ds
+    if not tissue_threshold is None: tt = tissue_threshold
+    if not stain_threshold is None: st = stain_threshold
+    fp = open(f, 'w')
+    fp.write('%s,%s,%s,%s,%s,%s,%s,%s,%s\n' % \
+             (a, l[0], l[1], c[0], c[1], d[0], d[1], tt, st))
+    fp.close()
 
 def anno_to_json(anno, class_name=None, anno_name=None):
     verts = []

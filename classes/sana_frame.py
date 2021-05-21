@@ -330,6 +330,15 @@ class Frame:
 
     def detect_cell_centers(self, radius, gap):
 
+        # apply distance transform to find centers of cells
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+        dist = cv2.distanceTransform(
+            self.img, cv2.DIST_HUBER, cv2.DIST_MASK_PRECISE)
+        dist = cv2.copyMakeBorder(
+            dist, radius, radius, radius, radius,
+            cv2.BORDER_CONSTANT | cv2.BORDER_ISOLATED, 0)
+        dist = cv2.erode(dist, kern)
+
         # apply template matching with a circle template
         kern = cv2.getStructuringElement(
             cv2.MORPH_ELLIPSE, (2*(radius-gap)+1, 2*(radius-gap)+1))
@@ -338,11 +347,11 @@ class Frame:
             cv2.BORDER_CONSTANT | cv2.BORDER_ISOLATED, 0)
         temp = cv2.distanceTransform(
             kern, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-        corr = cv2.matchTemplate(self.img, temp, cv2.TM_CCOEFF)
+        corr = cv2.matchTemplate(dist, temp, cv2.TM_CCOEFF)
 
         # threshold the peaks of the template matching
         mn, mx, _, _ = cv2.minMaxLoc(corr)
-        th, peaks = cv2.threshold(corr, mx*0.5, 255, cv2.THRESH_BINARY)
+        th, peaks = cv2.threshold(corr, mx*0.1, 255, cv2.THRESH_BINARY)
         peaks8u = cv2.convertScaleAbs(peaks)
 
         # calculate the center of each thresholding peak
