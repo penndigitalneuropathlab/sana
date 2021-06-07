@@ -7,7 +7,6 @@ from scipy import ndimage
 from copy import copy
 from scipy.ndimage.filters import gaussian_filter
 from PIL import Image, ImageDraw
-from numba import jit
 
 import sana_io
 from sana_geo import Point, Polygon, ray_tracing, find_angle
@@ -360,11 +359,91 @@ class Frame:
             peaks8u, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
         for i in range(len(contours)):
             x, y, w, h = cv2.boundingRect(contours[i])
-            _, mx, _, mxloc = cv2.minMaxLoc(
-                self.img[y:y+h, x:x+w], peaks8u[y:y+h, x:x+w])
-            centers.append(np.array([mxloc[0]+x, mxloc[1]+y]))
+            # _, mx, _, mxloc = cv2.minMaxLoc(
+            #     self.img[y:y+h, x:x+w], peaks8u[y:y+h, x:x+w])
+            # centers.append(np.array([mxloc[0]+x, mxloc[1]+y]))
+            centers.append(np.array((x+w//2, y+h//2)))
+        # fig, axs = plt.subplots(1,3)
+        # axs[0].imshow(self.img)
+        # axs[1].imshow(dist)
+        # axs[2].imshow(peaks)
+        # for c in centers:
+        #     axs[0].plot(c[0], c[1], '.', color='red')
+        #     axs[2].plot(c[0], c[1], '.', color='red')
+        # plt.show()
+
         return centers
 
+    def detect_cell_sizes(self, centers, plot=False):
+        i = 2*self.img[:, :, 0].astype(np.int) - 255
+        mi = 3
+        mx = 39
+        gap = 5
+        rs = list(range(mi, mx+1, 2))
+        temps = []
+        sizes = []
+        for r in rs:
+            temp = np.full((2*mx+1+gap+gap, 2*mx+1+gap+gap), 0)
+            c = temp.shape[0]//2
+
+            kern = 2 * cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
+            a, b = c - kern.shape[0]//2, c + kern.shape[0]//2 + 1
+            temp[a:b, a:b] += kern
+
+            kern = -1 * cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (2*r+gap,2*r+gap))
+            a, b = c - kern.shape[0]//2, c + kern.shape[0]//2 + 1
+            temp[a:b, a:b] += kern
+
+            temps.append(temp)
+
+        for c in centers:
+            a, b = c - temp.shape[0]//2, c + temp.shape[0]//2 + 1
+            x0pad, x1pad, y0pad, y1pad = 0, 0, 0, 0
+            if a[0] < 0:
+                x0pad = 0 - a[0]
+                a[0] = 0
+            if a[1] < 0:
+                y0pad = 0 - a[1]
+                a[1] = 0
+            if b[0] > i.shape[1]:
+                x1pad = b[0] - i.shape[1]
+                b[0] = i.shape[1]
+            if b[1] > i.shape[0]:
+                y1pad = b[1] - i.shape[0]
+                b[1] = i.shape[0]
+
+            x = i[a[1]:b[1], a[0]:b[0]]
+            y0pad = np.full_like(x, -255, shape=(y0pad, x.shape[1]))
+            y1pad = np.full_like(x, -255, shape=(y1pad, x.shape[1]))
+            x = np.concatenate((y0pad, x, y1pad), axis=0)
+            x0pad = np.full_like(x, -255, shape=(x.shape[0], x0pad))
+            x1pad = np.full_like(x, -255, shape=(x.shape[0], x1pad))
+            x = np.concatenate((x0pad, x, x1pad), axis=1)
+            if x.shape != temp.shape:
+                print(x.shape, temp.shape, c)
+                sizes.append(0)
+                continue
+            corrs = []
+            for r, temp in zip(rs, temps):
+                corr = x * temp
+                corrs.append(np.sum(corr) / r)
+                if plot:
+                    print(corrs[-1], flush=True)
+                    fig, axs = plt.subplots(1,3)
+                    axs[0].imshow(x)
+                    axs[1].imshow(temp)
+                    axs[2].imshow(corr)
+                    plt.show()
+            inc = [corrs[i+1] - corrs[i] for i in range(len(corrs)-1)]
+            ind = [i for i, x in enumerate(inc) if x<0]
+            if len(ind) == 0:
+                ind = len(corrs)-1
+            else:
+                ind = ind[0]
+            sizes.append(rs[ind])
+        return sizes
     # NOTE: this should be done on the tissue mask frame
     # TODO: detections may need to be shifted by the amount of blur?
     def detect_layer_0(self, xvals=None):

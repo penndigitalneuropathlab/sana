@@ -9,7 +9,6 @@ import numpy as np
 import argparse
 from scipy import signal
 from matplotlib import pyplot as plt
-import seaborn as sns; sns.set()
 
 import sana_io
 from sana_frame import Frame
@@ -82,10 +81,19 @@ def main(argv):
                 slide_f, ext='.csv', suffix='_%d_DAT' % roi_i,
                 odir=args.odir, rdir=args.rdir)
 
+            # get the tissue mask filename
+            tissue_f = sana_io.convert_fname(
+                out_f, ext='.npy', suffix='_%d_TISSUE' % roi_i)
+
             # get the tiled density measurements
-            frame_density, frame_size, angle, loc, crop_loc, ds = \
+            print('orig:', roi)
+
+            frame_density, frame_size, roi, angle, loc, crop_loc, ds = \
                 get_tile_features(args, loader, out_f, metrics_f, roi_i, roi)
-            print('')
+            print('dens:', roi)
+            # get the tissue mask
+            frame_tissue = Frame(
+                np.load(tissue_f), loader.lvl, loader.converter)
 
             # apply KNN to get the 3 most prominent values
             # NOTE: in DAB this will be Slide/WM, low GM, and high GM
@@ -103,7 +111,7 @@ def main(argv):
             # define the min thickness of layer 0 and layer 6
             # TODO: needs to be defined in microns, won't work with different
             #        step values
-            N0, N6 = 3, 5
+            N0, N6 = 10, 5
             l0, l6 = [], []
 
             # loop from bottom to top in each column, find the first instance
@@ -133,14 +141,16 @@ def main(argv):
                 seg.threshold(thresholds[0], x=0, y=1)
                 seg = seg.img[:, :, 0]
 
-            # loop from top to bottom of each column, find the first
-            # instance of positive thresholded data
+            # TODO: really should be based on the tissue segmentation
+            # loop from bottom to top of each column, find the first
+            # instance of zeroed slide
             for i in range(seg.shape[1]):
-                x = seg[:, i]
+                i = int(i * ds[0])
+                x = frame_tissue.img[:, i, 0]
                 found = False
-                for j in range(0, x.shape[0], 1):
-                    if all(x[j:j+N0] == 1):
-                        l0.append(j)
+                for j in range(x.shape[0]//2, -1, -1):
+                    if all(x[j-N0:j] == 0):
+                        l0.append(int(j / ds[1]))
                         found = True
                         break
                 if not found:
@@ -148,6 +158,9 @@ def main(argv):
             l0 = np.array(signal.medfilt(l0, 7))
             l0 = np.rint(l0).astype(int)
             d_seg = seg
+
+            # TODO: interpolate then median filter!
+            # TODO: filter by the original ROI
 
             # build the gm segmentation by combining layers 0 and 6
             i = np.arange(len(l0))
@@ -164,7 +177,6 @@ def main(argv):
 
             # rotate back to original orientation
             roi.translate(loc)
-            print(roi.centroid()[0])
             seg = seg.rotate(roi.centroid()[0], -angle)
 
             # translate to slide origin
@@ -204,8 +216,11 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
     else:
 
         # get the filtered and processed frame
-        frame_filt, angle, loc, crop_loc = get_filtered_frame(
+        frame_filt, roi, angle, loc, crop_loc = get_filtered_frame(
             args, loader, out_f, metrics_f, roi_i, roi)
+        print('filt:', roi)
+        # frame_stain, roi, angle, loc, crop_loc = get_stain_separated_frame(
+        #     args, loader, out_f, metrics_f, roi_i, roi)
 
         # load the tiles in the frame
         tsize = Point(args.tsize[0], args.tsize[1], True)
@@ -215,6 +230,10 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
         ds = tiler.ds
         tiles = tiler.load_tiles()
 
+        # orig_tiler = Tiler(loader.lvl, loader.converter, tsize, tstep)
+        # orig_tiler.set_frame(frame_stain, pad=True)
+        # orig_tiles = orig_tiler.load_tiles()
+
         # write the tile downsampling to the metrics file
         sana_io.write_metrics_file(metrics_f, ds=ds)
 
@@ -223,7 +242,7 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
         frame_size = np.zeros((tiles.shape[0], tiles.shape[1]), dtype=float)
 
         if 'NeuN' in out_f:
-            radius = 12
+            radius = 9
         else:
             radius = 5
         gap = int(radius//3)
@@ -236,26 +255,58 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
                 s = ' -- %d/%d' % (j*tiles.shape[0]+i,
                     tiles.shape[0]*tiles.shape[1])
                 print(s + "\b"*len(s), flush=True, end="")
-                frame = Frame(tiles[i][j], loader.lvl, loader.converter)
 
                 # detect the centers of each of the cells
+                frame = Frame(tiles[i][j], loader.lvl, loader.converter)
                 centers = frame.detect_cell_centers(radius, gap)
+
+                # calculate the size of the cells based on the centers
+                frame = Frame(tiles[i][j], loader.lvl, loader.converter)
+                sizes = frame.detect_cell_sizes(centers)
+
+                # filter out very small objects in the NeuN stain
+                if 'NeuN' in out_f:
+                    d = [(centers[i], sizes[i]) for i in range(len(centers)) if sizes[i] > 5]
+                    if len(d) == 0:
+                        centers, sizes = [], []
+                    else:
+                        centers, sizes = zip(*d)
 
                 # calculate the density as num cells per mm^2
                 count = len(centers)
                 density = 1000 * count / (tsize[0] * tsize[1])
 
-                # TODO: calculate size and size variance
+                # calculate the average cell size
+                fsizes = [s for s in sizes if s != 0]
+                if len(fsizes) < 1:
+                    size = 0
+                else:
+                    size = np.std(sizes)
+                    # size = np.mean(fsizes)
 
                 # store the density and size features
                 frame_density[i][j] = density
-                frame_size[i][j] = density
+                frame_size[i][j] = size
+
+                # if (j > 6 and i > 9) or True:
+                #     ax = plt.gca()
+                #     ax.imshow(255-orig_tiles[i][j], cmap='gray')
+                #     circles = [plt.Circle(centers[i], sizes[i], color='red', fill=False) for i in range(len(centers)) if sizes[i] != 0]
+                #     for c in circles:
+                #         ax.add_patch(c)
+                #     plt.show()
 
         # finally, save the tile metrics
+        print('')
         np.save(density_f, frame_density)
         np.save(size_f, frame_size)
 
-    return frame_density, frame_size, angle, loc, crop_loc, ds
+        # fig, axs = plt.subplots(1,2)
+        # axs[0].imshow(frame_density)
+        # axs[1].imshow(frame_size)
+        # plt.show()
+
+    return frame_density, frame_size, roi, angle, loc, crop_loc, ds
 
 def get_filtered_frame(args, loader, out_f, metrics_f, roi_i, roi):
 
@@ -270,7 +321,7 @@ def get_filtered_frame(args, loader, out_f, metrics_f, roi_i, roi):
     else:
 
         # get the stain separated frame
-        frame_stain, angle, loc, crop_loc = get_stain_separated_frame(
+        frame_stain, roi, angle, loc, crop_loc = get_stain_separated_frame(
             args, loader, out_f, metrics_f, roi_i, roi)
 
         # inverse image to create a cell prob. heatmap
@@ -287,19 +338,21 @@ def get_filtered_frame(args, loader, out_f, metrics_f, roi_i, roi):
         sana_io.write_metrics_file(metrics_f, stain_threshold=thresh)
 
         # morphological filtering to clean up the background
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
         frame_filt.img = cv2.erode(frame_filt.img, kern)[:, :, None]
 
         # finally, save the frame
         np.save(filt_f, frame_filt.img)
 
-    return frame_filt, angle, loc, crop_loc
+    return frame_filt, roi, angle, loc, crop_loc
 
 def get_stain_separated_frame(args, loader, out_f, metrics_f, roi_i, roi):
 
     # define file location for the stain separated frame and roi metrics
     stain_f = sana_io.convert_fname(
         out_f, ext='.npy', suffix='_%d_STAIN' % roi_i)
+    tissue_f = sana_io.convert_fname(
+        out_f, ext='.npy', suffix='_%d_TISSUE' % roi_i)
 
     # check whether we need to generate the stain separated frame
     if os.path.exists(stain_f) and not any([args.proc_stain]):
@@ -345,6 +398,7 @@ def get_stain_separated_frame(args, loader, out_f, metrics_f, roi_i, roi):
         # generate the tissue mask from the rotated ROI
         tissue_mask = frame.copy()
         tissue_mask.detect_tissue(tissue_threshold, 1e5, 1e5)
+        tissue_mask.to_mask()
         sana_io.write_metrics_file(metrics_f, tissue_threshold=tissue_threshold)
 
         # separate the stain from the ROI using color deconvolution
@@ -359,13 +413,12 @@ def get_stain_separated_frame(args, loader, out_f, metrics_f, roi_i, roi):
             frame_stain.to_gray()
 
         # finally, save the frame
-        print(rot_center)
+        np.save(tissue_f, tissue_mask.img)
         np.save(stain_f, frame_stain.img)
         roi.translate(-crop_loc)
-        roi.rotate(rot_center, -angle)
+        roi = roi.rotate(rot_center, -angle)
         roi.translate(-loc)
-
-    return frame_stain, angle, loc, crop_loc
+    return frame_stain, roi, angle, loc, crop_loc
 
 def cmdl_parser(argv):
     parser = argparse.ArgumentParser(usage=open(USAGE).read())
