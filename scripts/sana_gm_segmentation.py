@@ -8,11 +8,13 @@ from copy import copy
 import numpy as np
 import argparse
 from scipy import signal
+from scipy.interpolate import interp1d
+from scipy.ndimage.filters import uniform_filter1d
 from matplotlib import pyplot as plt
 
 import sana_io
 from sana_frame import Frame
-from sana_geo import Point, Polygon, ray_tracing
+from sana_geo import Array, Point, Polygon, ray_tracing
 from sana_color_deconvolution import StainSeparator
 from sana_tiler import Tiler
 from sana_loader import Loader
@@ -86,11 +88,9 @@ def main(argv):
                 out_f, ext='.npy', suffix='_%d_TISSUE' % roi_i)
 
             # get the tiled density measurements
-            print('orig:', roi)
-
             frame_density, frame_size, roi, angle, loc, crop_loc, ds = \
                 get_tile_features(args, loader, out_f, metrics_f, roi_i, roi)
-            print('dens:', roi)
+
             # get the tissue mask
             frame_tissue = Frame(
                 np.load(tissue_f), loader.lvl, loader.converter)
@@ -108,10 +108,13 @@ def main(argv):
                 seg.threshold(thresholds[1], x=1, y=0)
                 seg = seg.img[:, :, 0]
 
-            # define the min thickness of layer 0 and layer 6
-            # TODO: needs to be defined in microns, won't work with different
-            #        step values
-            N0, N6 = 10, 5
+            # define the min thickness for layer 0 and layer 6 in microns
+            N0 = Array([10.], is_micron=True)
+            converter.to_pixels(N0, loader.lvl)
+            N6 = Array([500.], is_micron=True)
+            converter.to_pixels(N6, loader.lvl)
+            N6 = N6 / ds[1]
+            N0, N6 = int(N0[0]), int(N6[0])
             l0, l6 = [], []
 
             # loop from bottom to top in each column, find the first instance
@@ -126,8 +129,7 @@ def main(argv):
                         break
                 if not found:
                     l6.append(x.shape[0]-1)
-            l6 = np.array(signal.medfilt(l6, 7))
-            l6 = np.rint(l6).astype(int)
+            l6 = np.array(l6)
 
             # remove the WM using the detected boundary
             for i in range(frame_density.shape[1]):
@@ -141,30 +143,38 @@ def main(argv):
                 seg.threshold(thresholds[0], x=0, y=1)
                 seg = seg.img[:, :, 0]
 
-            # TODO: really should be based on the tissue segmentation
             # loop from bottom to top of each column, find the first
             # instance of zeroed slide
-            for i in range(seg.shape[1]):
-                i = int(i * ds[0])
+            for i in range(0, frame_tissue.img.shape[1], 20):
                 x = frame_tissue.img[:, i, 0]
                 found = False
                 for j in range(x.shape[0]//2, -1, -1):
                     if all(x[j-N0:j] == 0):
-                        l0.append(int(j / ds[1]))
+                        l0.append(j / ds[1])
                         found = True
                         break
                 if not found:
                     l0.append(0)
-            l0 = np.array(signal.medfilt(l0, 7))
-            l0 = np.rint(l0).astype(int)
+            l0 = np.array(l0)
             d_seg = seg
 
+            l0 = signal.resample(l0, l6.shape[0])
+
             # TODO: interpolate then median filter!
+            n = l0.shape[0]
+            x = np.arange(0, n-1, 0.1)
+            f0 = interp1d(np.arange(l0.shape[0]), l0)
+            f6 = interp1d(np.arange(l6.shape[0]), l6)
+            l0 = f0(x)
+            l6 = f6(x)
+
+            l0 = uniform_filter1d(l0, x.shape[0]//8)
+            l6 = uniform_filter1d(l6, x.shape[0]//4)
+
             # TODO: filter by the original ROI
 
             # build the gm segmentation by combining layers 0 and 6
-            i = np.arange(len(l0))
-            x = np.concatenate([i[::-1], i])
+            x = np.concatenate([x[::-1], x])
             y = np.concatenate([l0[::-1], l6])
             seg = Polygon(x, y, False, loader.lvl).astype(float)
 
@@ -190,6 +200,8 @@ def main(argv):
 
             # finally, store the detected segmentation
             segs.append(seg)
+
+            print('')
         #
         # end of crude ROI loop
 
@@ -218,7 +230,7 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
         # get the filtered and processed frame
         frame_filt, roi, angle, loc, crop_loc = get_filtered_frame(
             args, loader, out_f, metrics_f, roi_i, roi)
-        print('filt:', roi)
+
         # frame_stain, roi, angle, loc, crop_loc = get_stain_separated_frame(
         #     args, loader, out_f, metrics_f, roi_i, roi)
 
@@ -297,7 +309,6 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
                 #     plt.show()
 
         # finally, save the tile metrics
-        print('')
         np.save(density_f, frame_density)
         np.save(size_f, frame_size)
 
