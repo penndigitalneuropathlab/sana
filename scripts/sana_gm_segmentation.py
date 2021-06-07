@@ -171,8 +171,6 @@ def main(argv):
             l0 = uniform_filter1d(l0, x.shape[0]//8)
             l6 = uniform_filter1d(l6, x.shape[0]//4)
 
-            # TODO: filter by the original ROI
-
             # build the gm segmentation by combining layers 0 and 6
             x = np.concatenate([x[::-1], x])
             y = np.concatenate([l0[::-1], l6])
@@ -188,6 +186,9 @@ def main(argv):
             # rotate back to original orientation
             roi.translate(loc)
             seg = seg.rotate(roi.centroid()[0], -angle)
+
+            # remove vertices that are not in the roi
+            seg = seg.filter(roi)
 
             # translate to slide origin
             seg.translate(-loc)

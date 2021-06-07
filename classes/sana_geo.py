@@ -174,7 +174,7 @@ class Polygon(Array):
             raise UnitException(ERR_COMPARE)
 
         x, y = [], []
-        for i in range(self.n):
+        for i in range(self.shape[0]):
             if ray_tracing(self[i][0], self[i][1], np.array(p)):
                 x.append(self[i][0])
                 y.append(self[i][1])
