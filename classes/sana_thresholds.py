@@ -71,23 +71,28 @@ def knn(d, k):
         x.astype(np.float32), k, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
     seg = centers[labels.flatten()].reshape(d.shape)
     centers = np.sort(centers[:, 0])
-    
+
     thresholds = []
     for i in range(centers.shape[0]-1):
         x, y = centers[i], centers[i+1]
         thresholds.append((y-x)/2 + x)
     return seg, thresholds
 
-def kittler(data):
-    if data.dtype != np.uint8:
-        scaled = True
-        mi, mx = np.min(data), np.max(data)
-        data = 255 * (data - mi) / (mx - mi)
-        data = np.rint(data).astype(np.uint8)
+def kittler(data, hist=None):
+    if hist is None:
+        if data.dtype != np.uint8:
+            scaled = True
+            mi, mx = np.min(data), np.max(data)
+            data = 255 * (data - mi) / (mx - mi)
+            data = np.rint(data).astype(np.uint8)
+        else:
+            scaled = False
+            np.maximum(data, 1, out=data)
+        h,g = np.histogram(data,256,[0,256])
     else:
         scaled = False
-    np.maximum(data, 1, out=data)
-    h,g = np.histogram(data,256,[0,256])
+        h = hist
+        g = np.arange(0, 257, 1)
     h = h.astype(np.float)
     g = g.astype(np.float)
     g = g[:-1]
