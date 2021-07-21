@@ -76,7 +76,7 @@ class Frame:
         return Frame(img, self.lvl, self.converter)
 
     def rotate(self, angle):
-        center = tuple(np.array([self.img.shape[0]//2, self.img.shape[1]//2]))
+        center = tuple(np.array([self.img.shape[0]//2, self.img.shape[1]//2]).astype(float))
         rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
         img = cv2.warpAffine(
             self.img, rot_mat, self.img.shape[0:2],
@@ -117,7 +117,7 @@ class Frame:
     # apply a binary mask to the image
     def mask(self, mask, value=None):
         self.img = cv2.bitwise_and(
-            self.img, self.img, mask=mask.img)[:, :, None]
+            self.img, self.img, mask=mask.img)
         if value is not None:
             self.img[self.img == 0] = value
 
