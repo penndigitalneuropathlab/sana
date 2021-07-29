@@ -1,6 +1,7 @@
 
 import numpy as np
 from numba import jit
+from shapely import geometry
 
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale data in micron units")
@@ -187,6 +188,11 @@ class Polygon(Array):
                          self.is_micron, self.lvl, self.order)
         else:
             return self
+
+    def to_shapely(self):
+        return geometry.Polygon([[self[i,0], self[i,1]] \
+                                 for i in range(self.shape[0])])
+
 #
 # end of Polygon
 
