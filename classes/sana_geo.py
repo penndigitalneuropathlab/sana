@@ -1,14 +1,19 @@
 
+# system packages
+
+# installed packages
 import numpy as np
 from numba import jit
 from shapely import geometry
 
+# custom packages
+
+# custom Exceptions
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale data in micron units")
 ERR_MICRONS = ERR % ("Data is already in micron units")
 ERR_PIXELS = ERR % ("Data is already in pixel units")
 ERR_COMPARE = ERR % ("Objects are not in the same resolution")
-
 class UnitException(Exception):
     def __init__(self, message):
         self.message = message
@@ -52,40 +57,77 @@ def linearity(x, y):
 
     return rms
 
+# Array conversion class to handle microns, pixel resolutions, and orders
+#  -mpp: microns per pixel constant, usually provided by Loader
+#  -ds: level downsample factors, usually provided by Loader
 class Converter:
     def __init__(self, mpp, ds):
         self.mpp = mpp
         self.ds = ds
+    #
+    # end of constructor
 
+    # converts an Array to floating point datatype
     def to_float(self, x):
         if x.dtype == np.float:
             return x
         return x.astype(dtype=np.float, copy=False)
+    #
+    # end of to_float
 
+    # rounds an Array then converts to integer datatype
+    def to_int(self, x):
+        if x.dtype == np.int:
+            return x
+        return np.rint(x).astype(np.int)
+    #
+    # end of to_int
+
+    # rescales an Array to a new pixel resolution
     def rescale(self, x, lvl):
         if x.lvl == lvl:
             return
+
+        # cannot rescale microns
         if x.is_micron:
             raise UnitException(ERR_RESCALE)
 
+        # scale Array by the following factor: (ds / new_ds)^order
         x *= (self.ds[x.lvl] / self.ds[lvl])**x.order
         x.lvl = lvl
+    #
+    # end of rescale
 
+    # rescales an Array to max pixel resolution, then converts to microns
     def to_microns(self, x):
         if x.is_micron:
-            raise UnitException(ERR_MICRONS)
+            return
 
+        # rescale to max pixel resolution
         self.rescale(x, 0)
+
+        # scale by the microns to pixel constant
         x *= (self.mpp)**x.order
         x.is_micron = True
+    #
+    # end of to_microns
 
+    # converts an Array to pixels, then rescales to a given resolution
     def to_pixels(self, x, lvl):
-        if not x.is_micron:
-            raise UnitException(ERR_PIXELS)
 
-        x /= (self.mpp)**x.order
-        x.is_micron = False
+        # scale by the pixels to micron constant
+        if not x.is_micron:
+            x /= (self.mpp)**x.order
+            x.is_micron = False
+
+        # rescale to new resolution
         self.rescale(x, lvl)
+    #
+    # end of to_pixels
+
+
+#
+# end of Converter
 
 # NOTE: this follows the following guide - https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
 class Array(np.ndarray):
