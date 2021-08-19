@@ -133,7 +133,7 @@ def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
 # end of write_metrics_file
 
 # converts a Polygon annotation to a JSON, similar to GeoJSON
-def anno_to_json(anno, class_name=None, anno_name=None):
+def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
 
     # generate a list of vertices from the Array
     verts = []
@@ -153,6 +153,7 @@ def anno_to_json(anno, class_name=None, anno_name=None):
           "classification": {
             "name": class_name,
           },
+          "confidence": 1.0,
         }
     }
     return annotation
@@ -274,20 +275,24 @@ def get_poly_from_geometry(geo):
 #  -annos: list of Polygon Annotations
 #  -class_names: list of class names, blank if not given
 #  -anno_names: list of anno names, blank if not given
-def write_annotations(ofile, annos, class_names=None, anno_names=None):
+def write_annotations(ofile, annos,
+                      class_names=None, anno_names=None, confidences=None):
 
     # provide blank names if not given
     if class_names is None:
         class_names = ['']*len(annos)
     if anno_names is None:
         anno_names = ['']*len(annos)
+    if confidences is None:
+        confidences = [1.0]*len(annos)
 
     # loop through the Polygon annotations
     annotations = []
-    for anno, cname, aname in zip(annos, class_names, anno_names):
+    for i in range(len(annos)):
 
         # convert to json format
-        json_anno = anno_to_json(anno, cname, aname)
+        json_anno = anno_to_json(annos[i], class_names[i],
+                                 anno_names[i], confidences[i])
 
         # store new annotation
         annotations.append(json_anno)
@@ -324,6 +329,50 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     write_annotations(ofile, annos, class_names, anno_names)
 #
 # end of append_annotations
+
+# extracts the confidence value for each annotation stored in a JSON annotation
+def read_confidences(ifile, class_name=None):
+
+    # remove unwanted header bytes if they exist
+    fix_annotations(ifile)
+
+    # blank data if the file doesn't exist
+    if not os.path.exists(ifile):
+        return []
+
+    # load the json data
+    fp = open(ifile, 'r')
+    data = json.loads(fp.read())
+
+    # load the annotations
+    # NOTE: this could be handled by a GeoJSON package?
+    confidences = []
+    for annotation in data:
+
+        # make sure the class name matches, if given
+        if class_name is not None:
+
+            # annotation has no class
+            if 'classification' not in annotation['properties']:
+                continue
+
+            # annotation does not match given class name
+            if annotation['properties']['classification']['name'] != class_name:
+                continue
+        #
+        # end of class matching
+
+        # get the confidence value, if doesn't exist output 100%
+        if 'confidence' not in annotation['properties']:
+            confidences.append(1.0)
+        else:
+            confidences.append(annotation['properties']['confidence'])
+    #
+    # end of annotation loop
+
+    return confidences
+#
+# end of read_confidences
 
 #
 # end of file
