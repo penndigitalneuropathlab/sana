@@ -13,7 +13,6 @@ class UnitException(Exception):
     def __init__(self, message):
         self.message = message
 
-@jit(nopython=True)
 def ray_tracing(x,y,poly):
     n = len(poly)
     inside = False
