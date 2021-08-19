@@ -1,80 +1,140 @@
 
+# system modules
 import os
 import sys
 import json
 import numpy as np
 
+# sana modules
 from sana_geo import Polygon, Point
 
+# resolves relative filepaths and ~
+#  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
+#  e.g. ./data/x.svs -> /Users/yourname/data/x.svs
 def get_fullpath(f):
     return os.path.abspath(os.path.expanduser(f))
+#
+# end of get_fullpath
 
+# creates a new directory if it doesn't exist, else does nothing
 def create_directory(f):
     if not os.path.exists(os.path.dirname(f)):
         os.makedirs(os.path.dirname(f))
+#
+# end of create_directory
 
-def convert_fname(ifname, ext="", suffix="", odir="", rdir=""):
+# TODO: rgrep this function and fix everything
+# creates a new filepath given an existing file and various parameters
+#  -ifile: input filename, the path, suffix, and extension will be modified
+#  -ext: file extension to be used, extension not changed if not given
+#  -fpath: filepath to be used, not changed if not given
+#  -rpath: a portion of the path in ifile to be replaced with fpath
+#  e.g. $fpath/$ifile$suffix$ext
+#  e.g. ifile=./data1/data2/slides/slide.svs
+#       ext=.json
+#       suffix=_DETECTIONS
+#       fpath=./output
+#       rpath=./data1/data2
+#       result=./output/slides/slide_DETECTIONS.json
+def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 
-    # modify the basename and the filetype
+    # extension not given, use current extension
     if ext == "":
-        ext = os.path.splitext(ifname)[1]
-    ofname = os.path.splitext(os.path.basename(ifname))[0]
-    if suffix == "":
-        ofname += ext
-    else:
-        ofname = '%s%s%s' % (ofname, suffix, ext)
+        ext = os.path.splitext(ifile)[1]
 
-    # modify the dirpath
-    if odir == "":
-        d = os.path.dirname(ifname)
-    elif rdir == "":
-        d = odir
-    else:
-        d = os.path.dirname(ifname).replace(rdir, odir)
+    # create the output filename using the basename, suffix, and extension
+    fname = '%s%s%s' % (os.path.basename(ifile), suffix, ext)
 
-    return get_fullpath(os.path.join(d, ofname))
+    # filepath not given, use current filepath
+    if fpath == "":
+        fpath = os.path.dirname(ifile)
 
+    # apply the replacement directory
+    elif rdir != "":
+        fpath = os.path.dirname(ifile).replace(rpath, fpath)
+
+    # construct the new directory if needed
+    create_directory(fpath)
+
+    # construct the filepath
+    ofile = get_fullpath(os.path.join(fpath, fname))
+
+    return ofile
+#
+# end of create_filepath
+
+# loads a list of files into memory, checks to make sure each file exists
 def read_list_file(list_f):
-    f = get_fullpath(list_f)
-    return [get_fullpath(l.rstrip()) for l in open(f, 'r')]
 
+    # read the data from the filelist
+    lines = [l.rstrip() for l in open(get_fullpath(list_f), 'r')]
+
+    # keep only the files that actually exist
+    return [l for l in lines if os.path.exists(l)]
+#
+# end of read_list_file
+
+# loads the metrics stored by sana_gm_segmentation into memory
+# TODO: need to do this in a different way... probably OOP
 def read_metrics_file(f):
+
+    # blank data if the file doesn't exist
     if not os.path.exists(f):
         return "", ["",""], ["",""], ["",""], "", ""
+
+    # load the fields into memory
     fp = open(f, 'r')
     a, l0, l1, c0, c1, ds0, ds1, tt, st = \
         fp.read().split('\n')[0].split(',')
 
-    # set crop_loc first
+    # convert to proper datatypes
     angle = "" if a == "" else float(a)
     loc = ["",""] if l0 == "" else Point(float(l0), float(l1), False, 0)
     crop_loc = ["",""] if c0 == "" else Point(float(c0), float(c1), False, 0)
     ds = ["",""] if ds0 == "" else Point(float(ds0), float(ds1), False, 0)
     tissue_threshold = "" if tt == "" else float(tt)
     stain_threshold = "" if st == "" else float(st)
-    return angle, loc, crop_loc, ds, tissue_threshold, stain_threshold
 
+    return angle, loc, crop_loc, ds, tissue_threshold, stain_threshold
+#
+# end of read_metrics_file
+
+# writes the metrics from sana_gm_segmentation to a file
+# TODO: need to do this in a different way... probably OOP
 def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
                        tissue_threshold=None, stain_threshold=None):
+
+    # load the previous data if it already existed
     l, c, d = [["", ""]]*3
     a, tt, st = [""]*3
     if os.path.exists(f):
         a, l, c, d, tt, st = read_metrics_file(f)
+
+    # if the metric was given as a parameter, store in the file
     if not angle is None: a = angle
     if not loc is None: l = loc
     if not crop_loc is None: c = crop_loc
     if not ds is None: d = ds
     if not tissue_threshold is None: tt = tissue_threshold
     if not stain_threshold is None: st = stain_threshold
+
+    # write the data
     fp = open(f, 'w')
     fp.write('%s,%s,%s,%s,%s,%s,%s,%s,%s\n' % \
              (a, l[0], l[1], c[0], c[1], d[0], d[1], tt, st))
     fp.close()
+#
+# end of write_metrics_file
 
+# converts a Polygon annotation to a JSON, similar to GeoJSON
 def anno_to_json(anno, class_name=None, anno_name=None):
+
+    # generate a list of vertices from the Array
     verts = []
     for i in range(anno.shape[0]):
         verts.append([anno[i][0], anno[i][1]])
+
+    # create the JSON format, using the given class and name
     annotation = {
         "type": "Feature",
         "id": "PathAnnotationObject",
@@ -90,92 +150,175 @@ def anno_to_json(anno, class_name=None, anno_name=None):
         }
     }
     return annotation
+#
+# end of anno_to_json
 
-# sometimes the json files generated by qupath 7 unreadable bytes
-# this function checks if they exist, and removes them from the file
-def fix_annotations(ifname):
-    fp = open(ifname, 'rb')
+# removes unreadable header data from JSON annotation files
+# NOTE: these headers come export JSON files from Qupath
+def fix_annotations(ifile):
+
+    # load the data as bytes
+    fp = open(ifile, 'rb')
     data = fp.read()
     fp.close()
 
+    # find the index of the first annotation in the json
     ind = data.find(b'[\n')
     if ind == -1:
         return
 
-    fp = open(ifname, 'wb')
+    # rewrite the data starting at the first annotation
+    fp = open(ifile, 'wb')
     fp.write(data[ind:])
     fp.close()
+#
+# end of fix_annotation
 
-def read_annotations(ifname, class_name=None):
+# loads a JSON annotation file into memory
+#  -ifile: input JSON file to be read
+#  -class_name: if given, only returns annotations with this class
+def read_annotations(ifile, class_name=None):
 
-    # remove unnecessary bytes at beginning of file if they exist
-    fix_annotations(ifname)
+    # remove unwanted header bytes if they exist
+    fix_annotations(ifile)
 
-    # prepare the input file
-    fp = open(ifname, 'r')
-
-    # load the data
-    try:
-        data = json.loads(fp.read())
-    except:
+    # blank data if the file doesn't exist
+    if not os.path.exists(ifile):
         return [], [], []
 
-    # TODO: handle the multipolygon better than this, why is there sometimes 2 sets of coords
+    # load the json data
+    fp = open(ifile, 'r')
+    data = json.loads(fp.read())
+
+    # load the annotations
+    # NOTE: this could be handled by a GeoJSON package?
     annotations = []
     class_names = []
     anno_names = []
     for annotation in data:
-        if class_name is not None and  \
-            'classification' in annotation['properties']:
+
+        # make sure the class name matches, if given
+        if class_name is not None:
+
+            # annotation has no class
+            if 'classification' not in annotation['properties']:
+                continue
+
+            # annotation does not match given class name
             if annotation['properties']['classification']['name'] != class_name:
                 continue
+        #
+        # end of class matching
+
+        # load the list of coordinates list for this annotation
+        # TODO: this is only needed cause of MultiPolygon,
         geo = annotation['geometry']
-        if geo['type'] == 'MultiPolygon':
-            coords_list = geo['coordinates']
-        elif geo['type'] == 'Polygon':
-            coords_list = [geo['coordinates']]
-        else:
+        poly = get_poly_from_geometry(geo)
+        if poly is None:
             continue
+
+        annotations.append(poly)
+
+        # get the class name if it exists
+        if 'classification' in annotation['properties']:
+            class_names.append(
+                annotation['properties']['classification']['name'])
+        else:
+            class_names.append('')
+
+        # get the annotation name if it exists
+        if 'name' in annotation['properties']:
+            anno_names.append(
+                annotation['properties']['name'])
+        else:
+            anno_names.append(
+                'ROI_'+str(len(anno_names)))
+    #
+    # end of annotation loop
+
+    return annotations, class_names, anno_names
+#
+# end of read_annotations
+
+# generates a Polygon annotation from the geometry in a JSON annotation
+def get_poly_from_geometry(geo):
+
+    # TODO: this should be simplified.
+    #        need to actually handle what a MultiPolygon is
+    if geo['type'] == 'MultiPolygon':
+        coords_list = geo['coordinates']
         for coords in coords_list:
             x = np.array([float(c[0]) for c in coords[0]])
             y = np.array([float(c[1]) for c in coords[0]])
             poly = Polygon(x, y, False, 0)
-            annotations.append(
-                poly)
-            if 'classification' in annotation['properties']:
-                class_names.append(
-                    annotation['properties']['classification']['name'])
-            else:
-                class_names.append('')
-            if 'name' in annotation['properties']:
-                anno_names.append(annotation['properties']['name'])
-            else:
-                anno_names.append(
-                    'ROI_'+str(len(anno_names)))
-    return annotations, class_names, anno_names
+            if poly.area() > 100:
+                return poly
+    elif geo['type'] == 'Polygon':
+        x = np.array([float(c[0]) for c in coords[0]])
+        y = np.array([float(c[1]) for c in coords[0]])
+        return Polygon(x, y, False, 0)
+    else:
+        return None
+#
+# end of get_poly_from_geometry
 
-def write_annotations(ofname, annos, class_name=None):
-    annotations = []
-    for anno in annos:
-        anno_name = 'ROI_'+str(len(annotations))
-        annotations.append(anno_to_json(anno, class_name, anno_name))
-    json.dump(annotations, open(ofname, 'w'))
+# TODO: rgrep and make sure you provide a list of names
+# writes a list of Polygon annotations to a JSON annotation file
+#  -ofile: location to write the annotations to
+#  -annos: list of Polygon Annotations
+#  -class_names: list of class names, blank if not given
+#  -anno_names: list of anno names, blank if not given
+def write_annotations(ofile, annos, class_names=None, anno_names=None):
 
-def append_annotations(ofname, annos, class_name=None, anno_names=None):
+    # provide blank names if not given
+    if class_names is None:
+        class_names = ['']*len(annos)
+    if anno_names is None:
+        anno_names = ['']*len(annos)
+
+    # loop through the Polygon annotations
     annotations = []
-    orig_annos, class_names, anno_names = read_annotations(ofname)
-    for i in range(len(orig_annos)):
-        if class_name == class_names[i]:
-            continue
-        annotations.append(anno_to_json(
-            orig_annos[i], class_names[i], anno_names[i]))
-    for i in range(len(annos)):
-        if anno_names is None:
-            anno_name = 'ROI_'+str(len(annotations))
-        else:
-            anno_name = anno_names[i]
-        annotations.append(anno_to_json(annos[i], class_name, anno_name))
-    json.dump(annotations, open(ofname, 'w'))
+    for anno, cname, aname in zip(annos, class_names, anno_names):
+
+        # convert to json format
+        json_anno = anno_to_json(anno, cname, aname)
+
+        # store new annotation
+        annotations.append(json_anno)
+    #
+    # end of Polygon annotations loop
+
+    # write the file
+    json.dump(annotations, open(ofile, 'w'))
+#
+# end of write_annotations
+
+# TODO: rgrep this function
+# appends a list of Polygon annotations to an existing JSON annotation file
+#  -ofile: location of existing file to write to
+#  -annos: list of Polygon annotations
+#  -class_names: list of class names, blank if not given
+#  -anno_names: list of anno names, blank if not given
+def append_annotations(ofile, annos, class_names=None, anno_names=None):
+
+    # provide blank names if not given
+    if class_names is None:
+        class_names = ['']*len(annos)
+    if anno_names is None:
+        anno_names = ['']*len(annos)
+
+    # load the original annotations
+    orig_annos, orig_cnames, orig_anames = read_annotations(ofile)
+
+    # append the new annotations to the old annotations
+    annos = orig_annos + annos
+    class_names = orig_cnames + class_names
+    anno_names = orig_anames + anno_names
+
+    # write the data
+    write_annotations(ofile, annos, class_names, anno_names)
+#
+# end of append_annotations
 
 #
 # end of file
