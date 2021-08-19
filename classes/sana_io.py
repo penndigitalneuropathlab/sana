@@ -1,11 +1,13 @@
 
-# system modules
+# system packages
 import os
 import sys
 import json
+
+# installed packages
 import numpy as np
 
-# sana modules
+# sana packages
 from sana_geo import Polygon, Point
 
 # resolves relative filepaths and ~
@@ -23,7 +25,6 @@ def create_directory(f):
 #
 # end of create_directory
 
-# TODO: rgrep this function and fix everything
 # creates a new filepath given an existing file and various parameters
 #  -ifile: input filename, the path, suffix, and extension will be modified
 #  -ext: file extension to be used, extension not changed if not given
@@ -38,26 +39,31 @@ def create_directory(f):
 #       result=./output/slides/slide_DETECTIONS.json
 def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 
+    # get the parts of the original filepath
+    ifpath = os.path.dirname(ifile)
+    ifname = os.path.basename(ifile)
+    ifname, iext = os.path.splitext(ifname)
+
     # extension not given, use current extension
     if ext == "":
-        ext = os.path.splitext(ifile)[1]
+        ext = iext
 
     # create the output filename using the basename, suffix, and extension
-    fname = '%s%s%s' % (os.path.basename(ifile), suffix, ext)
+    fname = '%s%s%s' % (ifname, suffix, ext)
 
     # filepath not given, use current filepath
     if fpath == "":
-        fpath = os.path.dirname(ifile)
+        fpath = ifpath
 
-    # apply the replacement directory
-    elif rdir != "":
+    # apply the replacement directory, if given
+    elif rpath != "":
         fpath = os.path.dirname(ifile).replace(rpath, fpath)
-
-    # construct the new directory if needed
-    create_directory(fpath)
 
     # construct the filepath
     ofile = get_fullpath(os.path.join(fpath, fname))
+
+    # construct the new directory if needed
+    create_directory(ofile)
 
     return ofile
 #
@@ -254,6 +260,7 @@ def get_poly_from_geometry(geo):
             if poly.area() > 100:
                 return poly
     elif geo['type'] == 'Polygon':
+        coords = geo['coordinates']
         x = np.array([float(c[0]) for c in coords[0]])
         y = np.array([float(c[1]) for c in coords[0]])
         return Polygon(x, y, False, 0)
@@ -262,7 +269,6 @@ def get_poly_from_geometry(geo):
 #
 # end of get_poly_from_geometry
 
-# TODO: rgrep and make sure you provide a list of names
 # writes a list of Polygon annotations to a JSON annotation file
 #  -ofile: location to write the annotations to
 #  -annos: list of Polygon Annotations
@@ -293,7 +299,6 @@ def write_annotations(ofile, annos, class_names=None, anno_names=None):
 #
 # end of write_annotations
 
-# TODO: rgrep this function
 # appends a list of Polygon annotations to an existing JSON annotation file
 #  -ofile: location of existing file to write to
 #  -annos: list of Polygon annotations
