@@ -1,50 +1,79 @@
 
+# system packages
 import os
 import sys
+from copy import copy
+
+# installed packages
 import cv2
 import numpy as np
 from scipy import ndimage
-from copy import copy
 from scipy.ndimage.filters import gaussian_filter
 from PIL import Image, ImageDraw
+from matplotlib import pyplot as plt
 
+# custom packages
 import sana_io
 from sana_geo import Point, Polygon, ray_tracing, find_angle
 from sana_color_deconvolution import StainSeparator
 import sana_thresholds
+from sana_tiler import Tiler
 
-from matplotlib import pyplot as plt
-
-# TODO: see where else cv2 can be used
+# provides an series of functions to apply to a 2D array stored in it's memory
+#  -img: 2D Numpy array
+#  -lvl: pixel resolution of img
+#  -converter: Converter object from Loader
 class Frame:
     def __init__(self, img, lvl=-1, converter=None):
+
+        # make sure the img always has a pixel channel
         if img.ndim < 3:
             img = img[:, :, None]
         self.img = img
         self.lvl = lvl
         self.converter = converter
-        if img.shape[-1] == 3:
-            # self.color_histo = self.histogram()
-            pass
-    def size(self):
-        return np.array((self.img.shape[1], self.img.shape[0]))
+    #
+    # end of constructor
 
+    # gets the size of the image
+    def size(self):
+        size = Point(self.img.shape[1], self.img.shape[0], False, self.lvl)
+        return self.converter.to_int(size)
+    #
+    # end of size
+
+    # returns a duplicate of the Frame
+    # NOTE: this is useful because most functions do not create copies
     def copy(self):
         return Frame(np.copy(self.img), self.lvl, self.converter)
+    #
+    # end of copy
 
+    # converts an RGB image to a grayscale image
+    # NOTE: the function checks for a 3 channel image, doesn't necessarily know
+    #        if the image is RGB
     def to_gray(self):
-        if self.img.shape[-1] == 3:
-            float_img = self.img.astype(np.float64)
-            self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
-            # self.gray_histo = self.histogram()
+        if self.img.shape[2] != 3:
+            return
+        float_img = self.img.astype(np.float64)
+        self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
+    #
+    # end of to_gray
 
+    # repeats a 1-channel image to create a 3-channel image
     def to_rgb(self):
         if self.img.shape[-1] == 1:
             self.img = np.tile(self.img, 3)
+    #
+    # end of to_rgb
 
+    # rounds the image to a 1 byte int image
     def round(self):
         self.img = np.rint(self.img).astype(np.uint8)
+    #
+    # end of round
 
+    # generates the 256 bin histogram
     def histogram(self):
         self.round()
         histogram = np.zeros((256, self.img.shape[-1]))
@@ -54,13 +83,10 @@ class Frame:
         return histogram
 
     def crop(self, loc, size):
-        if loc.is_micron:
-            self.converter.to_pixels(loc)
-            self.converter.to_pixels(size)
-        self.converter.rescale(loc, self.lvl)
-        self.converter.rescale(size, self.lvl)
-        loc = np.rint(loc).astype(np.int)
-        size = np.rint(size).astype(np.int)
+        self.converter.to_pixels(loc, self.lvl)
+        self.converter.to_pixels(size, self.lvl)
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
         return Frame(self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]],
                      self.lvl, self.converter)
 
@@ -86,6 +112,7 @@ class Frame:
     # NOTE: changing the mode affects the GM detection
     #        - 'wrap' causes sharp peaks at edge if the tissue isn't parallel
     #        - 'symmetric' seems to be the best, the edges are very flat
+    # TODO: before and after should be defined by alignment
     def pad(self, pad):
         before = pad//2
         after = pad - before
@@ -180,11 +207,8 @@ class Frame:
             polygons = [copy(d.polygon) for d in self.get_bodies()]
         polys = []
         for p in polygons:
-            if p.is_micron:
-                self.converter.to_pixels(p, self.lvl)
-            else:
-                self.converter.rescale(p, self.lvl)
-            p = np.rint(p).astype(np.int)
+            self.converter.to_pixels(p, self.lvl)
+            p = self.converter.to_int(p)
             polys.append([tuple(p[i]) for i in range(p.shape[0])])
         mask = Image.new('L', (self.size()[0], self.size()[1]), x)
         for poly in polys:
@@ -327,10 +351,10 @@ class Frame:
         self.detect(tree=False)
         self.filter(min_body_area=min_body, max_body_area=max_body)
 
-    def detect_cell_centers(self, radius, gap):
+    def detect_cell_centers(self, radius, gap, plot=False):
 
         # apply distance transform to find centers of cells
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3,3))
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
         dist = cv2.distanceTransform(
             self.img, cv2.DIST_HUBER, cv2.DIST_MASK_PRECISE)
         dist = cv2.copyMakeBorder(
@@ -349,8 +373,9 @@ class Frame:
         corr = cv2.matchTemplate(dist, temp, cv2.TM_CCOEFF)
 
         # threshold the peaks of the template matching
+        # TODO: this is too naive for what we need
         mn, mx, _, _ = cv2.minMaxLoc(corr)
-        th, peaks = cv2.threshold(corr, mx*0.1, 255, cv2.THRESH_BINARY)
+        th, peaks = cv2.threshold(corr, mx*0.3, 255, cv2.THRESH_BINARY)
         peaks8u = cv2.convertScaleAbs(peaks)
 
         # calculate the center of each thresholding peak
@@ -363,14 +388,15 @@ class Frame:
             #     self.img[y:y+h, x:x+w], peaks8u[y:y+h, x:x+w])
             # centers.append(np.array([mxloc[0]+x, mxloc[1]+y]))
             centers.append(np.array((x+w//2, y+h//2)))
-        # fig, axs = plt.subplots(1,3)
-        # axs[0].imshow(self.img)
-        # axs[1].imshow(dist)
-        # axs[2].imshow(peaks)
-        # for c in centers:
-        #     axs[0].plot(c[0], c[1], '.', color='red')
-        #     axs[2].plot(c[0], c[1], '.', color='red')
-        # plt.show()
+        if plot:
+            fig, axs = plt.subplots(1,3)
+            axs[0].imshow(self.img)
+            axs[1].imshow(dist)
+            axs[2].imshow(peaks)
+            for c in centers:
+                axs[0].plot(c[0], c[1], '.', color='red')
+                axs[2].plot(c[0], c[1], '.', color='red')
+            plt.show()
 
         return centers
 
@@ -426,23 +452,16 @@ class Frame:
                 sizes.append(0)
                 continue
             corrs = []
+            prev_corr = -np.inf
+            size = 0
             for r, temp in zip(rs, temps):
-                corr = x * temp
-                corrs.append(np.sum(corr) / r)
-                if plot:
-                    print(corrs[-1], flush=True)
-                    fig, axs = plt.subplots(1,3)
-                    axs[0].imshow(x)
-                    axs[1].imshow(temp)
-                    axs[2].imshow(corr)
-                    plt.show()
-            inc = [corrs[i+1] - corrs[i] for i in range(len(corrs)-1)]
-            ind = [i for i, x in enumerate(inc) if x<0]
-            if len(ind) == 0:
-                ind = len(corrs)-1
-            else:
-                ind = ind[0]
-            sizes.append(rs[ind])
+                corr = np.sum(x * temp / r)
+                if corr > prev_corr:
+                    prev_corr = corr
+                    size = r
+                else:
+                    break
+            sizes.append(size)
         return sizes
     # NOTE: this should be done on the tissue mask frame
     # TODO: detections may need to be shifted by the amount of blur?
@@ -505,6 +524,48 @@ class Detection:
         return polygon
 #
 # end of Detection
+
+# TODO: the pad function is padding on all sides! should only be on ends?
+#         or divide pad amount by 2??
+def mean_normalize(loader, frame):
+    lvl = 1
+    ds = int(loader.ds[lvl] / loader.ds[loader.lvl])
+
+    tsize = Point(100, 100, True, lvl)
+    tstep = Point(10, 10, True, lvl)
+    tiler = Tiler(lvl, frame.converter, tsize, tstep)
+    frame_ds = frame.copy()
+    frame_ds.img = frame_ds.img[::ds, ::ds]
+    tiler.set_frame(frame_ds)
+    tiles = tiler.load_tiles()
+
+    tds = int(tiler.ds[0])
+    norm = np.zeros(tiles.shape[:2], dtype=float)
+    for j in range(tiles.shape[1]):
+        for i in range(tiles.shape[0]):
+            data = tiles[i][j]
+            data = data[data != 0]
+            if len(data) == 0:
+                mu = 0
+            else:
+                mu = np.mean(data)
+            norm[i][j] = mu
+
+    s = frame.img.shape[0]//ds, frame.img.shape[1]//ds
+    frame_norm = Frame(norm)
+    frame_norm = frame_norm.rescale(tds, size=s)
+    frame_norm = frame_norm.rescale(ds, size=frame.img.shape[:2])
+
+    if frame_norm.img.shape[0] < frame.img.shape[0]:
+        padx = frame.img.shape[0] - frame_norm.img.shape[0]
+        pady = frame.img.shape[1] - frame_norm.img.shape[1]
+        frame_norm = frame_norm.pad(np.array([pady, padx]))
+
+    frame.img -= frame_norm.img
+    frame.img[frame.img < 0] = 0
+    return frame
+#
+# end of mean_normalize
 
 #
 # end of file
