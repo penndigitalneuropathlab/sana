@@ -7,7 +7,6 @@ import numpy as np
 
 # custom packages
 from sana_framer import Framer
-from sana_geo import round
 
 # custom Exceptions
 ERR = "---> %s <---"
@@ -18,18 +17,19 @@ class TilerException(Exception):
         self.message = message
 
 # creates a set of tiles from a Frame with a given size and step length
-# Frames can be set manually, or generated using a Framer that Tiler creates
+# if Frames are being set manually, ignore the Framer portion of this class
 # the tiles are center-aligned on the frame, some Frame padding occurs
 #  -lvl: pixel resolution to use
 #  -converter: Converter to handle unit conversion
 #  -tsize: Point, defines the size of each tile
 #  -tstep: Point, defines the distance between each tile, tsize if not given
-#  -fsize: Point, defines the fsize for a Framer if needed
-#  -fstep: Point, defines the fstep for a Framer if needed
-#  -loader: Loader to load the frames for a Framer if needed
+#  -fsize: Point, size of Frame to load with Framer
+#  -loader: Loader object for Framer
+#  -roi_loc: Point, location of ROI for the Framer
+#  -roi_size: Point, size of ROI for the Framer
 class Tiler:
     def __init__(self, lvl, converter, size, step=None,
-                 fsize=None, fstep=None, loader=None):
+                 fsize=None, loader=None, roi_loc=None, roi_size=None):
         self.lvl = lvl
         self.converter = converter
 
@@ -46,14 +46,15 @@ class Tiler:
         self.converter.to_pixels(self.step, self.lvl)
         self.step = self.converter.to_int(self.step)
 
-        # calculate the amount to pad and shift a frame for center alignment
+        # calculate the amount to pad the frame for center alignment
         self.fpad = self.size - 1
         self.fshift = self.size // 2
 
-        # generate the Framer object if needed
-        if fsize is not None:
-            self.framer = Framer(
-                loader, fsize, fstep, fpad=self.fpad, fshift=self.fshift)
+        # create the Framer if needed
+        if not fsize is None:
+            self.framer = Framer(loader, fsize,
+                                 roi_loc=roi_loc, roi_size=roi_size,
+                                 fpad=self.fpad, fshift=self.fshift)
     #
     # end of constructor
 
@@ -66,17 +67,12 @@ class Tiler:
     # end of load_frame
 
     # sets the current Frame to be used by the Tiler
-    # NOTE: if setting Frame manually, set pad=True for center-alignment
-    def set_frame(self, frame, pad=False):
+    def set_frame(self, frame):
         if frame.shape[2] != 1:
             raise TilerException(ERR_FRAME)
 
-        # pad the frame if needed
-        if pad:
-            frame = frame.pad(self.fpad)
-
-        # store the frame
-        self.frame = frame
+        # pad the frame for center-alignment
+        self.frame = frame.pad(self.fpad)
 
         # TODO: check if this is necessary? might mess with the stride_tricks
         self.frame.img = self.frame.img[:, :, 0]
@@ -89,9 +85,8 @@ class Tiler:
 
     # generates a series of tiles from a Frame
     # resulting array will be the shape: (ntilesx, ntilesy, sizex, sizey)
-    def load_tiles(self, frame=None, pad=False):
-        if not frame is None:
-            self.set_frame(frame, pad)
+    def load_tiles(self, frame):
+        self.set_frame(frame)
 
         # define the output shape
         shape = (self.n[1], self.n[0], self.size[1], self.size[0])

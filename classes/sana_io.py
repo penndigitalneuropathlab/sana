@@ -25,6 +25,58 @@ def create_directory(f):
 #
 # end of create_directory
 
+# gets the fullpath to every file (recursively or not) in a given directory
+# NOTE: returns nothing if directory does not exist
+def get_files(d, recurse=False):
+
+    # make sure the directory exists
+    if not os.path.exists(d):
+        return []
+
+    f = []
+    if recurse:
+        for root, _, files in os.walk(d):
+            f += [os.path.join(root, file) for file in files]
+    else:
+        f = [os.path.join(d, file) for file in os.listdir(d)]
+    return f
+#
+# end of get_files
+
+# gets all .svs slide files in a given directory
+def get_slide_files(d):
+    f = get_files(d)
+    return [file for file in f if is_slide(file)]
+#
+# end of get_slide_files
+
+# gets all .json annotation files in a given directory
+def get_anno_files(d):
+    f = get_files(d)
+    return [file for file in f if is_anno(file)]
+#
+# end of get_anno_files
+
+# returns True if Loader can handle the given file
+def is_slide(f):
+    try:
+        Loader(f)
+        return True
+    except:
+        return False
+#
+# end of is_slide
+
+# returns True if read_annotations can handle the given file
+def is_anno(f):
+    try:
+        read_annotations(f)
+        return True
+    except:
+        return False
+#
+# end of is_anno
+
 # creates a new filepath given an existing file and various parameters
 #  -ifile: input filename, the path, suffix, and extension will be modified
 #  -ext: file extension to be used, extension not changed if not given
@@ -153,7 +205,7 @@ def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
           "classification": {
             "name": class_name,
           },
-          "confidence": 1.0,
+          "confidence": confidence,
         }
     }
     return annotation
@@ -172,8 +224,9 @@ def fix_annotations(ifile):
     # find the index of the first annotation in the json
     ind = data.find(b'[\n')
     if ind == -1:
-        return
-
+        ind = data.find(b'[]')
+        if ind == -1:
+            return
     # rewrite the data starting at the first annotation
     fp = open(ifile, 'wb')
     fp.write(data[ind:])
@@ -254,12 +307,13 @@ def get_poly_from_geometry(geo):
     #        need to actually handle what a MultiPolygon is
     if geo['type'] == 'MultiPolygon':
         coords_list = geo['coordinates']
+        x, y = [], []
         for coords in coords_list:
-            x = np.array([float(c[0]) for c in coords[0]])
-            y = np.array([float(c[1]) for c in coords[0]])
-            poly = Polygon(x, y, False, 0)
-            if poly.area() > 100:
-                return poly
+            x += [float(c[0]) for c in coords[0]]
+            y += [float(c[1]) for c in coords[0]]
+        x = np.array(x)
+        y = np.array(y)
+        return Polygon(x, y, False, 0)
     elif geo['type'] == 'Polygon':
         coords = geo['coordinates']
         x = np.array([float(c[0]) for c in coords[0]])
@@ -366,7 +420,7 @@ def read_confidences(ifile, class_name=None):
         if 'confidence' not in annotation['properties']:
             confidences.append(1.0)
         else:
-            confidences.append(annotation['properties']['confidence'])
+            confidences.append(float(annotation['properties']['confidence']))
     #
     # end of annotation loop
 
