@@ -234,9 +234,87 @@ class Polygon(Array):
     def to_shapely(self):
         return geometry.Polygon([[self[i,0], self[i,1]] \
                                  for i in range(self.shape[0])])
-
 #
 # end of Polygon
+
+class Annotation(Polygon):
+    def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
+                is_micron=True, lvl=0, order=1):
+
+        # initalize the array using the geometry
+        x, y = cls.get_xy(geo)
+        obj = Polygon(x, y, is_micron, lvl, order).view(cls)
+
+        # store attributes
+        obj.file_name = file_name
+        obj.class_name = class_name
+        obj.name = anno_name
+        obj.confidence = confidence
+
+        return obj
+    #
+    # end of constructor
+
+    # def __array_finalize__(self, obj):
+    #     if obj is None: return
+    #     self.file_name = obj.file_name
+    #     self.class_name = obj.class_name
+    #     self.name = obj.name
+    #     self.confidence = obj.confidence
+
+    # generates a set of xy coordinates from the geometry
+    def get_xy(geo):
+
+        # TODO: this should be simplified.
+        #        need to actually handle what a MultiPolygon is
+        if geo['type'] == 'MultiPolygon':
+            coords_list = geo['coordinates']
+            x, y = [], []
+            for coords in coords_list:
+                x += [float(c[0]) for c in coords[0]]
+                y += [float(c[1]) for c in coords[0]]
+                x = np.array(x)
+                y = np.array(y)
+        elif geo['type'] == 'Polygon':
+            coords = geo['coordinates']
+            x = np.array([float(c[0]) for c in coords[0]])
+            y = np.array([float(c[1]) for c in coords[0]])
+        #
+        # end of geo type checking
+
+        return x, y
+    #
+    # end of get_xy
+
+    # returns a json string representation of the object
+    def to_json(self):
+
+        # generate a list of vertices from the Array
+        verts = []
+        for i in range(self.shape[0]):
+            verts.append([self[i][0], self[i][1]])
+
+        # create the JSON format, using the given class and name
+        annotation = {
+            "type": "Feature",
+            "id": "PathAnnotationObject",
+            "geometry": {
+                "type": "Polygon",
+                "coordinates": [verts]
+            },
+            "properties": {
+                "name": anno_name,
+                "classification": {
+                    "name": class_name,
+                },
+                "confidence": confidence,
+            }
+        }
+        return annotation
+    #
+    # end of anno_to_json
+#
+# end of Annotation
 
 #
 # end of file
