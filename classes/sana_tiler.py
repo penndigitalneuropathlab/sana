@@ -39,10 +39,10 @@ class Tiler:
         self.size = self.converter.to_int(self.size)
 
         # set the tile step, convert to pixels, and round
-        if tstep is None:
+        if step is None:
             self.step = copy(self.size)
         else:
-            self.step = tstep
+            self.step = step
         self.converter.to_pixels(self.step, self.lvl)
         self.step = self.converter.to_int(self.step)
 
@@ -68,7 +68,7 @@ class Tiler:
 
     # sets the current Frame to be used by the Tiler
     def set_frame(self, frame):
-        if frame.shape[2] != 1:
+        if frame.img.shape[2] != 1:
             raise TilerException(ERR_FRAME)
 
         # pad the frame for center-alignment
@@ -85,8 +85,9 @@ class Tiler:
 
     # generates a series of tiles from a Frame
     # resulting array will be the shape: (ntilesx, ntilesy, sizex, sizey)
-    def load_tiles(self, frame):
-        self.set_frame(frame)
+    def load_tiles(self, frame=None):
+        if not frame is None:
+            self.set_frame(frame)
 
         # define the output shape
         shape = (self.n[1], self.n[0], self.size[1], self.size[0])

@@ -117,7 +117,7 @@ class Converter:
     def to_pixels(self, x, lvl):
 
         # scale by the pixels to micron constant
-        if not x.is_micron:
+        if x.is_micron:
             x /= (self.mpp)**x.order
             x.is_micron = False
 
