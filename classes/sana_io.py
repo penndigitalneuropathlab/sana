@@ -250,7 +250,7 @@ def read_annotations(ifile, class_name=None):
         if 'confidence' not in annotation['properties']:
             confidence = 1.0
         else:
-            confidences = float(annotation['properties']['confidence'])
+            confidence = float(annotation['properties']['confidence'])
         #
         # end of confidence reading
 
