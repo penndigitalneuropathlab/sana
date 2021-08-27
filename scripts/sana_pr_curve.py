@@ -11,7 +11,6 @@ from matplotlib import pyplot as plt
 
 # custom packages
 from sana_io import get_anno_files, read_annotations
-from sana_loader import Loader
 
 # cmdl interface help messages
 REFDIR_HELP = "Directory containing reference annotation files"

@@ -78,23 +78,17 @@ def knn(d, k):
         thresholds.append((y-x)/2 + x)
     return seg, thresholds
 
-def kittler(data, hist=None):
-    if hist is None:
-        if data.dtype != np.uint8:
-            scaled = True
-            mi, mx = np.min(data), np.max(data)
-            data = 255 * (data - mi) / (mx - mi)
-            data = np.rint(data).astype(np.uint8)
-        else:
-            scaled = False
-            np.maximum(data, 1, out=data)
-        h,g = np.histogram(data,256,[0,256])
-    else:
-        scaled = False
-        h = hist
-        g = np.arange(0, 257, 1)
-    h = h.astype(np.float)
-    g = g.astype(np.float)
+
+def kittler(hist, mi=0, mx=255):
+
+    # prepare the hist and bins
+    h = hist.astype(np.float)
+    g = np.arange(0, 257, 1).astype(np.float)
+
+    # zero out data not within the min and max parameters
+    h[:mi] = 0
+    h[mx:] = 0
+
     g = g[:-1]
     c = np.cumsum(h)
     m = np.cumsum(h * g)
@@ -124,3 +118,5 @@ def kittler(data, hist=None):
     if scaled:
         t = t * (mx - mi) / 255 + mi
     return [t]
+#
+# end of kittler

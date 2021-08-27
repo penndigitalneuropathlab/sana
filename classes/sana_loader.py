@@ -11,7 +11,7 @@ import numpy as np
 # custom packages
 import sana_io
 from sana_geo import Converter, Point
-from sana_frame import Frame
+from sana_frame import Frame, get_csf_threshold
 
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
@@ -34,6 +34,9 @@ class Loader(openslide.OpenSlide):
 
         # calculate the color of the slide background
         self.slide_color = copy(self.thumbnail).get_bg_color()
+
+        # calculate the Slide/Tissue threshold
+        self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
     #
     # end of constructor
 
@@ -119,7 +122,7 @@ class Loader(openslide.OpenSlide):
         padx2 = np.full_like(img, pad_color, shape=(img.shape[0], padx2, 3))
         img = np.concatenate((padx1, img, padx2), axis=1)
 
-        return Frame(img, lvl, self.converter)
+        return Frame(img, lvl=lvl, converter=self.converter, csf_threshold=self.csf_threshold)
     #
     # end of load_frame
 #

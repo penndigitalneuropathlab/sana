@@ -8,7 +8,6 @@ from copy import copy
 import cv2
 import numpy as np
 from scipy import ndimage
-from scipy.ndimage.filters import gaussian_filter
 from PIL import Image, ImageDraw
 from matplotlib import pyplot as plt
 
@@ -19,12 +18,19 @@ from sana_color_deconvolution import StainSeparator
 import sana_thresholds
 from sana_tiler import Tiler
 
-# provides an series of functions to apply to a 2D array stored in it's memory
+# custom exceptions
+class TypeException(Exception):
+    def __init__(self, message):
+        self.message = message
+
+# TODO: should add flag to store whether image is binary
+#        or detect somehow? integer and only 2 values (0 and 1)
+# provides a series of functions to apply to a 2D array stored in it's memory
 #  -img: 2D Numpy array
 #  -lvl: pixel resolution of img
 #  -converter: Converter object from Loader
 class Frame:
-    def __init__(self, img, lvl=-1, converter=None):
+    def __init__(self, img, lvl=-1, converter=None, csf_threshold=None):
 
         # make sure the img always has a pixel channel
         if img.ndim < 3:
@@ -32,8 +38,35 @@ class Frame:
         self.img = img
         self.lvl = lvl
         self.converter = converter
+        self.contours = []
+        self.csf_threshold = csf_threshold
     #
     # end of constructor
+
+    # checks if the image array has 3 channels
+    def is_rgb(self):
+        return self.img.shape[2] == 3
+    #
+    # end of is_rgb
+
+    # checks to see if the image array is a 1 channel, 1 byte, 0 to 1 image
+    def is_binary(self):
+        if self.is_rgb():
+            return False
+        if self.img.dtype != np.uint8:
+            return False
+        if np.max(self.img) > 1:
+            return False
+        return True
+    #
+    # end of is_binary
+
+    # checks if the image array is a float or a 1 byte image
+    def is_float(self):
+        if self.img.dtype != np.uint8:
+            return True
+    #
+    # end of is_float
 
     # gets the size of the image
     def size(self):
@@ -50,10 +83,8 @@ class Frame:
     # end of copy
 
     # converts an RGB image to a grayscale image
-    # NOTE: the function checks for a 3 channel image, doesn't necessarily know
-    #        if the image is RGB
     def to_gray(self):
-        if self.img.shape[2] != 3:
+        if not self.is_rgb():
             return
         float_img = self.img.astype(np.float64)
         self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
@@ -62,8 +93,9 @@ class Frame:
 
     # repeats a 1-channel image to create a 3-channel image
     def to_rgb(self):
-        if self.img.shape[-1] == 1:
-            self.img = np.tile(self.img, 3)
+        if self.is_rgb():
+            return
+        self.img = np.tile(self.img, 3)
     #
     # end of to_rgb
 
@@ -73,7 +105,7 @@ class Frame:
     #
     # end of round
 
-    # generates the 256 bin histogram
+    # generates a 256 bin histogram for each color channel
     def histogram(self):
         self.round()
         histogram = np.zeros((256, self.img.shape[-1]))
@@ -81,58 +113,72 @@ class Frame:
             histogram[:, i] = np.histogram(self.img[:, :, i],
                                            bins=256, range=(0, 255))[0]
         return histogram
+    #
+    # end of histogram
 
+    # crops the image array to a new size using a loc/size variables
     def crop(self, loc, size):
         self.converter.to_pixels(loc, self.lvl)
         self.converter.to_pixels(size, self.lvl)
         loc = self.converter.to_int(loc)
         size = self.converter.to_int(size)
-        return Frame(self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]],
-                     self.lvl, self.converter)
+        self.img = self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
+    #
+    # end of crop
 
-    def rescale(self, ds, size=None):
-        img = np.kron(self.img[:, :, 0], np.ones((ds, ds), dtype=np.uint8))
-        img = img[:, :, None]
+    # resizes an array to a new size given a scaling factor
+    def resize(self, ds):
+        size = self.converter.to_int(self.size() * ds)
+        self.img = cv2.resize(self.img, dsize=(size[1], size[0]),
+                              interpolation=cv2.INTER_CUBIC)
+    #
+    # end of resize
 
-        # NOTE: sometimes the rounding is off by a pixel
-        # TODO: make sure this doesn't cause alignment issues
-        if size is not None:
-            img = img[:size[0], :size[1]]
-
-        return Frame(img, self.lvl, self.converter)
-
+    # rotates the image array around it's center based on a angle in degrees
     def rotate(self, angle):
-        center = tuple(np.array([self.img.shape[0]//2, self.img.shape[1]//2]).astype(float))
+        center = tuple(self.size().astype(float)[::-1]//2)
         rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-        img = cv2.warpAffine(
+        self.img = cv2.warpAffine(
             self.img, rot_mat, self.img.shape[0:2],
             flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REFLECT)
-        return Frame(img, self.lvl, self.converter)
+    #
+    # end of rotate
 
+    # pads the image array on either edge based on alignment argument
     # NOTE: changing the mode affects the GM detection
     #        - 'wrap' causes sharp peaks at edge if the tissue isn't parallel
     #        - 'symmetric' seems to be the best, the edges are very flat
-    # TODO: before and after should be defined by alignment
-    def pad(self, pad):
-        before = pad//2
-        after = pad - before
-        return Frame(np.pad(self.img,
-                            ((before[1],after[1]),(before[0],after[0]),(0,0)),
-                            mode='symmetric'), self.lvl, self.converter)
+    def pad(self, pad, alignment='center'):
+        if alignment == 'left':
+            before = pad
+            after = (0,0)
+        elif alignment == 'center':
+            before = pad//2
+            after = pad - before
+        else:
+            before = (0,0)
+            after = pad
+        self.img = np.pad(self.img,
+                          ((before[1], after[1]),
+                           (before[0], after[0]), (0,0)), mode='symmetric')
+    #
+    # end of pad
 
+    # writes the image array to a file
+    # NOTE: if the array is floating point, the image will be written as a
+    #        numpy data file, else as whatever datatype is given
     def save(self, fname):
         sana_io.create_directory(fname)
-        if self.img.dtype == np.uint8:
-            if self.img.ndim == 3 and self.img.shape[2] == 1:
-                im = self.img[:, :, 0]
-            else:
-                im = self.img
-            if np.max(im) == 1:
-                im = 255 * im
-            im = Image.fromarray(im)
-            im.save(fname)
-        else:
+        if self.is_float():
             np.save(fname.split('.')[0]+'.npy', self.img)
+        else:
+            if self.is_binary():
+                im = Image.fromarray(255 * self.img())
+            else:
+                im = Image.fromarray(self.img())
+            im.save(fname)
+    #
+    # end of save
 
     # calculates the background color as the most common color
     #  in the grayscale space
@@ -140,26 +186,35 @@ class Frame:
         self.to_gray()
         histo = self.histogram()
         return np.tile(np.argmax(histo), 3)
+    #
+    # end of get_bg_color
 
     # apply a binary mask to the image
     def mask(self, mask, value=None):
+        if self.is_float():
+            raise TypeException('Cannot apply mask to RGB image')
         self.img = cv2.bitwise_and(
             self.img, self.img, mask=mask.img)
         if value is not None:
             self.img[self.img == 0] = value
+    #
+    # end of mask
 
-    # TODO: use cv2
-    # TODO: define sigma in terms of microns
+    # TODO: sigma should be probably be in terms of microns
     def gauss_blur(self, sigma):
         if sigma != 0:
-            self.img = gaussian_filter(self.img, sigma=sigma)
+            self.img = cv2.GaussianBlur(self.img, (sigma, sigma), 0)
+    #
+    # end of gauss_blur
 
+    # TODO: need to check on these parameters and analyze the effects
     # niter - number of iterations [1, 12]
     # kappa - conduction coefficient (20-100) [50, 11]
     # gamma - max value of .25 for stability [.1, 0.9]
     # step  - distance between adjacent pixels [(1.,1.), (7., 7.)]
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
-
+        if self.is_float():
+            raise RBGException('Cannot apply filter to RGB image')
         self.img = self.img.astype(float)
         deltaS = np.zeros_like(self.img)
         deltaE = deltaS.copy()
@@ -190,8 +245,14 @@ class Frame:
             EW[:, 1:] -= E[:, :-1]
 
             self.img += gamma * (NS + EW)
+    #
+    # end of anisodiff
 
+    # thresholds the image array based to x if below, y if above threshold
+    # NOTE: x and y can be images, e.g. x = 0, y = self.img
     def threshold(self, threshold, x, y):
+        if self.is_float():
+            raise TypeException('Cannot apply threshold to RGB image')
 
         # prepare img arrays for the true and false conditions
         if type(x) is int:
@@ -201,155 +262,147 @@ class Frame:
 
         self.img = np.where(self.img < threshold, x, y)
         self.round()
+    #
+    # end of threshold
 
-    def to_mask(self, polygons=None, x=0, y=1):
-        if polygons is None:
-            polygons = [copy(d.polygon) for d in self.get_bodies()]
-        polys = []
-        for p in polygons:
-            self.converter.to_pixels(p, self.lvl)
-            p = self.converter.to_int(p)
-            polys.append([tuple(p[i]) for i in range(p.shape[0])])
-        mask = Image.new('L', (self.size()[0], self.size()[1]), x)
-        for poly in polys:
-            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
-        self.img = np.array(mask)[:, :, None]
+    # TODO: should check if image is binary or not
+    # generates the contours on all edges of the image, then filters
+    #  based on size of body and hole criteria
+    def get_contours(self):
+        if not self.is_binary():
+            raise TypeException('Cannot get contours of a non-binary image')
 
-    def get_tissue_threshold(self, blur=0, mi=0, mx=255):
-        self.gauss_blur(blur)
-        data = self.img.flatten()
-        data = data[data >= mi]
-        data = data[data <= mx]
-        data = data[:, None]
-        return sana_thresholds.kittler(data)[0]
-
-    def get_stain_threshold(self, tissue_mask=None, blur=0, mi=0, mx=255):
-        self.gauss_blur(blur)
-        if not tissue_mask is None:
-            self.mask(tissue_mask, value=0)
-        data = self.img.flatten()
-        data = data[data != 0]
-        data = data[data >= mi]
-        data = data[data <= mx]
-        data = data[:, None]
-
-        return sana_thresholds.kittler(data)[0]
-
-    def tissue_angle(self, threshold, roi, min_body_area=0, min_hole_area=0):
-
-        # get the filtered tissue detections
-        self.detect_tissue(threshold, min_body_area, min_hole_area)
-
-        # find only the detections within the given annotation
-        layer_0 = self.ray_trace_detections(roi)
-        if layer_0.shape[0] == 0:
-            return None
-
-        # perform linear regression and get the line of best fit
-        m0, b0 = layer_0.linear_regression()
-        a = Point(0, m0*0 + b0, False, self.lvl)
-        b = Point(self.size()[0], m0*self.size()[0] + b0, False, self.lvl)
-        angle = find_angle(a, b)
-
-        # transform the III and IV quadrants to I and II respectively
-        quadrant = angle//90
-        if quadrant > 1:
-            angle -= 180
-
-        # rotate layer 0 detection, modify angle so that layer 0 is at the
-        #  top of the frame instead of the left or right
-        layer_0_rot = layer_0.rotate(roi.centroid()[0], angle)
-        if np.mean(layer_0_rot[:, 1]) >= self.size()[1]//2:
-            angle -= 180
-        return angle
-
-    def detect(self, tree=True):
-        self.detections = []
-        if tree:
-            retr = cv2.RETR_TREE
-        else:
-            retr = cv2.RETR_EXTERNAL
+        # generate the contours and store as Polygons
+        self.contours = []
         contours, hierarchies = cv2.findContours(
-            self.img, retr, cv2.CHAIN_APPROX_SIMPLE)
+            self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         if hierarchies is None:
             return
-
         for c, h in zip(contours, hierarchies[0]):
-            self.detections.append(Detection(c, h, self.lvl, self.converter))
+            self.contours.append(Contour(c, h, self.lvl, self.converter))
 
-    # filter the detections into groups based on the area and the hierarchy
-    def filter(self, min_body_area=0, min_hole_area=0, max_body_area=None, max_hole_area=None):
+    # filter the contours into groups based on the area and the hierarchy
+    def filter_contours(self, min_body_area=0, min_hole_area=0,
+                        max_body_area=None, max_hole_area=None):
 
-        # find the body detections
-        # NOTE: these are detections without a parent and above the min size
-        for d in self.detections:
-            if d.hierarchy[3] != -1:
+        # find the bodies
+        # NOTE: these are contours without a parent and above the min size
+        for c in self.contours:
+            if c.hierarchy[3] != -1:
                 continue
-            if d.polygon.area() <= min_body_area:
+            if c.polygon.area() <= min_body_area:
                 continue
             if not max_body_area is None and d.polygon.area() >= max_body_area:
                 continue
-            d.body = True
+            c.body = True
+        #
+        # end of body checking
 
-        # find the holes in the body detections
-        for d in self.detections:
-            if d.body:
+        # find the holes in the body contours
+        # NOTE: contours with a parent that is a body and fits size criteria
+        for c in self.contours:
+            if c.body:
                 continue
-            if not self.detections[d.hierarchy[3]].body:
+            if not self.contours[c.hierarchy[3]].body:
                 continue
-            if d.polygon.area() <= min_hole_area:
+            if c.polygon.area() <= min_hole_area:
                 continue
-            if not max_hole_area is None and d.polygon.area() >= max_hole_area:
+            if not max_hole_area is None and c.polygon.area() >= max_hole_area:
                 continue
-            d.hole = True
+            c.hole = True
+        #
+        # end of hole checking
+    #
+    # end of filter_contours
 
-    def ray_trace_detections(self, p1):
+    def get_body_contours(self):
+        return [c for c in self.contours if c.body]
+
+    # get only the vertices of the contours within the given roi
+    def ray_trace_contours(self, roi):
+
+        # rescale roi to current lvl
+        roi_lvl = roi.lvl
+        self.converter.rescale(roi, self.lvl)
+
+        # loop through all body contours
         x, y = [], []
-        for d in self.get_bodies():
-            p0 = d.polygon
-            if p0.is_micron:
-                self.converter.to_pixels(p0, p1.lvl)
-            else:
-                self.converter.rescale(p0, p1.lvl)
-            for i in range(p0.shape[0]):
-                if ray_tracing(p0[i][0], p0[i][1], np.array(p1)):
-                    x.append(p0[i][0])
-                    y.append(p0[i][1])
+        for c in self.get_body_contours():
+
+            # loop through vertices of each body contour polygon
+            p = c.polygon
+            for i in range(p.shape[0]):
+
+                # keep only the vertices that are within the roi
+                if ray_tracing(p[i][0], p[i][1], np.array(roi)):
+                    x.append(p[i][0])
+                    y.append(p[i][1])
+
+        # revert roi to its original lvl
+        self.converter.rescale(roi, roi_lvl)
+
+        # generate a Line array
         x, y = np.array(x), np.array(y)
-        return Polygon(x, y, False, self.lvl)
+        return Line(x, y, False, self.lvl)
+    #
+    # end of ray_trace_contours
 
-    def get_bodies(self):
-        bodies = []
-        for d in self.detections:
-            if d.body:
-                bodies.append(d)
-        return bodies
+    def get_tissue_contours(self, min_body_area=0, min_hole_area=0):
 
-    def get_cells(self, x0, y0, x1, y1):
-        cells = []
-        for d in self.detections:
-            if not d.body:
-                continue
-            p = d.polygon
-            c = p.centroid()[0]
-            if c[0] >= x0 and c[0] <= x1 and c[1] >= y0 and c[1] <= y1:
-                cells.append(d)
-        return cells
-
-    def detect_tissue(self, threshold, min_body_area=0, min_hole_area=0):
-
-        # detect the objects on the thresholded image
+        # threshold the image for just tissue data
         self.to_gray()
-        self.gauss_blur(1)
-        self.threshold(threshold, x=255, y=0)
-        self.detect()
+        self.gauss_blur(5)
+        self.threshold(self.csf_threshold, x=1, y=0)
 
-        # filter the detections based on the given areas
-        self.filter(min_body_area=min_body_area, min_hole_area=min_hole_area)
+        # get all contours of the image
+        self.get_contours()
 
-    def detect_cells(self, min_body=0, max_body=None):
-        self.detect(tree=False)
-        self.filter(min_body_area=min_body, max_body_area=max_body)
+        # filter out small bodies and small holes
+        self.filter_contours(min_body_area=min_body_area,
+                             min_hole_area=min_hole_area)
+
+    # generates the CSF Line boundary from an RGB image
+    # NOTE: this function can fail if given only slide or only tissue
+    # TODO: does blurring affect the accuracy of the CSF boundary?
+    def get_csf_boundary(self, roi):
+        if not self.is_rgb():
+            raise TypeException('Cannot get CSF Boundary of non-RGB image')
+
+        # get the contours of the tissue within the image
+        # TODO: get proper parameters for this
+        self.get_tissue_contours(min_body_area=1e5, min_hole_area=1e5)
+
+        # form a Line array based on the body contours within the roi
+        csf_boundary = self.ray_trace_contours(roi)
+
+        return csf_boundary
+    #
+    # end of get_csf_boundary
+
+    # calculates the rotation of the Frame based on the linear regression of
+    # the csf boundary detected within the given roi
+    def get_rotation(self, roi):
+
+        # get the csf boundary within the roi
+        csf_boundary = self.get_csf_boundary(roi)
+
+        # make sure we actually found a boundary
+        if csf_boundary.shape[0] == 0:
+            return None
+
+        # calculate the angle of rotation based on the linear regression
+        angle = csf_boundary.get_angle()
+
+        # make sure the detected angle rotates the csf boundary to the
+        # top half of the roi
+        center = roi.centroid()[0]
+        csf_boundary.rotate(center, angle)
+        if np.mean(csf_boundary[:, 1]) >= center[1]:
+            angle -= 180
+
+        return angle
+    #
+    # end of get_rotation
 
     def detect_cell_centers(self, radius, gap, plot=False):
 
@@ -463,50 +516,10 @@ class Frame:
                     break
             sizes.append(size)
         return sizes
-    # NOTE: this should be done on the tissue mask frame
-    # TODO: detections may need to be shifted by the amount of blur?
-    def detect_layer_0(self, xvals=None):
-
-        # get the rough infra region
-        infra = self.img[:self.img.shape[0]//2, :]
-
-        # loop through the columns on the infra region
-        x, y = [], []
-        if xvals is None:
-            xvals = range(infra.shape[1])
-        for i in xvals:
-
-            # last index of zeros in the region is the start of tissue
-            inds = np.argwhere(infra[:, i] == 0)
-            if len(inds) != 0:
-                x.append(i)
-                y.append(inds[-1][0])
-
-        return np.array(x), np.array(y)
-
-    # NOTE: this should be done on the stain density frame
-    def detect_layer_6(self, threshold):
-
-        # normalize by the maximum
-        self.img /= np.max(self.img, axis=0)
-
-        # get the rough supra region
-        supra = self.img[self.img.shape[0]//2:, :]
-
-        # loop through the columns in the supra region
-        x, y = [], []
-        for i in range(supra.shape[1]):
-
-            # first index where supra is below threshold is the end of layer 6
-            inds = np.argwhere(supra[:, i] <= threshold)
-            if len(inds) != 0:
-                x.append(i)
-                y.append((self.img.shape[0]//2 + inds[0][0]))
-        return np.array(x), np.array(y)
 #
 # end of Frame
 
-class Detection:
+class Contour:
     def __init__(self, contour, hierarchy, lvl, converter):
         self.hierarchy = hierarchy
         self.lvl = lvl
@@ -525,8 +538,31 @@ class Detection:
 #
 # end of Detection
 
-# TODO: the pad function is padding on all sides! should only be on ends?
-#         or divide pad amount by 2??
+# generates a binary mask based on a list of given Polygons
+#  -polygons: list of polygons to be filled with value y
+#  -size: Point defining the size of the mask initialized with value x
+#  -x, y: ints defining the negative and positive values in the mask
+def create_mask(self, polygons, size, x=0, y=1, lvl=-1, converter=None):
+
+    # convert Polygons to a list of tuples so that ImageDraw read them
+    polys = []
+    for p in polygons:
+        self.converter.to_pixels(p, self.lvl)
+        p = self.converter.to_int(p)
+        polys.append([tuple(p[i]) for i in range(p.shape[0])])
+    #
+    # end of Polygon conversion
+
+    # create a blank image, then draw the polygons onto the image
+    size = self.converter.to_int(size)
+    mask = Image.new('L', (size[0], size[1]), x)
+    for poly in polys:
+        ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+    return Frame(np.array(mask)[:, :, None], lvl, converter)
+#
+# end of create_mask
+
+# TODO: check if right aligned padding is correct
 def mean_normalize(loader, frame):
     lvl = 1
     ds = int(loader.ds[lvl] / loader.ds[loader.lvl])
@@ -553,19 +589,34 @@ def mean_normalize(loader, frame):
 
     s = frame.img.shape[0]//ds, frame.img.shape[1]//ds
     frame_norm = Frame(norm)
-    frame_norm = frame_norm.rescale(tds, size=s)
-    frame_norm = frame_norm.rescale(ds, size=frame.img.shape[:2])
-
-    if frame_norm.img.shape[0] < frame.img.shape[0]:
-        padx = frame.img.shape[0] - frame_norm.img.shape[0]
-        pady = frame.img.shape[1] - frame_norm.img.shape[1]
-        frame_norm = frame_norm.pad(np.array([pady, padx]))
+    frame_norm = frame_norm.resize(tds)
+    frame_norm = frame_norm.resize(ds)
 
     frame.img -= frame_norm.img
     frame.img[frame.img < 0] = 0
     return frame
 #
 # end of mean_normalize
+
+# calculates the Slide/Tissue intensity threshold
+# NOTE: should only be called by Frame
+#  -data: a grayscale image array
+#  -mi: minimum value to use from 0 to 255
+#  -mx: maximum value to use from 0 to 255
+def get_csf_threshold(self, frame):
+    if not frame.is_rgb():
+        raise TypeException('Cannot get CSF Threshold of a non-RGB image')
+
+    # convert to grayscale
+    frame.to_gray()
+
+    # smooth to get a more accurate threshold
+    frame.gauss_blur(5)
+
+    # perform kittler thresholding
+    return kittler(frame.img, mi=0, mx=255)[0]
+#
+# end of get_csf_threshold
 
 #
 # end of file
