@@ -39,10 +39,6 @@ def ray_tracing(x,y,poly):
 
     return inside
 
-# calculates the angle of rotation (degrees) given 2 coordinates forming a line
-def find_angle(a, b):
-    return np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
-
 def linearity(x, y):
     n = len(x)
     x, y = np.array(x), np.array(y)
@@ -196,14 +192,6 @@ class Polygon(Array):
         r = np.max(d)
         return c, r
 
-    def linear_regression(self):
-        x, y, n = self[:, 0], self[:, 1], self.shape[0]
-        ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
-        ss_xx = np.sum(x**2) - n * np.mean(x)**2
-        m = ss_xy/ss_xx
-        b = np.mean(y) - m * np.mean(x)
-        return m, b
-
     def bounding_box(self):
         x, y = self[:, 0], self[:, 1]
         x0, y0 = np.min(x), np.min(y)
@@ -236,6 +224,42 @@ class Polygon(Array):
                                  for i in range(self.shape[0])])
 #
 # end of Polygon
+
+class Line(Polygon):
+    def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
+        obj = Polygon(x, y, is_micron, lvl, order).view(cls)
+        return obj
+    #
+    # end of constructor
+
+    # calculates the angle of rotation in degrees based on the linear regression
+    def get_angle(self):
+
+        # generate a linear represntation
+        m, b = self.linear_regression()
+        a = Point(self[0,0], m*self[0,0] + b, False, self.lvl)
+        b = Point(self[-1,0], m*self[-1,0] + b, False, self.lvl)
+
+        # calculate the angle of rotation in degrees
+        angle = np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
+
+        # transform the III and IV quadrants to I and II respectively
+        quadrant = angle // 90
+        if quadrant > 1:
+            angle -= 180
+
+        return angle
+    #
+    # end of get_angle
+
+    # calculates the line of best fit
+    def linear_regression(self):
+        x, y, n = self[:, 0], self[:, 1], self.shape[0]
+        ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
+        ss_xx = np.sum(x**2) - n * np.mean(x)**2
+        m = ss_xy/ss_xx
+        b = np.mean(y) - m * np.mean(x)
+        return m, b
 
 class Annotation(Polygon):
     def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
