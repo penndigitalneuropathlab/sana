@@ -28,15 +28,16 @@ class Loader(openslide.OpenSlide):
         self.ds = self.level_downsamples
         self.mpp = float(self.properties['aperio.MPP'])
         self.converter = Converter(self.mpp, self.ds)
+        self.csf_threshold = None
 
         # pre-load the thumbnail for easy access
-        self.thumbnail = self.load_thumbnail()
+        thumbnail = self.load_thumbnail()
 
         # calculate the color of the slide background
-        self.slide_color = copy(self.thumbnail).get_bg_color()
+        self.slide_color = copy(thumbnail).get_bg_color()
 
         # calculate the Slide/Tissue threshold
-        self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
+        self.csf_threshold = get_csf_threshold(copy(thumbnail))
     #
     # end of constructor
 

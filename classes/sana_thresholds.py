@@ -115,8 +115,6 @@ def kittler(hist, mi=0, mx=255):
     v[~np.isfinite(v)] = np.inf
     idx = np.argmin(v)
     t = g[idx]
-    if scaled:
-        t = t * (mx - mi) / 255 + mi
     return [t]
 #
 # end of kittler

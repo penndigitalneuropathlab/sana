@@ -70,9 +70,10 @@ class Tiler:
     def set_frame(self, frame):
         if frame.img.shape[2] != 1:
             raise TilerException(ERR_FRAME)
+        self.frame = frame
 
         # pad the frame for center-alignment
-        self.frame = frame.pad(self.fpad)
+        self.frame.pad(self.fpad)
 
         # TODO: check if this is necessary? might mess with the stride_tricks
         self.frame.img = self.frame.img[:, :, 0]

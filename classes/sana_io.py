@@ -277,7 +277,7 @@ def read_annotations(ifile, class_name=None):
 def write_annotations(ofile, annos):
 
     # convert the Ann objects to json strings
-    json_annos = [anno.to_json for anno in annos]
+    json_annos = [anno.to_json() for anno in annos]
 
     # write the file
     json.dump(json_annos, open(ofile, 'w'))
