@@ -18,6 +18,8 @@ class UnitException(Exception):
     def __init__(self, message):
         self.message = message
 
+# detects if the given xy point is inside the poly array
+# NOTE: this needs to be basic C datatypes so that numba can optimize it
 @jit(nopython=True)
 def ray_tracing(x,y,poly):
     n = len(poly)
@@ -36,25 +38,14 @@ def ray_tracing(x,y,poly):
                     if p1x == p2x or x <= xints:
                         inside = not inside
         p1x,p1y = p2x,p2y
-
     return inside
-
-def linearity(x, y):
-    n = len(x)
-    x, y = np.array(x), np.array(y)
-    ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
-    ss_xx = np.sum(x**2) - n * np.mean(x)**2
-    m = ss_xy/ss_xx
-    b = np.mean(y) - m * np.mean(x)
-    f = m * x + b
-    ss_tot = np.sum((y - np.mean(y))**2)
-    ss_res = np.sum((y - f)**2)
-    rms = np.sqrt(np.mean((y-f)**2))
-    r_2 = 1 - ss_res/ss_tot
-
-    return rms
+#
+# end of ray_tracing
 
 # Array conversion class to handle microns, pixel resolutions, and orders
+# NOTE: SANA code supports both microns and pixel analysis, but it is best
+#       practice to use pixel units as much as possible, and convert to/from
+#       microns at the beginning or ending of analysis
 #  -mpp: microns per pixel constant, usually provided by Loader
 #  -ds: level downsample factors, usually provided by Loader
 class Converter:
@@ -121,12 +112,14 @@ class Converter:
         self.rescale(x, lvl)
     #
     # end of to_pixels
-
-
 #
 # end of Converter
 
+# wrapper class to a Numpy array, also stores the units, resolution, and order
 # NOTE: this follows the following guide - https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
+#  -is_micron: defines if the units are either microns or pixels
+#  -lvl: pixel resolution of the data (lvl=0 if in microns)
+#  -order: order of the data, usual for calculating areas
 class Array(np.ndarray):
     def __new__(cls, arr, is_micron=True, lvl=0, order=1):
         obj = np.asarray(arr).view(cls)
@@ -134,56 +127,100 @@ class Array(np.ndarray):
         obj.lvl = lvl
         obj.order = order
         return obj
-
     def __array_finalize__(self, obj):
         if obj is None: return
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
         self.order = getattr(obj, 'order', None)
+    #
+    # end of constructor
 
+    # shifts the array to a new location
+    # NOTE: this is often used to move to the origin
+    #        e.g. loc, size = x.bounding_box(); x.translate(loc)
     def translate(self, p):
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p
+    #
+    # end of translate
 
+    # rotates all points in the Array around a center point by angle in degrees
+    #  -c: center point to rotate around
+    #  -angle: angle of rotation in degrees
     def rotate(self, c, angle):
+        if self.lvl != c.lvl or self.is_micron != c.is_micron:
+            raise UnitException(ERR_COMPARE)
+
+        # get the xy values
         if self.ndim == 1:
             x0, y0 = self[0], self[1]
         else:
             x0, y0 = self[:, 0], self[:, 1]
-        cls = type(self)
+
+        # prepare the center and angle in radians
         xc, yc = c
         th = np.radians(-angle)
 
+        # perform the rotation
         x1 = xc + np.cos(th) * (x0 - xc) - np.sin(th) * (y0 - yc)
         y1 = yc + np.sin(th) * (x0 - xc) + np.cos(th) * (y0 - yc)
 
-        return cls(x1, y1, self.is_micron, self.lvl, self.order)
+        # set the xy values
+        if self.ndim == 1:
+            self[0] = x1
+            self[1] = y1
+        else:
+            self[:, 0] = x1
+            self[:, 1] = y1
+    #
+    # end of rotate
 #
 # end of Array
 
+# simpler inheritance of Array to simplify usage
+# NOTE: shape of this Array is guaranteed to be (2,)
 class Point(Array):
     def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
         arr = np.array((x, y), dtype=np.float)
         obj = Array(arr, is_micron, lvl, order).view(cls)
         return obj
+    #
+    # end of Constructor
 #
 # end of Point
 
+# inherits Array for more specialized functions and uses
+# NOTE: shape of this Array is guaranteed to be (N,2)
+#  -x: (N, 1) array
+#  -y: (N, 1) array
 class Polygon(Array):
     def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
         arr = np.array((x, y), dtype=np.float).T
         obj = Array(arr, is_micron, lvl, order).view(cls)
         return obj
 
+    # separates the Polygon into x and y arrays
+    def get_xy(self):
+        return self[:, 0], self[:, 1]
+    #
+    # end of get_xy
+
+    # calculates the area of the Polygon
+    # TODO: this should return a Value (or something) that tracks the order
     def area(self):
-        x0, y0 = self[:, 0], self[:, 1]
+        x0, y0 = self.get_xy()
         x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
         return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+    #
+    # end of area
 
+    # gets the center of gravity of the Polygon, then gets the radius of the
+    # centroid by selecting the max distance vertex from the center
+    # TODO: this needs to follow what area does
     def centroid(self):
         A = self.area()
-        x0, y0 = self[:, 0], self[:, 1]
+        x0, y0 = self.get_xy()
         x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
         cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
         cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
@@ -191,7 +228,19 @@ class Polygon(Array):
         d = np.sqrt((c[0] - x0)**2 + (c[1] - y0)**2)
         r = np.max(d)
         return c, r
+    #
+    # end of centroid
 
+    # gets a bounding rectangle based on the centroid of the Polygon
+    def bounding_centroid(self):
+        c, r = self.centroid()
+        loc = Point(c[0]-r, c[1]-r, self.is_micron, self.lvl, self.order)
+        size = Point(2*r, 2*r, self.is_micron, self.lvl, self.order)
+        return loc, size
+    #
+    # end of bounding_centroid
+
+    # gets a bounding rectangle based on the extrema of the Polygon
     def bounding_box(self):
         x, y = self[:, 0], self[:, 1]
         x0, y0 = np.min(x), np.min(y)
@@ -199,7 +248,10 @@ class Polygon(Array):
         loc = Point(x0, y0, self.is_micron, self.lvl, self.order)
         size = Point(x1-x0, y1-y0, self.is_micron, self.lvl, self.order)
         return loc, size
+    #
+    # end of bounding_box
 
+    #
     def filter(self, p):
         if self.is_micron != p.is_micron or self.lvl != p.lvl:
             raise UnitException(ERR_COMPARE)
@@ -213,15 +265,29 @@ class Polygon(Array):
 
     def connect(self):
         if self[0, 0] != self[-1, 0] or self[0, 1] != self[-1, 1]:
-            p = np.array([self[0,0], self[0,1]])[None, :]
-            return Array(np.concatenate([self, p], axis=0),
-                         self.is_micron, self.lvl, self.order)
+            x, y = self.get_xy()
+            x = np.concatenate([x, [self[0,0]]], axis=0)
+            y = np.concatenate([y, [self[0,1]]], axis=0)
+            return Polygon(x, y, self.is_micron, self.lvl, self.order)
         else:
             return self
 
+    # converts the Array to a Shapely object to access certain functions
     def to_shapely(self):
         return geometry.Polygon([[self[i,0], self[i,1]] \
                                  for i in range(self.shape[0])])
+    #
+    # end of to_shapely
+
+    # convert the Array to a Annotation to prepare for file io
+    def to_annotation(self, file_name, class_name,
+                      anno_name="", confidence=1.0):
+        x, y = self.get_xy()
+        return Annotation(None, file_name, class_name, anno_name,
+                          confidence=confidence, is_micron=self.is_micron,
+                          lvl=self.lvl, order=self.order, x=x, y=y)
+    #
+    # end of to_annotation
 #
 # end of Polygon
 
@@ -263,10 +329,11 @@ class Line(Polygon):
 
 class Annotation(Polygon):
     def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
-                is_micron=True, lvl=0, order=1):
+                is_micron=True, lvl=0, order=1, x=None, y=None):
 
         # initalize the array using the geometry
-        x, y = cls.get_xy(geo)
+        if x is None or y is None:
+            x, y = cls.get_vertices(geo)
         obj = Polygon(x, y, is_micron, lvl, order).view(cls)
 
         # store attributes
@@ -279,15 +346,8 @@ class Annotation(Polygon):
     #
     # end of constructor
 
-    # def __array_finalize__(self, obj):
-    #     if obj is None: return
-    #     self.file_name = obj.file_name
-    #     self.class_name = obj.class_name
-    #     self.name = obj.name
-    #     self.confidence = obj.confidence
-
     # generates a set of xy coordinates from the geometry
-    def get_xy(geo):
+    def get_vertices(geo):
 
         # TODO: this should be simplified.
         #        need to actually handle what a MultiPolygon is
@@ -297,8 +357,8 @@ class Annotation(Polygon):
             for coords in coords_list:
                 x += [float(c[0]) for c in coords[0]]
                 y += [float(c[1]) for c in coords[0]]
-                x = np.array(x)
-                y = np.array(y)
+            x = np.array(x)
+            y = np.array(y)
         elif geo['type'] == 'Polygon':
             coords = geo['coordinates']
             x = np.array([float(c[0]) for c in coords[0]])
@@ -327,11 +387,11 @@ class Annotation(Polygon):
                 "coordinates": [verts]
             },
             "properties": {
-                "name": anno_name,
+                "name": self.name,
                 "classification": {
-                    "name": class_name,
+                    "name": self.class_name,
                 },
-                "confidence": confidence,
+                "confidence": self.confidence,
             }
         }
         return annotation
