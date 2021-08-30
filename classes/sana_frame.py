@@ -13,9 +13,9 @@ from matplotlib import pyplot as plt
 
 # custom packages
 import sana_io
-from sana_geo import Point, Polygon, ray_tracing, find_angle
+from sana_geo import Point, Polygon, Line, ray_tracing
 from sana_color_deconvolution import StainSeparator
-import sana_thresholds
+from sana_thresholds import kittler
 from sana_tiler import Tiler
 
 # custom exceptions
@@ -126,17 +126,22 @@ class Frame:
     #
     # end of crop
 
-    # resizes an array to a new size given a scaling factor
-    def resize(self, ds):
-        size = self.converter.to_int(self.size() * ds)
-        self.img = cv2.resize(self.img, dsize=(size[1], size[0]),
+    # scales an array to a new size given a scaling factor
+    def scale(self, ds):
+        size = self.size().astype(float) / ds
+        if ds[0] > 1:
+            size = np.ceil(size)
+        size = self.converter.to_int(size)
+        self.img = cv2.resize(self.img, dsize=(size[0], size[1]),
                               interpolation=cv2.INTER_CUBIC)
+        if len(self.img.shape) == 2:
+            self.img = self.img[:, :, None]
     #
     # end of resize
 
     # rotates the image array around it's center based on a angle in degrees
     def rotate(self, angle):
-        center = tuple(self.size().astype(float)[::-1]//2)
+        center = tuple(self.size()[::-1].astype(float)//2)
         rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
         self.img = cv2.warpAffine(
             self.img, rot_mat, self.img.shape[0:2],
@@ -192,9 +197,9 @@ class Frame:
     # apply a binary mask to the image
     def mask(self, mask, value=None):
         if self.is_float():
-            raise TypeException('Cannot apply mask to RGB image')
+            raise TypeException('Cannot apply mask to floating point image')
         self.img = cv2.bitwise_and(
-            self.img, self.img, mask=mask.img)
+            self.img, self.img, mask=mask.img)[:, :, None]
         if value is not None:
             self.img[self.img == 0] = value
     #
@@ -204,6 +209,8 @@ class Frame:
     def gauss_blur(self, sigma):
         if sigma != 0:
             self.img = cv2.GaussianBlur(self.img, (sigma, sigma), 0)
+        if len(self.img.shape) == 2:
+            self.img = self.img[:, :, None]
     #
     # end of gauss_blur
 
@@ -251,7 +258,7 @@ class Frame:
     # thresholds the image array based to x if below, y if above threshold
     # NOTE: x and y can be images, e.g. x = 0, y = self.img
     def threshold(self, threshold, x, y):
-        if self.is_float():
+        if self.is_rgb():
             raise TypeException('Cannot apply threshold to RGB image')
 
         # prepare img arrays for the true and false conditions
@@ -352,6 +359,7 @@ class Frame:
         # threshold the image for just tissue data
         self.to_gray()
         self.gauss_blur(5)
+        self.round()
         self.threshold(self.csf_threshold, x=1, y=0)
 
         # get all contours of the image
@@ -360,6 +368,8 @@ class Frame:
         # filter out small bodies and small holes
         self.filter_contours(min_body_area=min_body_area,
                              min_hole_area=min_hole_area)
+
+        return self.contours
 
     # generates the CSF Line boundary from an RGB image
     # NOTE: this function can fail if given only slide or only tissue
@@ -539,22 +549,23 @@ class Contour:
 # end of Detection
 
 # generates a binary mask based on a list of given Polygons
-#  -polygons: list of polygons to be filled with value y
+#  -contours: list of contours to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: ints defining the negative and positive values in the mask
-def create_mask(self, polygons, size, x=0, y=1, lvl=-1, converter=None):
+def create_mask(contours, size, lvl, converter, x=0, y=1):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
-    for p in polygons:
-        self.converter.to_pixels(p, self.lvl)
-        p = self.converter.to_int(p)
+    for c in contours:
+        p = c.polygon
+        converter.to_pixels(p, lvl)
+        p = converter.to_int(p)
         polys.append([tuple(p[i]) for i in range(p.shape[0])])
     #
     # end of Polygon conversion
 
     # create a blank image, then draw the polygons onto the image
-    size = self.converter.to_int(size)
+    size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
     for poly in polys:
         ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
@@ -564,21 +575,22 @@ def create_mask(self, polygons, size, x=0, y=1, lvl=-1, converter=None):
 
 # TODO: check if right aligned padding is correct
 def mean_normalize(loader, frame):
+
     lvl = 1
     ds = int(loader.ds[lvl] / loader.ds[loader.lvl])
-
     tsize = Point(100, 100, True, lvl)
     tstep = Point(10, 10, True, lvl)
     tiler = Tiler(lvl, frame.converter, tsize, tstep)
-    frame_ds = frame.copy()
-    frame_ds.img = frame_ds.img[::ds, ::ds]
-    tiler.set_frame(frame_ds)
-    tiles = tiler.load_tiles()
 
-    tds = int(tiler.ds[0])
-    norm = np.zeros(tiles.shape[:2], dtype=float)
-    for j in range(tiles.shape[1]):
-        for i in range(tiles.shape[0]):
+    frame_ds = frame.copy()
+    frame_ds.scale([ds, ds])
+    tiler.set_frame(frame_ds)
+
+    tiles = tiler.load_tiles()
+    tds = tiler.ds
+    norm = np.zeros([tiles.shape[0], tiles.shape[1]], dtype=float)
+    for i in range(tiles.shape[0]):
+        for j in range(tiles.shape[1]):
             data = tiles[i][j]
             data = data[data != 0]
             if len(data) == 0:
@@ -586,14 +598,15 @@ def mean_normalize(loader, frame):
             else:
                 mu = np.mean(data)
             norm[i][j] = mu
+    frame_norm = Frame(norm, frame.lvl, frame.converter)
 
-    s = frame.img.shape[0]//ds, frame.img.shape[1]//ds
-    frame_norm = Frame(norm)
-    frame_norm = frame_norm.resize(tds)
-    frame_norm = frame_norm.resize(ds)
+    frame_norm.scale(1/tds)
+    frame_norm.scale([1/ds, 1/ds])
+    frame_norm.img = frame_norm.img[:frame.img.shape[0], :frame.img.shape[1], :]
 
-    frame.img -= frame_norm.img
+    frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
+    frame.img = frame.img.astype(np.uint8)
     return frame
 #
 # end of mean_normalize
@@ -603,7 +616,7 @@ def mean_normalize(loader, frame):
 #  -data: a grayscale image array
 #  -mi: minimum value to use from 0 to 255
 #  -mx: maximum value to use from 0 to 255
-def get_csf_threshold(self, frame):
+def get_csf_threshold(frame):
     if not frame.is_rgb():
         raise TypeException('Cannot get CSF Threshold of a non-RGB image')
 
@@ -614,9 +627,22 @@ def get_csf_threshold(self, frame):
     frame.gauss_blur(5)
 
     # perform kittler thresholding
-    return kittler(frame.img, mi=0, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=0, mx=255)[0]
 #
 # end of get_csf_threshold
+
+def get_stain_threshold(frame):
+    if frame.is_rgb():
+        raise TypeException('Cannot get Stain Threshold of RGB image')
+
+    # smooth to get a more accurate threshold
+    frame.anisodiff()
+    frame.round()
+
+    # perform kittler thresholding
+    return kittler(frame.histogram()[:, 0], mi=8, mx=255)[0]
+#
+# end of get_stain_threshold
 
 #
 # end of file
