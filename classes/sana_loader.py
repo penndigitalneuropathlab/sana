@@ -1,14 +1,20 @@
 
+# system packages
 import os
 import sys
 from copy import copy
+
+# installed packages
 import openslide
 import numpy as np
 
+# custom packages
 import sana_io
 from sana_geo import Converter, Point
-from sana_frame import Frame
+from sana_frame import Frame, get_csf_threshold
 
+# provides an interface to initalize and load SVS files
+# uses OpenSlide to do this
 class Loader(openslide.OpenSlide):
     def __init__(self, fname):
 
@@ -22,18 +28,25 @@ class Loader(openslide.OpenSlide):
         self.ds = self.level_downsamples
         self.mpp = float(self.properties['aperio.MPP'])
         self.converter = Converter(self.mpp, self.ds)
+        self.csf_threshold = None
 
         # pre-load the thumbnail for easy access
-        self.thumbnail = self.load_thumbnail()
+        thumbnail = self.load_thumbnail()
 
         # calculate the color of the slide background
-        self.slide_color = copy(self.thumbnail).get_bg_color()
+        self.slide_color = copy(thumbnail).get_bg_color()
+
+        # calculate the Slide/Tissue threshold
+        self.csf_threshold = get_csf_threshold(copy(thumbnail))
+    #
+    # end of constructor
 
     # getters
     def get_dim(self, lvl=None):
         if lvl is None:
             lvl = self.lvl
-        return self.dim[lvl]
+        dim = self.dim[lvl]
+        return Point(dim[0], dim[1], False, lvl)
     def get_ds(self, lvl=None):
         if lvl is None:
             lvl = self.lvl
@@ -43,6 +56,7 @@ class Loader(openslide.OpenSlide):
     def set_lvl(self, lvl):
         self.lvl = lvl
 
+    # loads the entire image at the lowest resolution
     def load_thumbnail(self):
         lvl = self.lc - 1
         h, w = self.get_dim(lvl)
@@ -50,6 +64,13 @@ class Loader(openslide.OpenSlide):
         size = Point(h, w, False, lvl)
         return self.load_frame(loc, size, lvl)
 
+    # loads a Frame into memory, uses a location and size coordinate
+    #  image is automatically padded if loc or size exceeds the dimensions
+    #  of the SVS slide
+    #  -loc: top left corner of Frame (in any unit or resolution)
+    #  -size: size of Frame to load (in any unit or resolution)
+    #  -lvl: resolution to use, overrides the lvl attribute stored in Loader
+    #  -pad_color: color to use to pad the Frame, can use slide_color or white
     def load_frame(self, loc, size, lvl=None, pad_color=None):
         if lvl is None:
             lvl = self.lvl
@@ -57,12 +78,8 @@ class Loader(openslide.OpenSlide):
             pad_color = (255, 255, 255)
 
         # make sure loc and size are in current pixel resolution
-        if loc.is_micron:
-            self.converter.to_pixels(loc, lvl)
-        self.converter.rescale(loc, lvl)
-        if size.is_micron:
-            self.converter.to_pixels(size, lvl)
-        self.converter.rescale(size, lvl)
+        self.converter.to_pixels(loc, lvl)
+        self.converter.to_pixels(size, lvl)
 
         # prepare variables to calculate padding
         loc = copy(loc)
@@ -91,8 +108,8 @@ class Loader(openslide.OpenSlide):
         # load the region
         # NOTE: upscale the location before accessing the image
         self.converter.rescale(loc, 0)
-        loc = np.rint(loc).astype(np.int)
-        size = np.rint(size).astype(np.int)
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
         img = np.array(self.read_region(
             location=loc, level=lvl, size=size))[:, :, :3]
 
@@ -106,10 +123,11 @@ class Loader(openslide.OpenSlide):
         padx2 = np.full_like(img, pad_color, shape=(img.shape[0], padx2, 3))
         img = np.concatenate((padx1, img, padx2), axis=1)
 
-        return Frame(img, lvl, self.converter)
+        return Frame(img, lvl=lvl, converter=self.converter, csf_threshold=self.csf_threshold)
+    #
+    # end of load_frame
 #
 # end of Loader
-
 
 #
 # end of file

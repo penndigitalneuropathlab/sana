@@ -8,7 +8,7 @@ import json
 import numpy as np
 
 # sana packages
-from sana_geo import Polygon, Point
+from sana_geo import Polygon, Point, Annotation
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -24,6 +24,58 @@ def create_directory(f):
         os.makedirs(os.path.dirname(f))
 #
 # end of create_directory
+
+# gets the fullpath to every file (recursively or not) in a given directory
+# NOTE: returns nothing if directory does not exist
+def get_files(d, recurse=False):
+
+    # make sure the directory exists
+    if not os.path.exists(d):
+        return []
+
+    f = []
+    if recurse:
+        for root, _, files in os.walk(d):
+            f += [os.path.join(root, file) for file in files]
+    else:
+        f = [os.path.join(d, file) for file in os.listdir(d)]
+    return f
+#
+# end of get_files
+
+# gets all .svs slide files in a given directory
+def get_slide_files(d):
+    f = get_files(d)
+    return [file for file in f if is_slide(file)]
+#
+# end of get_slide_files
+
+# gets all .json annotation files in a given directory
+def get_anno_files(d):
+    f = get_files(d)
+    return [file for file in f if is_anno(file)]
+#
+# end of get_anno_files
+
+# returns True if Loader can handle the given file
+def is_slide(f):
+    try:
+        Loader(f)
+        return True
+    except:
+        return False
+#
+# end of is_slide
+
+# returns True if read_annotations can handle the given file
+def is_anno(f):
+    try:
+        read_annotations(f)
+        return True
+    except Exception as e:
+        return False
+#
+# end of is_anno
 
 # creates a new filepath given an existing file and various parameters
 #  -ifile: input filename, the path, suffix, and extension will be modified
@@ -132,34 +184,6 @@ def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
 #
 # end of write_metrics_file
 
-# converts a Polygon annotation to a JSON, similar to GeoJSON
-def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
-
-    # generate a list of vertices from the Array
-    verts = []
-    for i in range(anno.shape[0]):
-        verts.append([anno[i][0], anno[i][1]])
-
-    # create the JSON format, using the given class and name
-    annotation = {
-        "type": "Feature",
-        "id": "PathAnnotationObject",
-        "geometry": {
-          "type": "Polygon",
-          "coordinates": [verts]
-        },
-        "properties": {
-          "name": anno_name,
-          "classification": {
-            "name": class_name,
-          },
-          "confidence": 1.0,
-        }
-    }
-    return annotation
-#
-# end of anno_to_json
-
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath
 def fix_annotations(ifile):
@@ -172,8 +196,9 @@ def fix_annotations(ifile):
     # find the index of the first annotation in the json
     ind = data.find(b'[\n')
     if ind == -1:
-        return
-
+        ind = data.find(b'[]')
+        if ind == -1:
+            return
     # rewrite the data starting at the first annotation
     fp = open(ifile, 'wb')
     fp.write(data[ind:])
@@ -191,7 +216,7 @@ def read_annotations(ifile, class_name=None):
 
     # blank data if the file doesn't exist
     if not os.path.exists(ifile):
-        return [], [], []
+        return []
 
     # load the json data
     fp = open(ifile, 'r')
@@ -200,107 +225,62 @@ def read_annotations(ifile, class_name=None):
     # load the annotations
     # NOTE: this could be handled by a GeoJSON package?
     annotations = []
-    class_names = []
-    anno_names = []
     for annotation in data:
 
-        # make sure the class name matches, if given
-        if class_name is not None:
-
-            # annotation has no class
-            if 'classification' not in annotation['properties']:
-                continue
-
-            # annotation does not match given class name
-            if annotation['properties']['classification']['name'] != class_name:
-                continue
-        #
-        # end of class matching
-
-        # load the list of coordinates list for this annotation
-        # TODO: this is only needed cause of MultiPolygon,
+        # get the xy coordinates from the geometry of the annotation
         geo = annotation['geometry']
-        poly = get_poly_from_geometry(geo)
-        if poly is None:
-            continue
 
-        annotations.append(poly)
-
-        # get the class name if it exists
-        if 'classification' in annotation['properties']:
-            class_names.append(
-                annotation['properties']['classification']['name'])
+        # get the class name, if exists
+        if 'classification' not in annotation['properties']:
+            cname = ""
         else:
-            class_names.append('')
+            cname = annotation['properties']['classification']['name']
+        #
+        # end of class name reading
 
-        # get the annotation name if it exists
-        if 'name' in annotation['properties']:
-            anno_names.append(
-                annotation['properties']['name'])
+        # get the anno name, if exists
+        if 'name' not in annotation['properties']:
+            aname = ""
         else:
-            anno_names.append(
-                'ROI_'+str(len(anno_names)))
+            aname = annotation['properties']['name']
+        #
+        # end of anno name reading
+
+        # get the confidence, if exists
+        if 'confidence' not in annotation['properties']:
+            confidence = 1.0
+        else:
+            confidence = float(annotation['properties']['confidence'])
+        #
+        # end of confidence reading
+
+        # create and store the annotation object
+        annotations.append(
+            Annotation(geo, ifile, cname, aname,
+                       confidence=confidence, is_micron=False, lvl=0))
     #
     # end of annotation loop
 
-    return annotations, class_names, anno_names
+    # only return annotations with the given class name
+    if not class_name is None:
+        annotations = [a for a in annotations if a.class_name == class_name]
+
+    return annotations
 #
 # end of read_annotations
-
-# generates a Polygon annotation from the geometry in a JSON annotation
-def get_poly_from_geometry(geo):
-
-    # TODO: this should be simplified.
-    #        need to actually handle what a MultiPolygon is
-    if geo['type'] == 'MultiPolygon':
-        coords_list = geo['coordinates']
-        for coords in coords_list:
-            x = np.array([float(c[0]) for c in coords[0]])
-            y = np.array([float(c[1]) for c in coords[0]])
-            poly = Polygon(x, y, False, 0)
-            if poly.area() > 100:
-                return poly
-    elif geo['type'] == 'Polygon':
-        coords = geo['coordinates']
-        x = np.array([float(c[0]) for c in coords[0]])
-        y = np.array([float(c[1]) for c in coords[0]])
-        return Polygon(x, y, False, 0)
-    else:
-        return None
-#
-# end of get_poly_from_geometry
 
 # writes a list of Polygon annotations to a JSON annotation file
 #  -ofile: location to write the annotations to
 #  -annos: list of Polygon Annotations
 #  -class_names: list of class names, blank if not given
 #  -anno_names: list of anno names, blank if not given
-def write_annotations(ofile, annos,
-                      class_names=None, anno_names=None, confidences=None):
+def write_annotations(ofile, annos):
 
-    # provide blank names if not given
-    if class_names is None:
-        class_names = ['']*len(annos)
-    if anno_names is None:
-        anno_names = ['']*len(annos)
-    if confidences is None:
-        confidences = [1.0]*len(annos)
-
-    # loop through the Polygon annotations
-    annotations = []
-    for i in range(len(annos)):
-
-        # convert to json format
-        json_anno = anno_to_json(annos[i], class_names[i],
-                                 anno_names[i], confidences[i])
-
-        # store new annotation
-        annotations.append(json_anno)
-    #
-    # end of Polygon annotations loop
+    # convert the Ann objects to json strings
+    json_annos = [anno.to_json() for anno in annos]
 
     # write the file
-    json.dump(annotations, open(ofile, 'w'))
+    json.dump(json_annos, open(ofile, 'w'))
 #
 # end of write_annotations
 
@@ -329,50 +309,6 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     write_annotations(ofile, annos, class_names, anno_names)
 #
 # end of append_annotations
-
-# extracts the confidence value for each annotation stored in a JSON annotation
-def read_confidences(ifile, class_name=None):
-
-    # remove unwanted header bytes if they exist
-    fix_annotations(ifile)
-
-    # blank data if the file doesn't exist
-    if not os.path.exists(ifile):
-        return []
-
-    # load the json data
-    fp = open(ifile, 'r')
-    data = json.loads(fp.read())
-
-    # load the annotations
-    # NOTE: this could be handled by a GeoJSON package?
-    confidences = []
-    for annotation in data:
-
-        # make sure the class name matches, if given
-        if class_name is not None:
-
-            # annotation has no class
-            if 'classification' not in annotation['properties']:
-                continue
-
-            # annotation does not match given class name
-            if annotation['properties']['classification']['name'] != class_name:
-                continue
-        #
-        # end of class matching
-
-        # get the confidence value, if doesn't exist output 100%
-        if 'confidence' not in annotation['properties']:
-            confidences.append(1.0)
-        else:
-            confidences.append(annotation['properties']['confidence'])
-    #
-    # end of annotation loop
-
-    return confidences
-#
-# end of read_confidences
 
 #
 # end of file

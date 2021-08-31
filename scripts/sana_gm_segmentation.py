@@ -1,38 +1,21 @@
 #!/usr/local/bin/python3.9
 
-# MEETING NOTES:
-
-# try shorter than 300 um tiles, might be affecting the accuracy of the boundaries
-
-# really need to look at detecting tears in the tissue!!
-#     this should clean up the N0 and N6 variables
-#    also make sure this cleans up the rectangles in DENSITY
-#      -- hoping these aren't related to cell detection bugs
-
-# really need to try the watershed, that will make cell size detection very easy!
-
-# move the tile features script into a "feature generation"
-#    then this script just laods the features and processes
-#    this format will be better when we want to analyze other things
-
-# TODO: output the raw cell centers and sizes per tile, along with the averaged heat maps
-
+# system modules
 import os
 import sys
-import cv2
-import time
-from copy import copy
-import numpy as np
 import argparse
 
+# installed modules
+import numpy as np
 from scipy import signal
 from scipy.interpolate import interp1d
 from scipy.ndimage.filters import uniform_filter1d
 from matplotlib import pyplot as plt
 
+# custom modules
 import sana_io
-from sana_frame import Frame, mean_normalize
-from sana_geo import Array, Point, Polygon, ray_tracing
+from sana_frame import Frame, mean_normalize, create_mask, get_stain_threshold
+from sana_geo import Array, Point, Polygon
 from sana_color_deconvolution import StainSeparator
 from sana_tiler import Tiler
 from sana_loader import Loader
@@ -53,6 +36,7 @@ def main(argv):
     for list_f in args.lists:
         slides += sana_io.read_list_file(list_f)
     if len(slides) == 0:
+        print("**> No Slides Found")
         parser.print_usage()
         exit()
 
@@ -74,11 +58,13 @@ def main(argv):
             target = 'HEM'
 
         # initialize the slide loader, set the level
-        try:
-            loader = Loader(slide_f)
-        except:
-            print("Slide not found:", slide_f)
-            continue
+        # try:
+        #     loader = Loader(slide_f)
+        # except Exception as e:
+        #     print(e)
+        #     print("Slide not found:", slide_f)
+        #     continue
+        loader = Loader(slide_f)
         print("--> Processing: %s (%d/%d)" % \
               (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
         converter = loader.converter
@@ -92,9 +78,9 @@ def main(argv):
 
         # loop through the crude ROIs
         segs = []
-        for roi_i, roi in enumerate(rois[0]):
+        for roi_i, roi in enumerate(rois):
             print('----> Processing ROI %d/%d' % \
-                  (roi_i, len(rois[0])), flush=True, end="")
+                  (roi_i, len(rois)), flush=True, end="")
 
             # get the roi metrics file
             metrics_f = sana_io.create_filepath(
@@ -112,6 +98,8 @@ def main(argv):
             frame_density, frame_size, roi, angle, loc, crop_loc, ds = \
                 get_tile_features(args, loader, out_f, metrics_f, roi_i, roi)
 
+            continue
+        
             # get the tissue mask
             frame_tissue = Frame(
                 np.load(tissue_f), loader.lvl, loader.converter)
@@ -226,7 +214,6 @@ def main(argv):
             new_seg = new_seg[np.where(new_seg[:, 0] < seg_right)]
             new_seg = new_seg[np.where(new_seg[:, 0] > seg_left)]
             new_seg = new_seg.connect()
-
             fig, axs = plt.subplots(2,1)
             axs[0].imshow(frame_filt.img, cmap='coolwarm')
 
@@ -246,14 +233,12 @@ def main(argv):
             axs[1].axvline(right, color='blue')
             plt.show()
 
-
-
             # translate to origin before cropping
             seg.translate(-crop_loc)
 
             # rotate back to original orientation
             roi.translate(loc)
-            seg = seg.rotate(roi.centroid()[0], -angle)
+            seg.rotate(roi.centroid()[0], -angle)
 
             # remove vertices that are not in the roi
             seg = seg.filter(roi)
@@ -274,9 +259,14 @@ def main(argv):
         #
         # end of crude ROI loop
 
-        # write the detected segmentations to output annotation file
-        class_names = [args.seg_class] * len(segs)
-        sana_io.write_annotations(out_f, segs, class_names=class_names)
+        # convert the detections to Annotations
+        annos = []
+        for seg in segs:
+            anno = seg.to_annotation(slide_f, args.seg_class)
+            annos.append(anno)
+
+        # write the annotations to output annotation file
+        sana_io.write_annotations(out_f, annos)
     #
     # end of slides loop
 #
@@ -330,13 +320,13 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
         tsize = Point(args.tsize[0], args.tsize[1], True)
         tstep = Point(args.tstep[0], args.tstep[1], True)
         tiler = Tiler(loader.lvl, loader.converter, tsize, tstep)
-        tiler.set_frame(frame_filt, pad=True)
+        tiler.set_frame(frame_filt)
         ds = tiler.ds
         tpad = tiler.fpad
 
         tiles = tiler.load_tiles()
         orig_tiler = Tiler(loader.lvl, loader.converter, tsize, tstep)
-        orig_tiler.set_frame(frame_orig, pad=True)
+        orig_tiler.set_frame(frame_orig)
         orig_tiles = orig_tiler.load_tiles()
 
         # write the tile downsampling to the metrics file
@@ -442,14 +432,20 @@ def get_tile_features(args, loader, out_f, metrics_f, roi_i, roi):
         roi.translate(-loc)
         for i in range(len(neurons)):
             n[i].translate(-crop_loc)
-            n[i] = n[i].rotate(rot_center, -angle)
+            n[i].rotate(rot_center, -angle)
             n[i].translate(-loc)
             n[i] = n[i].connect()
         neurons = n
+
+        neurons = [n for n in neurons if n.filter(roi).shape == n.shape]
+        annos = []
+        for n in neurons:
+            anno = n.to_annotation(loader.fname, 'Neuron')
+            annos.append(anno)
         out_neurons_f = density_f.replace('_DENSITY.npy', '_NEURONS.json')
         print('\n\n', len(neurons))
         class_names = ['Neuron'] * len(neurons)
-        sana_io.write_annotations(out_neurons_f, neurons, class_names=class_names)
+        sana_io.write_annotations(out_neurons_f, annos)
 
                 # if (j > 3):
                 #     fig, axs = plt.subplots(1,2)
@@ -493,13 +489,11 @@ def get_filtered_frame(args, loader, out_f, metrics_f, roi_i, roi):
 
         # anistrophic diffusion filter to smooth cell interiors
         frame_filt = frame_stain.copy()
-        frame_filt.anisodiff()
-        frame_filt.round()
 
         # threshold for the cells
-        thresh = frame_filt.copy().get_stain_threshold(mi=8)
-        frame_filt.threshold(thresh, x=0, y=255)
-        sana_io.write_metrics_file(metrics_f, stain_threshold=thresh)
+        stain_threshold = get_stain_threshold(frame_filt)
+        frame_filt.threshold(stain_threshold, x=0, y=255)
+        sana_io.write_metrics_file(metrics_f, stain_threshold=stain_threshold)
 
         # morphological filtering to clean up the background
         # kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
@@ -523,21 +517,17 @@ def get_stain_separated_frame(args, loader, out_f, metrics_f, roi_i, roi):
         frame_stain = Frame(np.load(stain_f), loader.lvl, loader.converter)
         angle, loc, crop_loc, _, _, _ = sana_io.read_metrics_file(metrics_f)
     else:
-        # pre-calculate the tissue threshold
-        thumbnail = loader.thumbnail.copy()
-        tissue_threshold = thumbnail.get_tissue_threshold(blur=5)
+        sana_io.write_metrics_file(metrics_f, tissue_threshold=loader.csf_threshold)
 
         # define the bounding box of the ROI, translate to local origin
-        c, r = roi.centroid()
-        loc = Point(c[0]-r, c[1]-r, False, 0)
-        size = Point(2*r, 2*r, False, 0)
+        loc, size = roi.bounding_centroid()
         roi.translate(loc)
         sana_io.write_metrics_file(metrics_f, loc=loc)
 
         # calculate the angular rotation of the tissue/slide boundary
         frame_thumb = loader.load_frame(loc, size, lvl=loader.lc-1)
         loader.converter.rescale(roi, loader.lc-1)
-        angle = frame_thumb.tissue_angle(tissue_threshold, roi, 1e5, 1e5)
+        angle = frame_thumb.get_rotation(roi)
         loader.converter.rescale(roi, loader.lvl)
         loader.converter.rescale(loc, loader.lvl)
         loader.converter.rescale(size, loader.lvl)
@@ -550,44 +540,44 @@ def get_stain_separated_frame(args, loader, out_f, metrics_f, roi_i, roi):
 
         # rotate the frame around the centroid of the ROI
         rot_center = roi.centroid()[0]
-        roi = roi.rotate(rot_center, angle)
-        frame = frame.rotate(angle)
+        roi.rotate(rot_center, angle)
+        frame.rotate(angle)
 
         # crop the rotated frame to remove unneeded data
         crop_loc, crop_size = roi.bounding_box()
-        frame = frame.crop(crop_loc, crop_size)
+        frame.crop(crop_loc, crop_size)
         roi.translate(crop_loc)
         sana_io.write_metrics_file(metrics_f, crop_loc=crop_loc)
-
-        # generate the tissue mask from the rotated ROI
-        tissue_mask = frame.copy()
-        tissue_mask.detect_tissue(tissue_threshold, 1e5, 1e5)
-        tissue_mask.to_mask()
-        sana_io.write_metrics_file(metrics_f, tissue_threshold=tissue_threshold)
 
         # separate the stain from the ROI using color deconvolution
         if 'NeuN' in out_f:
             target = 'DAB'
         else:
             target = 'HEM'
+
         separator = StainSeparator(args.stain, target, ret_od=False)
         frame_stain = separator.run(frame.img)[0]
         frame_stain = Frame(frame_stain, loader.lvl, loader.converter)
-        if frame_stain.img.dtype == np.uint8:
-            frame_stain.to_gray()
+        frame_stain.to_gray()
+        frame_stain.round()
 
         # inverse image to create a cell prob. heatmap
         frame_stain.img = 255 - frame_stain.img
 
-        # mask out anything slide background
+        # generate the tissue mask from the rotated, binarized Frame
+        frame.get_tissue_contours(1e5, 1e5)
+        contours = frame.get_body_contours()
+        tissue_mask = create_mask(contours, frame.size(),
+                                  frame.lvl, frame.converter)
+
+        # mask out all slide background
         frame_stain.mask(tissue_mask, 0)
-        frame_stain.img = frame_stain.img[:, :, None]
 
         # finally, save the frame
         np.save(tissue_f, tissue_mask.img)
         np.save(stain_f, frame_stain.img)
         roi.translate(-crop_loc)
-        roi = roi.rotate(rot_center, -angle)
+        roi.rotate(rot_center, -angle)
         roi.translate(-loc)
     return frame_stain, roi, angle, loc, crop_loc
 
