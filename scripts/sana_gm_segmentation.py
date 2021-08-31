@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+filt#!/usr/local/bin/python3.9
 
 # system modules
 import os
@@ -499,8 +499,7 @@ def get_filtered_frame(args, loader, out_f, metrics_f, roi_i, roi):
         # kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (7,7))
         # frame_filt.img = cv2.erode(frame_filt.img, kern)[:, :, None]
 
-        # finally, save the frame
-        np.save(filt_f, frame_filt.img)
+in
 
     return frame_filt, roi, angle, loc, crop_loc
 

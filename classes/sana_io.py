@@ -184,6 +184,37 @@ def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
 #
 # end of write_metrics_file
 
+<<<<<<< Updated upstream
+=======
+# converts a Polygon annotation to a JSON, similar to GeoJSON
+def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
+
+    # generate a list of vertices from the Array
+    verts = []
+    for i in range(anno.shape[0]):
+        verts.append([anno[i][0], anno[i][1]])
+
+    # create the JSON format, using the given class and name
+    annotation = {
+        "type": "Feature",
+        "id": "PathAnnotationObject",
+        "geometry": {
+          "type": "Polygon",
+          "coordinates": [verts]
+        },
+        "properties": {
+          "name": anno_name,
+          "classification": {
+            "name": class_name,
+          },
+          "confidence": confidence,
+        }
+    }
+    return annotation
+#
+# end of anno_to_json
+
+>>>>>>> Stashed changes
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath
 def fix_annotations(ifile):
