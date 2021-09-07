@@ -220,7 +220,7 @@ class Frame:
     # gamma - max value of .25 for stability [.1, 0.9]
     # step  - distance between adjacent pixels [(1.,1.), (7., 7.)]
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
-        if self.is_float():
+        if self.is_rgb():
             raise RBGException('Cannot apply filter to RGB image')
         self.img = self.img.astype(float)
         deltaS = np.zeros_like(self.img)
