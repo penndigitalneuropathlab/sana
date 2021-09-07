@@ -7,3 +7,4 @@ examples/data/
 *.pyc
 *.json
 *.svs
+*.sh
