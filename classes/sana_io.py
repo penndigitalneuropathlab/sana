@@ -132,58 +132,6 @@ def read_list_file(list_f):
 #
 # end of read_list_file
 
-# loads the metrics stored by sana_gm_segmentation into memory
-# TODO: need to do this in a different way... probably OOP
-def read_metrics_file(f):
-
-    # blank data if the file doesn't exist
-    if not os.path.exists(f):
-        return "", ["",""], ["",""], ["",""], "", ""
-
-    # load the fields into memory
-    fp = open(f, 'r')
-    a, l0, l1, c0, c1, ds0, ds1, tt, st = \
-        fp.read().split('\n')[0].split(',')
-
-    # convert to proper datatypes
-    angle = "" if a == "" else float(a)
-    loc = ["",""] if l0 == "" else Point(float(l0), float(l1), False, 0)
-    crop_loc = ["",""] if c0 == "" else Point(float(c0), float(c1), False, 0)
-    ds = ["",""] if ds0 == "" else Point(float(ds0), float(ds1), False, 0)
-    tissue_threshold = "" if tt == "" else float(tt)
-    stain_threshold = "" if st == "" else float(st)
-
-    return angle, loc, crop_loc, ds, tissue_threshold, stain_threshold
-#
-# end of read_metrics_file
-
-# writes the metrics from sana_gm_segmentation to a file
-# TODO: need to do this in a different way... probably OOP
-def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
-                       tissue_threshold=None, stain_threshold=None):
-
-    # load the previous data if it already existed
-    l, c, d = [["", ""]]*3
-    a, tt, st = [""]*3
-    if os.path.exists(f):
-        a, l, c, d, tt, st = read_metrics_file(f)
-
-    # if the metric was given as a parameter, store in the file
-    if not angle is None: a = angle
-    if not loc is None: l = loc
-    if not crop_loc is None: c = crop_loc
-    if not ds is None: d = ds
-    if not tissue_threshold is None: tt = tissue_threshold
-    if not stain_threshold is None: st = stain_threshold
-
-    # write the data
-    fp = open(f, 'w')
-    fp.write('%s,%s,%s,%s,%s,%s,%s,%s,%s\n' % \
-             (a, l[0], l[1], c[0], c[1], d[0], d[1], tt, st))
-    fp.close()
-#
-# end of write_metrics_file
-
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath
 def fix_annotations(ifile):
@@ -309,6 +257,88 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     write_annotations(ofile, annos, class_names, anno_names)
 #
 # end of append_annotations
+
+# this class reads and writes data associated with processed Frames
+# NOTE: when adding fields, be sure to edit the following:
+#           self.data
+#           parse_val()
+#           write_data()
+class DataWriter:
+    def __init__(self, fname):
+
+        # initalize the data
+        self.data = {
+            'loc': None,
+            'size': None,
+            'ao': None,
+        }
+        self.line = '%s\t%s\n'
+
+        # load the data from the filename into memory
+        self.read_data(fname)
+    #
+    # end of constructor
+
+    def read_data(self, fname):
+        self.fname = fname
+
+        # make sure the file exists already
+        if not os.path.exists(self.fname):
+            return
+
+        # load the fields into memory
+        for line in open(self.fname, 'r'):
+            key, val = line.split('\t', maxsplit=1)
+            self.data[key] = self.parse_val(key, val.rstrip())
+        #
+        # end of reading data
+    #
+    # end of read_data
+
+    def write_data(self):
+        fp = open(self.fname, 'w')
+        fp.write(self.line % ('loc', self.write_point(self.data['loc'])))
+        fp.write(self.line % ('size', self.write_point(self.data['size'])))
+        fp.write(self.line % ('ao', self.write_num(self.data['ao'])))
+        fp.close()
+    #
+    # end of write_data
+
+    def parse_val(self, key, val):
+        if key == 'loc':
+            return self.parse_point(val)
+        elif key == 'size':
+            return self.parse_point(val)
+        elif key == 'ao':
+            return self.parse_num(val)
+        return None
+    #
+    # end of parse_val
+
+    def parse_num(self, val):
+        if len(val) != 0:
+            return float(val)
+    #
+    # end of parse_num
+
+    def parse_point(self, val):
+        if len(val) != 0:
+            x0, x1 = [float(x) for x in val.split(',')]
+            return Point(x0, x1, False, 0)
+    #
+    # end of parse_point
+
+    def write_num(self, val):
+        return '%.6f' % (val) if not val is None else ""
+    #
+    # end of write_val
+
+    def write_point(self, val):
+        return '%.6f, %.6f' % (val[0], val[1]) if not val is None else ""
+    #
+    # end of write_point
+#
+# end of DataWriter
 
 #
 # end of file

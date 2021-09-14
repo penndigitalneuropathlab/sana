@@ -263,6 +263,7 @@ class Polygon(Array):
                 y.append(self[i][1])
         return Polygon(x, y, self.is_micron, self.lvl, self.order)
 
+    # TODO: this and filter need to return Annotation sometimes...
     def connect(self):
         if self[0, 0] != self[-1, 0] or self[0, 1] != self[-1, 1]:
             x, y = self.get_xy()
@@ -396,7 +397,7 @@ class Annotation(Polygon):
         }
         return annotation
     #
-    # end of anno_to_json
+    # end of anno_to_json    
 #
 # end of Annotation
 
