@@ -177,10 +177,12 @@ class Frame:
         if self.is_float():
             np.save(fname.split('.')[0]+'.npy', self.img)
         else:
+            im = self.img
+            if not self.is_rgb():
+                im = im[:, :, 0]
             if self.is_binary():
-                im = Image.fromarray(255 * self.img())
-            else:
-                im = Image.fromarray(self.img())
+                im = 255 * im
+            im = Image.fromarray(im)
             im.save(fname)
     #
     # end of save
@@ -252,6 +254,8 @@ class Frame:
             EW[:, 1:] -= E[:, :-1]
 
             self.img += gamma * (NS + EW)
+
+        # TODO: need to convert back to int and worry about 255 overflow
     #
     # end of anisodiff
 
@@ -549,21 +553,21 @@ class Contour:
 # end of Detection
 
 # generates a binary mask based on a list of given Polygons
-#  -contours: list of contours to be filled with value y
+#  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: ints defining the negative and positive values in the mask
-def create_mask(contours, size, lvl, converter, x=0, y=1):
+def create_mask(polygons, size, lvl, converter, x=0, y=1):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
-    for c in contours:
-        p = c.polygon
+    for p in polygons:
         converter.to_pixels(p, lvl)
         p = converter.to_int(p)
         polys.append([tuple(p[i]) for i in range(p.shape[0])])
     #
     # end of Polygon conversion
 
+    # TODO: make sure outline isn't increasing mask size
     # create a blank image, then draw the polygons onto the image
     size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
