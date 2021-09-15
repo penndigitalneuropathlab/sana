@@ -6,6 +6,7 @@ import sys
 import argparse
 
 # installed modules
+import cv2 as cv
 import numpy as np
 
 # custom modules
@@ -49,7 +50,7 @@ def main(argv):
 
         # load the ROIs to process
         rois = sana_io.read_annotations(anno_f, args.roi_class)
-        if rois is None or len(rois[0]) == 0:
+        if rois is None or len(rois) == 0:
             print("****> Skipping: No ROIs Found!")
             continue
 
@@ -63,11 +64,13 @@ def main(argv):
                 slide_f, ext=args.ofiletype, suffix='_%d_PROB' % roi_i,
                 fpath=args.odir, rpath=args.rdir)
 
-            # load the data writer
+            # initialize the data writer
             data_f = sana_io.create_filepath(
                 slide_f, ext='.csv', suffix='_%d' % roi_i,
                 fpath=args.odir, rpath=args.rdir)
             writer = DataWriter(data_f)
+            writer.data['lvl'] = loader.lvl
+            writer.data['csf_threshold'] = loader.csf_threshold
 
             # get the mask output filename
             mask_f = sana_io.create_filepath(
@@ -83,7 +86,9 @@ def main(argv):
             # load the frame based on the bounding box of the ROI
             frame = loader.load_frame(loc, size)
 
-            # TODO: should have a -mask_tissue arg
+            # TODO: script should have a -mask_tissue argument,
+            #        this will detect slide vs tissue in ROI. Only used for
+            #        gm_segmentation and Crude ROIs right now
             # create a binary mask to remove data outside the ROI
             mask = create_mask([roi], frame.size(), frame.lvl, frame.converter)
 
@@ -91,26 +96,31 @@ def main(argv):
             # separate the target stain from the image
             stain = 'H-DAB'
             separator = StainSeparator(stain, args.target, od=False, gray=True)
-            frame_stain = Frame(separator.run(frame.img)[0],
+            frame = Frame(separator.run(frame.img)[0],
                                 loader.lvl, loader.converter)
 
             # inverse image to create a stain prob map
-            frame_stain.img = 255 - frame_stain.img
+            frame.img = 255 - frame.img
 
-            # TODO: when to do this in the script
             # mask out unwanted data
-            frame_stain.mask(mask)
+            frame.mask(mask)
 
+            # TODO: check order of operations
             # normalize image by the local means to remove
             #  inconsistent background staining
-            frame_stain = mean_normalize(loader, frame_stain)
+            frame = mean_normalize(loader, frame)
 
-            # anistrophic diffusion filter to smooth the interior of staining
-            # TODO: run this
-            # frame_stain.anisodiff()
+            # anistrophic diffusion filter to smooth the interior of objects
+            frame.anisodiff()
+
+            # TODO: maybe apply this before anisodiff??
+            # opening filter to remove small objects, not considered
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
+            cv.morphologyEx(frame.img, cv.MORPH_OPEN,
+                            kernel=kernel, dst=frame.img)
 
             # finally, save the results
-            frame_stain.save(out_f)
+            frame.save(out_f)
             mask.save(mask_f)
             writer.write_data()
         #
@@ -138,6 +148,8 @@ def cmdl_parser(argv):
                         help="directory path to replace")
     parser.add_argument('-ofiletype', type=str, default='.png',
                         help="output image file extension")
+    parser.add_argument('-mean_normalize', action='store_true',
+                        help="")
     return parser
 #
 # end of cmdl_parser
