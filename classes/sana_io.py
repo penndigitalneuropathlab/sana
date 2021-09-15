@@ -77,6 +77,23 @@ def is_anno(f):
 #
 # end of is_anno
 
+def get_slide_id(fname):
+    return fname.split('_')[0]
+
+def get_fpath(ifpath, fpath="", rpath=""):
+
+    # filepath not given, use current filepath
+    if fpath == "":
+        fpath = ifpath
+
+    # apply the replacement directory, if given
+    elif rpath != "":
+        fpath = os.path.dirname(ifile).replace(rpath, fpath)
+
+    return fpath
+#
+# end of get_fpath
+
 # creates a new filepath given an existing file and various parameters
 #  -ifile: input filename, the path, suffix, and extension will be modified
 #  -ext: file extension to be used, extension not changed if not given
@@ -103,13 +120,8 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
     # create the output filename using the basename, suffix, and extension
     fname = '%s%s%s' % (ifname, suffix, ext)
 
-    # filepath not given, use current filepath
-    if fpath == "":
-        fpath = ifpath
-
-    # apply the replacement directory, if given
-    elif rpath != "":
-        fpath = os.path.dirname(ifile).replace(rpath, fpath)
+    # create the path to the file
+    fpath = get_fpath(ifpath, fpath, rpath)
 
     # construct the filepath
     ofile = get_fullpath(os.path.join(fpath, fname))
@@ -125,7 +137,7 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 def read_list_file(list_f):
 
     # read the data from the filelist
-    lines = [l.rstrip() for l in open(get_fullpath(list_f), 'r')]
+    lines = [get_fullpath(l.rstrip()) for l in open(get_fullpath(list_f), 'r')]
 
     # keep only the files that actually exist
     return [l for l in lines if os.path.exists(l)]
@@ -228,7 +240,7 @@ def write_annotations(ofile, annos):
     json_annos = [anno.to_json() for anno in annos]
 
     # write the file
-    json.dump(json_annos, open(ofile, 'w'))
+    json.dump(json_annos, open(ofile, 'w'), indent=2)
 #
 # end of write_annotations
 
@@ -268,9 +280,13 @@ class DataWriter:
 
         # initalize the data
         self.data = {
+            'lvl': None,
             'loc': None,
             'size': None,
             'ao': None,
+            'aos_list': [],
+            'csf_threshold': None,
+            'stain_threshold': None,
         }
         self.line = '%s\t%s\n'
 
@@ -289,7 +305,9 @@ class DataWriter:
         # load the fields into memory
         for line in open(self.fname, 'r'):
             key, val = line.split('\t', maxsplit=1)
-            self.data[key] = self.parse_val(key, val.rstrip())
+            val = self.parse_val(key, val.rstrip())
+            if not val is None:
+                self.data[key] = val
         #
         # end of reading data
     #
@@ -297,46 +315,64 @@ class DataWriter:
 
     def write_data(self):
         fp = open(self.fname, 'w')
+        fp.write(self.line % ('lvl', self.write_int(self.data['lvl'])))
         fp.write(self.line % ('loc', self.write_point(self.data['loc'])))
         fp.write(self.line % ('size', self.write_point(self.data['size'])))
-        fp.write(self.line % ('ao', self.write_num(self.data['ao'])))
+        fp.write(self.line % ('ao', self.write_float(self.data['ao'])))
+        fp.write(self.line % ('aos_list',
+                              self.write_float_list(self.data['aos_list'])))
+        fp.write(self.line % ('csf_threshold',
+                              self.write_int(self.data['csf_threshold'])))
+        fp.write(self.line % ('stain_threshold',
+                              self.write_int(self.data['stain_threshold'])))
         fp.close()
     #
     # end of write_data
 
     def parse_val(self, key, val):
-        if key == 'loc':
+        if len(val) == 0:
+            return None
+        elif key == 'lvl':
+            return self.parse_int(val)
+        elif key == 'loc':
             return self.parse_point(val)
         elif key == 'size':
             return self.parse_point(val)
         elif key == 'ao':
-            return self.parse_num(val)
-        return None
+            return self.parse_float(val)
+        elif key == 'aos_list':
+            return self.parse_float_list(val)
+        elif key == 'csf_threshold':
+            return self.parse_int(val)
+        elif key == 'stain_threshold':
+            return self.parse_int(val)
+        else:
+            return None
     #
     # end of parse_val
 
-    def parse_num(self, val):
-        if len(val) != 0:
-            return float(val)
-    #
-    # end of parse_num
-
+    def parse_int(self, val):
+        return int(val)
+    def parse_float(self, val):
+        return float(val)
     def parse_point(self, val):
-        if len(val) != 0:
-            x0, x1 = [float(x) for x in val.split(',')]
-            return Point(x0, x1, False, 0)
+        x0, x1 = [float(x) for x in val.split('\t')]
+        return Point(x0, x1, False, 0)
+    def parse_float_list(self, val):
+        return [float(x) for x in val.split('\t') if len(x) != 0]
     #
-    # end of parse_point
+    # end of parsing
 
-    def write_num(self, val):
+    def write_int(self, val):
+        return "%d" % (val) if not val is None else ""
+    def write_float(self, val):
         return '%.6f' % (val) if not val is None else ""
-    #
-    # end of write_val
-
     def write_point(self, val):
-        return '%.6f, %.6f' % (val[0], val[1]) if not val is None else ""
+        return '%.6f\t%.6f' % (val[0], val[1]) if not val is None else ""
+    def write_float_list(self, val):
+        return '%.6f\t'*len(val) % tuple(val)
     #
-    # end of write_point
+    # end of writing
 #
 # end of DataWriter
 
