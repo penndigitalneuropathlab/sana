@@ -32,10 +32,14 @@ class TypeException(Exception):
 class Frame:
     def __init__(self, img, lvl=-1, converter=None, csf_threshold=None):
 
+        if type(img) is str:
+            self.img = np.array(Image.open(img))
+        else:
+            self.img = img
+
         # make sure the img always has a pixel channel
-        if img.ndim < 3:
-            img = img[:, :, None]
-        self.img = img
+        if self.img.ndim < 3:
+            self.img = self.img[:, :, None]
         self.lvl = lvl
         self.converter = converter
         self.contours = []
@@ -255,7 +259,9 @@ class Frame:
 
             self.img += gamma * (NS + EW)
 
-        # TODO: need to convert back to int and worry about 255 overflow
+        # clip values between 0 and 255, round to integer
+        np.clip(self.img, 0, 255, out=self.img)
+        self.round()
     #
     # end of anisodiff
 
@@ -635,16 +641,14 @@ def get_csf_threshold(frame):
 #
 # end of get_csf_threshold
 
-def get_stain_threshold(frame):
+# NOTE: a min value of 15 is set here based on qualitative analysis of DAB NeuN
+# TODO: set different minimums for different stains!!!
+def get_stain_threshold(frame, mi, mx):
     if frame.is_rgb():
         raise TypeException('Cannot get Stain Threshold of RGB image')
 
-    # smooth to get a more accurate threshold
-    frame.anisodiff()
-    frame.round()
-
     # perform kittler thresholding
-    return kittler(frame.histogram()[:, 0], mi=8, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=mi, mx=mx)[0]
 #
 # end of get_stain_threshold
 
