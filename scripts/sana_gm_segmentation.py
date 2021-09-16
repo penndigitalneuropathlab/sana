@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python
 
 # system modules
 import os
@@ -99,7 +99,7 @@ def main(argv):
                 get_tile_features(args, loader, out_f, metrics_f, roi_i, roi)
 
             continue
-        
+
             # get the tissue mask
             frame_tissue = Frame(
                 np.load(tissue_f), loader.lvl, loader.converter)
