@@ -124,9 +124,9 @@ def main(argv):
             mask.save(mask_f)
             writer.write_data()
         #
-        # end of roi loop
+        # end of frames loop
     #
-    # end of stain loop
+    # end of slides loop
 #
 # end of main
 

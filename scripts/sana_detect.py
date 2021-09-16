@@ -45,6 +45,7 @@ def main(argv):
                          for f in os.listdir(fpath) if 'PROB' in f and id in f])
 
         # loop through the prob. maps
+        annos = []
         for frame_i, frame_f in enumerate(frames):
             print('----> Processing Frame (%d/%d)' % \
                   (frame_i+1, len(frames)), flush=True)
@@ -63,76 +64,63 @@ def main(argv):
             converter = loader.converter
             frame = Frame(frame_f, lvl, converter)
 
-            # load the original mask
+            # load the mask
             mask_f = sana_io.create_filepath(
                 slide_f, ext='.png', suffix='_%d_MASK' % frame_i,
                 fpath=args.idir, rpath=args.rdir)
-            orig_mask = Frame(mask_f, lvl, converter)
+            mask = Frame(mask_f, lvl, converter)
 
-            # generate the supplementary masks
-            anno_f = sana_io.create_filepath(
-                slide_f, ext='.json',
-                fpath=args.adir, rpath=args.rdir)
-            masks = []
-            for roi_class in args.roi_classes:
-                rois = sana_io.read_annotations(anno_f, roi_class)
-                for roi in rois:
-                    roi.translate(loc)
-                masks.append(create_mask(
-                    rois, frame.size(), lvl, converter, y=255))
-            #
-            # end of supplementary masks
+            if method == 'naive':
 
-            # get the threshold
-            try:
-                stain_threshold = int(args.threshold)
-            except ValueError:
-                stain_threshold = get_stain_threshold(
-                    frame, mi=args.stain_min, mx=args.stain_max)
-            writer.data['stain_threshold'] = stain_threshold
+                # get the threshold
+                try:
+                    stain_threshold = int(args.threshold)
+                except ValueError:
+                    stain_threshold = get_stain_threshold(
+                        frame, mi=args.stain_min, mx=args.stain_max)
+                writer.data['stain_threshold'] = stain_threshold
 
-            # threshold the image
-            frame.threshold(stain_threshold, 0, 255)
+                # threshold the image
+                frame.threshold(stain_threshold, 0, 255)
 
-            # TODO: apply a morph closing to remove holes inside of objects
-            pass
+                # mask the frame
+                frame.mask(orig_mask)
 
-            # mask the frame by the original mask
-            frame_orig_mask = frame.copy()
-            frame_orig_mask.mask(orig_mask)
+                # detect the objects in the thresholded frame
+                frame.get_contours()
 
-            # get the total area of the masked frame
-            total_area = np.sum(orig_mask.img / 255)
+                # filter the contours
+                # TODO: args should be cmdl args
+                # TODO: args should be in microns
+                frame.filter_contours(min_body_area=10)
 
-            # get the area of positive data
-            area = np.sum(frame_orig_mask.img / 255)
+                # get the detected objects
+                detections = frame.get_body_contours()
 
-            # TODO: run this on path data, compare to ordinal vs. qupath ao
-            # calculate %AO
-            ao = area / total_area
-            writer.data['ao'] = ao
+                # get the polygons, translate back to the origin
+                polygons = [d.polygon for d in detections]
+                for i in range(len(polygons)):
+                    p[i].translate(-writer.data['loc'])
+                    p[i] = p[i].connect()
 
-            # apply the supplementary masks and get the %AO
-            aos = []
-            for mask in masks:
-                frame_mask = frame.copy()
-                frame_mask.mask(mask)
-                total_area = np.sum(mask.img / 255)
-                area = np.sum(frame_mask.img / 255)
-                ao = area / total_area
-                aos.append(ao)
-            writer.data['aos_list'] = aos
+            else:
+                pass
 
-            # save the results
-            out_f = sana_io.create_filepath(
-                slide_f, ext='.png', suffix='_%d_THRESH' % frame_i,
-                fpath=args.idir, rpath=args.rdir)
-            frame_orig_mask.save(out_f)
-            writer.write_data()
+
+            # convert detected polygons to annotations
+            for p in polygons:
+                anno = p.to_annotation(slide_f, args.detection_class)
+                annos.append(anno)
         #
-        # end of roi loop
+        # end of frames loop
+
+        # save the results
+        out_f = sana_io.create_filepath(
+            slide_f, ext='.json', suffix='' % frame_i,
+            fpath=args.odir, rpath=args.rdir)
+        sana_io.write_annotations(out_f, annos)
     #
-    # end of stain loop
+    # end of slides loop
 #
 # end of main
 
@@ -142,12 +130,12 @@ def cmdl_parser(argv):
                         help="filelists containing .svs files")
     parser.add_argument('-idir', type=str, default="",
                         help="location to read prob. maps from")
-    parser.add_argument('-adir', type=str, default="",
-                        help="location to read masks from")
+    parser.add_argument('-odir', type=str, default="",
+                        help="location to write detections to")
     parser.add_argument('-rdir', type=str, default="",
                         help="directory path to replace")
-    parser.add_argument('-roi_classes', type=str, nargs='*', default=[],
-                        help="ROI to use to generate the mask, if wanted")
+    parser.add_argument('-method', type=str, default="naive",
+                        help="detection method to use")
     parser.add_argument('-threshold', type=str, default="kittler",
                         help="value of threshold, or algorithm to use")
     parser.add_argument('-stain_min', type=int, default=0,

@@ -282,7 +282,6 @@ class Frame:
     #
     # end of threshold
 
-    # TODO: should check if image is binary or not
     # generates the contours on all edges of the image, then filters
     #  based on size of body and hole criteria
     def get_contours(self):
