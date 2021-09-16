@@ -184,8 +184,8 @@ def write_metrics_file(f, angle=None, loc=None, crop_loc=None, ds=None,
 #
 # end of write_metrics_file
 
-<<<<<<< Updated upstream
-=======
+#<<<<<<< Updated upstream
+#=======
 # converts a Polygon annotation to a JSON, similar to GeoJSON
 def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
 
@@ -214,7 +214,7 @@ def anno_to_json(anno, class_name=None, anno_name=None, confidence=1.0):
 #
 # end of anno_to_json
 
->>>>>>> Stashed changes
+#>>>>>>> Stashed changes
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath
 def fix_annotations(ifile):
