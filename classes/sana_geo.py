@@ -42,6 +42,19 @@ def ray_tracing(x,y,poly):
 #
 # end of ray_tracing
 
+def hull_to_poly(hull, xy, lvl=0):
+    x, y = [], []
+    for v in hull.vertices:
+        v = xy[v]
+        x.append(v[0])
+        y.append(v[1])
+    x, y = np.array(x), np.array(y)
+    p = Polygon(x, y, False, lvl)
+    poly = p.connect()
+    return poly
+#
+# end of hull_to_poly
+
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best
 #       practice to use pixel units as much as possible, and convert to/from
