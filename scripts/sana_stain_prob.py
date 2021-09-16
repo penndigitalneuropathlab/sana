@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python
 
 # system modules
 import os
@@ -36,15 +36,19 @@ def main(argv):
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
+        print("--> Processing: %s (%d/%d)" % \
+              (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
 
         # get the annotation file
         anno_f = sana_io.create_filepath(
             slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
-
+        if not os.path.exists(anno_f):
+            print('****> Skipping: Annotation File Not Found!')
+            continue
+            
         # initalize the Loader
         loader = Loader(slide_f)
-        print("--> Processing: %s (%d/%d)" % \
-              (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
+
         converter = loader.converter
         loader.set_lvl(args.lvl)
 

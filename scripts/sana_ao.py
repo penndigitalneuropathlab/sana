@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python
 
 # system modules
 import os
@@ -84,11 +84,20 @@ def main(argv):
             # end of supplementary masks
 
             # get the threshold
+            stain_threshold = None
             try:
                 stain_threshold = int(args.threshold)
             except ValueError:
-                stain_threshold = get_stain_threshold(
-                    frame, mi=args.stain_min, mx=args.stain_max)
+                pass
+            if stain_threshold is None:
+                try:
+                    stain_threshold = get_stain_threshold(
+                        frame, mi=args.stain_min, mx=args.stain_max)
+                except:
+                    pass
+            if stain_threshold is None:
+                continue
+                
             writer.data['stain_threshold'] = stain_threshold
 
             # threshold the image
