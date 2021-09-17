@@ -8,7 +8,7 @@ from numpy.linalg import det, inv, eig, svd
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
     def __init__(self, stain_type, stain_target,
-                 stain_vector=None, ret_od=False):
+                 stain_vector=None, od=False, gray=True):
 
         # define the stain vector
         self.stain_type = stain_type
@@ -24,30 +24,46 @@ class StainSeparator:
         else:
             self.ret = list(map(lambda x: x == self.stain_target.upper(),
                                 self.stain_vector.stains))
-        self.ret_od = ret_od
 
-    def run(self, img, rescale=False):
+        # parameters defining the type of image to generate
+        self.od = od
+        self.gray = gray
+    #
+    # end of constructor
+
+    def run(self, img):
         s1, s2, s3 = None, None, None
 
         # separate the stains, convert from rgb to stains
         stains = self.separate_stains(img)
+        s1, s2, s3 = stains[:, :, 0], stains[:, :, 1], stains[:, :, 2]
 
-        if self.ret_od:
-            s1, s2, s3 = stains[:, :, 0], stains[:, :, 1], stains[:, :, 2]
-        else:
-            # convert each stain channel individually back to a new rgb image
-            #  using the original stain vector
-            z = np.zeros_like(stains[:, :, 0])
-            if self.ret[0]:
-                s1 = self.combine_stains(
-                    np.stack((stains[:, :, 0], z, z), axis=-1))
-            if self.ret[1]:
-                s2 = self.combine_stains(
-                    np.stack((z, stains[:, :, 1], z), axis=-1))
-            if self.ret[2]:
-                s3 = self.combine_stains(
-                    np.stack((z, z, stains[:, :, 2]), axis=-1))
+        # TODO: make sure this is working properly, check the histograms
+        # convert each stain channel back to a new rgb image
+        #  using the original stain vector
+        if not self.od:
+            z = np.zeros_like(s1)
+            if self.ret[0]: s1 = self.combine_stains(
+                np.stack((s1, z, z), axis=-1))
+            if self.ret[1]: s2 = self.combine_stains(
+                np.stack((z, s2, z), axis=-1))
+            if self.ret[2]: s3 = self.combine_stains(
+                np.stack((z, z, s3), axis=-1))
 
+            # convert to grayscale
+            if self.gray:
+                if self.ret[0]: s1 = np.rint(np.dot(s1.astype(float),
+                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
+                if self.ret[1]: s2 = np.rint(np.dot(s2.astype(float),
+                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
+                if self.ret[2]: s3 = np.rint(np.dot(s3.astype(float),
+                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
+            #
+            # end of to grayscale processing
+        #
+        # end of to rgb processing
+
+        # return only the stains in the target
         ret = []
         if self.ret[0]:
             ret.append(s1)
@@ -55,15 +71,9 @@ class StainSeparator:
             ret.append(s2)
         if self.ret[2]:
             ret.append(s3)
-
-        if rescale:
-            h = rescale_intensity(stains[:, :, 0], out_range=(0, 1),
-                      in_range=(0, np.percentile(stains[:, :, 0], 99)))
-            d = rescale_intensity(stains[:, :, 1], out_range=(0, 1),
-                      in_range=(0, np.percentile(stains[:, :, 1], 99)))
-            ret.append(np.dstack((z, d, h)))
-
         return ret
+    #
+    # end of run
 
     # NOTE: http://wwwx.cs.unc.edu/~mn/sites/default/files/macenko2009.pdf
     def estimate_stain_vector(self, img):

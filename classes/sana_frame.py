@@ -32,10 +32,14 @@ class TypeException(Exception):
 class Frame:
     def __init__(self, img, lvl=-1, converter=None, csf_threshold=None):
 
+        if type(img) is str:
+            self.img = np.array(Image.open(img))
+        else:
+            self.img = img
+
         # make sure the img always has a pixel channel
-        if img.ndim < 3:
-            img = img[:, :, None]
-        self.img = img
+        if self.img.ndim < 3:
+            self.img = self.img[:, :, None]
         self.lvl = lvl
         self.converter = converter
         self.contours = []
@@ -177,10 +181,12 @@ class Frame:
         if self.is_float():
             np.save(fname.split('.')[0]+'.npy', self.img)
         else:
+            im = self.img
+            if not self.is_rgb():
+                im = im[:, :, 0]
             if self.is_binary():
-                im = Image.fromarray(255 * self.img())
-            else:
-                im = Image.fromarray(self.img())
+                im = 255 * im
+            im = Image.fromarray(im)
             im.save(fname)
     #
     # end of save
@@ -252,6 +258,10 @@ class Frame:
             EW[:, 1:] -= E[:, :-1]
 
             self.img += gamma * (NS + EW)
+
+        # clip values between 0 and 255, round to integer
+        np.clip(self.img, 0, 255, out=self.img)
+        self.round()
     #
     # end of anisodiff
 
@@ -272,7 +282,6 @@ class Frame:
     #
     # end of threshold
 
-    # TODO: should check if image is binary or not
     # generates the contours on all edges of the image, then filters
     #  based on size of body and hole criteria
     def get_contours(self):
@@ -549,21 +558,21 @@ class Contour:
 # end of Detection
 
 # generates a binary mask based on a list of given Polygons
-#  -contours: list of contours to be filled with value y
+#  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: ints defining the negative and positive values in the mask
-def create_mask(contours, size, lvl, converter, x=0, y=1):
+def create_mask(polygons, size, lvl, converter, x=0, y=1):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
-    for c in contours:
-        p = c.polygon
+    for p in polygons:
         converter.to_pixels(p, lvl)
         p = converter.to_int(p)
         polys.append([tuple(p[i]) for i in range(p.shape[0])])
     #
     # end of Polygon conversion
 
+    # TODO: make sure outline isn't increasing mask size
     # create a blank image, then draw the polygons onto the image
     size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
@@ -631,16 +640,14 @@ def get_csf_threshold(frame):
 #
 # end of get_csf_threshold
 
-def get_stain_threshold(frame):
+# NOTE: a min value of 15 is set here based on qualitative analysis of DAB NeuN
+# TODO: set different minimums for different stains!!!
+def get_stain_threshold(frame, mi, mx):
     if frame.is_rgb():
         raise TypeException('Cannot get Stain Threshold of RGB image')
 
-    # smooth to get a more accurate threshold
-    frame.anisodiff()
-    frame.round()
-
     # perform kittler thresholding
-    return kittler(frame.histogram()[:, 0], mi=8, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=mi, mx=mx)[0]
 #
 # end of get_stain_threshold
 

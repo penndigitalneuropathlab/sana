@@ -1,4 +1,5 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python
+
 
 # system packages
 import os

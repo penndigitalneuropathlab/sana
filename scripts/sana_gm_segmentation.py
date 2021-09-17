@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 filt#!/usr/local/bin/python3.9
+=======
+#!/usr/bin/env python
+>>>>>>> 15520819e9b287758735d8743a23c2de8f71e6cc
 
 # system modules
 import os
@@ -99,7 +103,7 @@ def main(argv):
                 get_tile_features(args, loader, out_f, metrics_f, roi_i, roi)
 
             continue
-        
+
             # get the tissue mask
             frame_tissue = Frame(
                 np.load(tissue_f), loader.lvl, loader.converter)
