@@ -328,9 +328,9 @@ class DataWriter:
         fp.write(self.line % ('angle',
                               self.write_float(self.data['angle'])))
         fp.write(self.line % ('crop_loc',
-                              self.write_float_point(self.data['crop_loc'])))
+                              self.write_point(self.data['crop_loc'])))
         fp.write(self.line % ('crop_size',
-                              self.write_float_point(self.data['crop_size'])))
+                              self.write_point(self.data['crop_size'])))
         fp.close()
     #
     # end of write_data
