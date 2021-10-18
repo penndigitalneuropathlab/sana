@@ -126,9 +126,6 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
     # construct the filepath
     ofile = get_fullpath(os.path.join(fpath, fname))
 
-    # construct the new directory if needed
-    create_directory(ofile)
-
     return ofile
 #
 # end of create_filepath
@@ -287,6 +284,9 @@ class DataWriter:
             'aos_list': [],
             'csf_threshold': None,
             'stain_threshold': None,
+            'angle': None,
+            'crop_loc': None,
+            'crop_size': None,
         }
         self.line = '%s\t%s\n'
 
@@ -325,6 +325,12 @@ class DataWriter:
                               self.write_int(self.data['csf_threshold'])))
         fp.write(self.line % ('stain_threshold',
                               self.write_int(self.data['stain_threshold'])))
+        fp.write(self.line % ('angle',
+                              self.write_float(self.data['angle'])))
+        fp.write(self.line % ('crop_loc',
+                              self.write_float_point(self.data['crop_loc'])))
+        fp.write(self.line % ('crop_size',
+                              self.write_float_point(self.data['crop_size'])))
         fp.close()
     #
     # end of write_data
@@ -346,6 +352,12 @@ class DataWriter:
             return self.parse_int(val)
         elif key == 'stain_threshold':
             return self.parse_int(val)
+        elif key == 'tissue_angle':
+            return self.parse_float(val)
+        elif key == 'crop_loc':
+            return self.parse_point(val)
+        elif key == 'crop_size':
+            return self.parse_point(val)        
         else:
             return None
     #
