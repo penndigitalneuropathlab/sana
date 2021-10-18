@@ -25,17 +25,18 @@ class Framer:
         # store the slide loader
         self.loader = loader
         self.converter = self.loader.converter
-
+        self.lvl = self.loader.lvl
+        
         # set the frame size, convert to pixels, and round
         self.size = size
         self.converter.to_pixels(self.size, self.lvl)
         self.size = self.converter.to_int(self.size)
 
         # set the frame step, convert to pixels, and round
-        if tstep is None:
+        if step is None:
             self.step = copy(self.size)
         else:
-            self.step = tstep
+            self.step = step
         self.converter.to_pixels(self.step, self.lvl)
         self.step = self.converter.to_int(self.step)
 
@@ -51,13 +52,13 @@ class Framer:
             # set size of ROI, convert to pixels, and round
             if roi_size is None:
                 roi_size = self.loader.get_dim()
-            self.convert.to_pixels(roi_size, self.lvl)
+            self.converter.to_pixels(roi_size, self.lvl)
             roi_size = self.converter.to_int(roi_size)
 
             # set location of ROI, convert to pixels, and round
             if roi_loc is None:
                 roi_loc = Point(0, 0, False, self.loader.lvl)
-            self.convert.to_pixels(roi_loc, self.lvl)
+            self.converter.to_pixels(roi_loc, self.lvl)
             roi_loc = self.converter.to_int(roi_loc)
 
             # calculate the number of frames in the ROI
@@ -78,14 +79,14 @@ class Framer:
         # set the frame pad amount
         if fpad is None:
             fpad = Point(0, 0, False, self.loader.lvl)
-        self.convert.to_pixels(fpad, self.lvl)
-        fpad = self.converter.to_int(fpad)
+        self.converter.to_pixels(fpad, self.lvl)
+        self.fpad = self.converter.to_int(fpad)
 
         # set the frame shift amount
         if fshift is None:
             fshift = Point(0, 0, False, self.loader.lvl)
-        self.convert.to_pixels(fshift, self.lvl)
-        fpad = self.converter.to_int(fshift)
+        self.converter.to_pixels(fshift, self.lvl)
+        self.fshift = self.converter.to_int(fshift)
     #
     # end of constructor
 
