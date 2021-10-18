@@ -10,8 +10,8 @@ import numpy as np
 
 # custom packages
 import sana_io
-from sana_geo import Converter, Point
-from sana_frame import Frame, get_csf_threshold
+from sana_geo import Converter, Point, get_ortho_angle
+from sana_frame import Frame, get_csf_threshold, orient_tissue
 
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
@@ -126,6 +126,65 @@ class Loader(openslide.OpenSlide):
         return Frame(img, lvl=lvl, converter=self.converter, csf_threshold=self.csf_threshold)
     #
     # end of load_frame
+
+    # this function uses the bounding box of an annotation to load a frame of data
+    def load_roi(self, writer, roi):
+
+        # load the frame based on the roi
+        loc, size = roi.bounding_box()
+        roi.translate(loc)
+        frame = self.load_frame(loc, size)
+
+        # store the processing params and return the frame
+        writer.data['loc'] = loc
+        writer.data['size'] = size
+        return frame
+    #
+    # end of load_roi
+
+    # TODO: implement
+    def load_crude_roi(self, writer, roi):
+        pass
+    #
+    # end of load_crude_roi
+    
+    # this function loads a frame of slide data using a given GM segmentation
+    # it uses the boundaries to orthoganilize the frame, then looks for slide
+    # background  near the boundaries to orient the tissue boundary to the top of the frame
+    # NOTE: this is a beefed version of just using roi.bounding_box() to load the frame
+    def load_gm_seg(self, writer, roi):
+
+        # get the angle that best orthogonalizes the segmentation
+        angle = get_ortho_angle(roi)
+
+        # TODO: this function has a bug in it, seems to create too big images
+        # load the frame based on the segmentation
+        loc, size = roi.bounding_centroid()
+        roi.translate(loc)
+        frame = self.load_frame(loc, size)
+
+        # rotate the segmentation and frame by the ortho angle
+        frame.rotate(angle)
+        roi.rotate(frame.size()//2, angle)
+
+        # TODO: this might affect the amount of slide that is foound near boundaries
+        # crop the frame to remove borders
+        crop_loc, crop_size = roi.bounding_box()
+        roi.translate(crop_loc)
+        frame.crop(crop_loc, crop_size)
+
+        # make sure the tissue boundary is at the top of the image
+        angle = orient_tissue(frame, roi, angle)
+
+        # store the processing parameters and return the frame
+        writer.data['loc'] = loc
+        writer.data['size'] = size
+        writer.data['angle'] = angle
+        writer.data['crop_loc'] = crop_loc
+        writer.data['crop_size'] = crop_size
+        return frame
+    #
+    # end of load_gm_seg
 #
 # end of Loader
 
