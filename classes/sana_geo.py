@@ -5,6 +5,7 @@
 import numpy as np
 from numba import jit
 from shapely import geometry
+from matplotlib import pyplot as plt
 
 # custom packages
 
@@ -42,18 +43,66 @@ def ray_tracing(x,y,poly):
 #
 # end of ray_tracing
 
-def hull_to_poly(hull, xy, lvl=0):
-    x, y = [], []
-    for v in hull.vertices:
-        v = xy[v]
-        x.append(v[0])
-        y.append(v[1])
-    x, y = np.array(x), np.array(y)
-    p = Polygon(x, y, False, lvl)
-    poly = p.connect()
-    return poly
+# this function assumes we are processing a segmentation which is essentially
+#  the joining of 2 boundary annotations. It finds the max distance between adjacent
+#  vertices to separate into the 2 annotations
+def separate_seg(x):
+    dist = []
+    for i in range(x.shape[0]-1):
+        a, b = x[i], x[i+1]
+        dist.append((a[0] - b[0])**2 + (a[1] - b[1])**2)
+    dist = np.array(dist)
+
+    # get the 2 separation vertices
+    seps = sorted(list((-dist).argsort()[:2]))
+
+    # split the segmentation into 2 annotations
+    x0, x1 = [], []
+    for i in range(0, seps[0]+1):
+        x0.append(x[i])
+    for i in range(seps[0]+1, seps[1]+1):
+        x1.append(x[i])
+    for i in range(seps[1]+1, x.shape[0]):
+        x0.append(x[i])
+    x0 = np.array(sorted(x0, key=lambda x: x[0]))
+    x1 = np.array(sorted(x1, key=lambda x: x[0]))
+
+    x0 = Polygon(x0[:, 0], x0[:, 1], x.is_micron, x.lvl, x.order)
+    x1 = Polygon(x1[:, 0], x1[:, 1], x.is_micron, x.lvl, x.order)
+    return [x0, x1]
 #
-# end of hull_to_poly
+# end of separate_seg
+
+# this function separates the seg into 2 parts, then finds the angle
+# that matches the x extrema of each boundary seg as closely as possible
+def get_ortho_angle(seg):
+    s0, s1 = separate_seg(seg)
+
+    # loop through angles to test
+    center = seg.centroid()[0]
+    angles = np.arange(-180, 180, 0.1)
+    dist = []
+    for i in angles:
+
+        # rotate by the current angle
+        x, y = s0.copy(), s1.copy()
+        x.rotate(center, i)
+        y.rotate(center, i)
+
+        # get the distance between the x extrema
+        x0, x1 = np.min(x[:,0]), np.max(x[:,0])
+        y0, y1 = np.min(y[:,0]), np.max(y[:,0])
+        dist.append(np.sqrt(((x0-y0)**2)+((x1-y1)**2)))
+
+    # get the best angle to use
+    return angles[np.argmin(dist)]
+#
+# end of get_ortho_seg
+
+# VERY useful function for plotting a polygon onto a axis
+def plot_poly(ax, x, color='black'):
+    for i in range(x.shape[0]-1):
+        ax.plot((x[i][0],x[i+1][0]),(x[i][1],x[i+1][1]), color=color)
 
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best
@@ -215,9 +264,20 @@ class Polygon(Array):
 
     # separates the Polygon into x and y arrays
     def get_xy(self):
-        return self[:, 0], self[:, 1]
+        if not hasattr(self, 'x'):
+            self.x = self[:,0]
+            self.y = self[:,1]
+        return self.x, self.y
     #
     # end of get_xy
+
+    def get_rolled_xy(self):
+        x0, y0 = self.get_xy()
+        if not hasattr(self, 'x'):
+            self.x1 = np.roll(x0, 1)
+            self.y1 = np.roll(y0, 1)
+        return self.x1, self.y1
+
 
     # calculates the area of the Polygon
     # TODO: this should return a Value (or something) that tracks the order
@@ -264,7 +324,6 @@ class Polygon(Array):
     #
     # end of bounding_box
 
-    #
     def filter(self, p):
         if self.is_micron != p.is_micron or self.lvl != p.lvl:
             raise UnitException(ERR_COMPARE)
@@ -275,6 +334,15 @@ class Polygon(Array):
                 x.append(self[i][0])
                 y.append(self[i][1])
         return Polygon(x, y, self.is_micron, self.lvl, self.order)
+
+    def inside(self, p):
+        if self.is_micron != p.is_micron or self.lvl != p.lvl:
+            raise UnitException(ERR_COMPARE)
+
+        for i in range(self.shape[0]):
+            if not ray_tracing(self[i][0], self[i][1], np.array(p)):
+                return False
+        return True
 
     # TODO: this and filter need to return Annotation sometimes...
     def connect(self):
@@ -377,6 +445,9 @@ class Annotation(Polygon):
             coords = geo['coordinates']
             x = np.array([float(c[0]) for c in coords[0]])
             y = np.array([float(c[1]) for c in coords[0]])
+        else:
+            x = np.array([])
+            y = np.array([])
         #
         # end of geo type checking
 
@@ -410,7 +481,7 @@ class Annotation(Polygon):
         }
         return annotation
     #
-    # end of anno_to_json    
+    # end of anno_to_json
 #
 # end of Annotation
 

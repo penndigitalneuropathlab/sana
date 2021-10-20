@@ -9,11 +9,12 @@ import cv2
 import numpy as np
 from scipy import ndimage
 from PIL import Image, ImageDraw
+Image.MAX_IMAGE_PIXELS = None
 from matplotlib import pyplot as plt
 
 # custom packages
 import sana_io
-from sana_geo import Point, Polygon, Line, ray_tracing
+from sana_geo import Point, Polygon, Line, ray_tracing, separate_seg
 from sana_color_deconvolution import StainSeparator
 from sana_thresholds import kittler
 from sana_tiler import Tiler
@@ -145,11 +146,13 @@ class Frame:
 
     # rotates the image array around it's center based on a angle in degrees
     def rotate(self, angle):
-        center = tuple(self.size()[::-1].astype(float)//2)
-        rot_mat = cv2.getRotationMatrix2D(center, angle, 1.0)
-        self.img = cv2.warpAffine(
-            self.img, rot_mat, self.img.shape[0:2],
-            flags=cv2.INTER_NEAREST, borderMode=cv2.BORDER_REFLECT)
+        w, h = self.size()
+        cx, cy = w//2, h//2
+        rot_mat = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+        self.img = cv2.warpAffine(self.img, rot_mat, (w, h))
+
+        if self.img.ndim == 2:
+            self.img = self.img[:,:,None]
     #
     # end of rotate
 
@@ -333,14 +336,16 @@ class Frame:
 
     def get_body_contours(self):
         return [c for c in self.contours if c.body]
-
+    def get_hole_contours(self):
+        return [c for c in self.contours if c.hole]
+    
     # get only the vertices of the contours within the given roi
     def ray_trace_contours(self, roi):
 
         # rescale roi to current lvl
         roi_lvl = roi.lvl
         self.converter.rescale(roi, self.lvl)
-
+        
         # loop through all body contours
         x, y = [], []
         for c in self.get_body_contours():
@@ -379,21 +384,21 @@ class Frame:
                              min_hole_area=min_hole_area)
 
         return self.contours
-
+    
     # generates the CSF Line boundary from an RGB image
     # NOTE: this function can fail if given only slide or only tissue
     # TODO: does blurring affect the accuracy of the CSF boundary?
     def get_csf_boundary(self, roi):
         if not self.is_rgb():
             raise TypeException('Cannot get CSF Boundary of non-RGB image')
-
+                
         # get the contours of the tissue within the image
         # TODO: get proper parameters for this
         self.get_tissue_contours(min_body_area=1e5, min_hole_area=1e5)
 
         # form a Line array based on the body contours within the roi
         csf_boundary = self.ray_trace_contours(roi)
-
+        
         return csf_boundary
     #
     # end of get_csf_boundary
@@ -401,7 +406,7 @@ class Frame:
     # calculates the rotation of the Frame based on the linear regression of
     # the csf boundary detected within the given roi
     def get_rotation(self, roi):
-
+        
         # get the csf boundary within the roi
         csf_boundary = self.get_csf_boundary(roi)
 
@@ -415,6 +420,7 @@ class Frame:
         # make sure the detected angle rotates the csf boundary to the
         # top half of the roi
         center = roi.centroid()[0]
+        self.converter.rescale(center, self.lvl)
         csf_boundary.rotate(center, angle)
         if np.mean(csf_boundary[:, 1]) >= center[1]:
             angle -= 180
@@ -552,16 +558,48 @@ class Contour:
         x = np.array([float(v[0][0]) for v in contour])
         y = np.array([float(v[0][1]) for v in contour])
         polygon = Polygon(x, y, False, self.lvl)
-        self.converter.to_microns(polygon)
         return polygon
 #
 # end of Detection
+
+# this function looks at the frames of data surrounding the segmentation boundaries
+# and finds which boundary is associated with the tissue boundary
+def orient_tissue(frame, roi, angle):
+    
+    # get the segmentation boundaries at top and bottom of frame
+    s0, s1 = separate_seg(roi)
+    if np.mean(s0[:,1]) > np.mean(s1[:,1]):
+        top, bot = s1, s0
+    else:
+        top, bot = s0, s1
+
+    # get the amount of tissue found near each of the boundaries
+    top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
+    top.to_gray()
+    top.threshold(top.csf_threshold, 1, 0)
+    top_perc = np.sum(top.img)/top.img.size
+    bot = Frame(frame.img[int(np.min(bot[:,1])):, :], frame.lvl, frame.converter, frame.csf_threshold)
+    bot.to_gray()
+    bot.threshold(bot.csf_threshold, 1, 0)
+    bot_perc = np.sum(bot.img)/bot.img.size    
+
+    # top image should have less tissue than the bottom
+    if top_perc < bot_perc:
+        pass
+    else:
+        angle += 180
+        frame.rotate(180)
+        roi.rotate(frame.size()//2, 180)
+        
+    return angle
+#
+# end of orient_tissue
 
 # generates a binary mask based on a list of given Polygons
 #  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: ints defining the negative and positive values in the mask
-def create_mask(polygons, size, lvl, converter, x=0, y=1):
+def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
@@ -569,6 +607,11 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1):
         converter.to_pixels(p, lvl)
         p = converter.to_int(p)
         polys.append([tuple(p[i]) for i in range(p.shape[0])])
+    hs = []
+    for h in holes:
+        converter.to_pixels(h, lvl)
+        h = converter.to_int(h)
+        hs.append([tuple(h[i]) for i in range(h.shape[0])])
     #
     # end of Polygon conversion
 
@@ -578,6 +621,8 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1):
     mask = Image.new('L', (size[0], size[1]), x)
     for poly in polys:
         ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+    for h in hs:
+        ImageDraw.Draw(mask).polygon(h, outline=x, fill=x)
     return Frame(np.array(mask)[:, :, None], lvl, converter)
 #
 # end of create_mask
