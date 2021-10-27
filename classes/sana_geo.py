@@ -110,6 +110,22 @@ def plot_poly(ax, x, color='black'):
 #       microns at the beginning or ending of analysis
 #  -mpp: microns per pixel constant, usually provided by Loader
 #  -ds: level downsample factors, usually provided by Loader
+
+
+# converts a Convexhull into a polygon
+def hull_to_poly(hull, xy, lvl=0):
+    x, y = [], []
+    for v in hull.vertices:
+        v = xy[v]
+        x.append(v[0])
+        y.append(v[1])
+    x, y = np.array(x), np.array(y)
+    p = Polygon(x, y, False, lvl)
+    poly = p.connect()
+    return poly
+#
+# end of hull_to_pull
+
 class Converter:
     def __init__(self, mpp, ds):
         self.mpp = mpp
