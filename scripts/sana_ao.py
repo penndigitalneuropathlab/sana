@@ -13,6 +13,7 @@ import sana_io
 from sana_io import DataWriter
 from sana_frame import Frame, get_stain_threshold, create_mask
 from sana_loader import Loader
+from matplotlib import pyplot as plt
 
 # this script loads a series of slides and ROIs within the given slides
 # it loads the data within ROIs, and generates a probability map representing
@@ -97,11 +98,7 @@ def main(argv):
                     pass
             if stain_threshold is None:
                 continue
-<<<<<<< HEAD
 
-=======
-                
->>>>>>> 15520819e9b287758735d8743a23c2de8f71e6cc
             writer.data['stain_threshold'] = stain_threshold
 
             # threshold the image
@@ -163,7 +160,7 @@ def cmdl_parser(argv):
                         help="ROI to use to generate the mask, if wanted")
     parser.add_argument('-threshold', type=str, default="kittler",
                         help="value of threshold, or algorithm to use")
-    parser.add_argument('-stain_min', type=int, default=0,
+    parser.add_argument('-stain_min', type=int, default=1,
                         help="min value for thresholding algorithms")
     parser.add_argument('-stain_max', type=int, default=255,
                         help="max value for thresholding algorithms")

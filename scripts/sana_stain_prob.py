@@ -41,15 +41,15 @@ def main(argv):
 
         # get the annotation file
         anno_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+            slide_f, ext='.svs.json', fpath=args.adir, rpath=args.rdir)
         if not os.path.exists(anno_f):
             print('****> Skipping: Annotation File Not Found!')
             continue
-<<<<<<< HEAD
+#<<<<<<< HEAD
 
-=======
-            
->>>>>>> 15520819e9b287758735d8743a23c2de8f71e6cc
+#=======
+
+#>>>>>>> 15520819e9b287758735d8743a23c2de8f71e6cc
         # initalize the Loader
         loader = Loader(slide_f)
 
@@ -123,7 +123,7 @@ def main(argv):
 
             # TODO: maybe apply this before anisodiff??
             # opening filter to remove small objects, not considered
-            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
+            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (10,10))
             cv.morphologyEx(frame.img, cv.MORPH_OPEN,
                             kernel=kernel, dst=frame.img)
 

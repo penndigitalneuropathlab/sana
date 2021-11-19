@@ -11,9 +11,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 # custom packages
-from sana_io import get_anno_files, read_annotations
+from sana_io import get_anno_files, read_annotations, read_list_file, create_filepath
+import sana_io
+from sana_loader import Loader
+from sana_geo import plot_poly
 
 # cmdl interface help messages
+SLIST_HELP = "List of slides to be processed"
+LVL_HELP = "Specify which pixel resolution to use while processing"
 REFDIR_HELP = "Directory containing reference annotation files"
 HYPDIR_HELP = "Directory containing hypothesis annotation files"
 REFCLASS_HELP = "List of reference class names to use"
@@ -36,7 +41,7 @@ def iou(x, y):
 #
 # end of iou
 
-def score(ref_annos, hyp_annos, iou_threshold):
+def score(ref_annos, hyp_annos, iou_threshold, args):
 
     # dict for storing the ref annotations that have been used for scoring
     seen = {}
@@ -74,15 +79,18 @@ def score(ref_annos, hyp_annos, iou_threshold):
                 if ind in seen[hyp.file_name]:
                     results.append(False)
 
+
                 # ref not seen, TP
                 else:
                     results.append(True)
                     seen[hyp.file_name].append(ind)
+
                 #
                 # end of seen checking
 
             # hyp not overlapping with a ref, FP
             else:
+                plot(args, hyp.file_name)
                 results.append(False)
             #
             # end of iou_threshold checking
@@ -134,6 +142,7 @@ def get_annos(args):
 
     # get all annotation files in the ref and hyp dirs
     ref_files = sorted(get_anno_files(args.refdir))
+
     hyp_files = sorted(get_anno_files(args.hypdir))
 
     # loop through annotation files
@@ -188,10 +197,10 @@ def get_annos(args):
 #
 # end of get_annos
 
-def pr(ref_annos, hyp_annos, iou_threshold):
+def pr(ref_annos, hyp_annos, iou_threshold, args):
 
     # get the TP/FP decisions for all the hyp annos
-    results = score(ref_annos, hyp_annos, iou_threshold)
+    results = score(ref_annos, hyp_annos, iou_threshold, args)
 
     # calculate rolling sum of TPs from most to least confident
     cumulative_tp = np.cumsum(results)
@@ -208,6 +217,81 @@ def pr(ref_annos, hyp_annos, iou_threshold):
     ap = np.sum(precision[1:] * (recall[1:] - recall[:-1]))
 
     return precision, recall, ap
+
+#COME BACK TO HERE TO CONTINUE WORKING ON FUNCTION
+def plot(args, slide):
+    # find the annotation file based on the slide filename
+    anno_fname = sana_io.create_filepath(slide, ext='.svs', fpath=args.refdir)
+    print(anno_fname)
+    exit()
+    # access slides
+    slides = sana_io.read_list_file(args.slist)
+
+    # loop through each of the slides in the list of slides
+    for slide in slides:
+        # initialize loader, this will allow us to load slide data into memory
+        loader = Loader(slide)
+        converter = loader.converter
+
+        # tell the loader which pixel resolution to use
+        loader.set_lvl(args.lvl)
+
+        # find the annotation file based on the slide filename
+        anno_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.refdir)
+
+        # load the annotations from the annotation file
+        ROIS = sana_io.read_annotations(anno_fname, class_name='ROI')
+
+        # rescale the ROI annotations to the given pixel resolution
+        for ROI in ROIS:
+            if ROI.lvl != args.lvl:
+                converter.rescale(ROI, args.lvl)
+
+        # load the annotations from the annotation file
+        REF_ANNOS = sana_io.read_annotations(anno_fname, class_name='ARTIFACT')
+
+        # rescale the ROI annotations to the given pixel resolution
+        for REF_ANNO in REF_ANNOS:
+            if REF_ANNO.lvl != args.lvl:
+                converter.rescale(REF_ANNO, args.lvl)
+
+        #find the hypothesis annotation file based on the slide filename
+        hypothesis_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.hypdir)
+
+
+        # load the annotations from the annotation file
+        HYP_ANNOS = sana_io.read_annotations(hypothesis_fname, class_name='ARTIFACT')
+
+        # rescale the ROI annotations to the given pixel resolution
+        for HYP_ANNO in HYP_ANNOS:
+            if HYP_ANNO.lvl != args.lvl:
+                converter.rescale(HYP_ANNO, args.lvl)
+
+        for ROI in ROIS:
+            # get the top left coordinate and the size of the bounding centroid
+            loc, size = ROI.bounding_box()
+
+            frame = loader.load_frame(loc, size)
+
+            fig, axs = plt.subplots(1,2, sharex=False, sharey=False)
+
+            # Plotting the processed frame and processed frame with clusters
+            axs[0].imshow(frame.img, cmap='gray')
+            for REF_ANNO in REF_ANNOS:
+                REF_ANNO.translate(loc)
+                plot_poly(axs[0], REF_ANNO, color='red')
+
+            axs[1].imshow(frame.img, cmap='gray')
+            for HYP_ANNO in HYP_ANNOS:
+                HYP_ANNO.translate(loc)
+                plot_poly(axs[1], HYP_ANNO, color='blue')
+            plt.show()
+
+
+
+
+
+
 #
 # end of pr
 # this script takes a group of ref and hyp annotations, and outputs 1 or more
@@ -215,13 +299,15 @@ def pr(ref_annos, hyp_annos, iou_threshold):
 def main(argv):
 
     # parse the command line
-    parser = argparse.ArgumentParser(usage=open(USAGE, 'r').read())
+    parser = argparse.ArgumentParser()
+    parser.add_argument('-slist', type=str, default='/Volumes/RESEARCH/BCHE300/all.list',help=SLIST_HELP)
+    parser.add_argument('-lvl', type=int, default=0,help=LVL_HELP)
     parser.add_argument('-refdir', type=str, required=True, help=REFDIR_HELP)
     parser.add_argument('-hypdir', type=str, required=True, help=HYPDIR_HELP)
     parser.add_argument('-refclass', type=str, nargs='*', help=REFCLASS_HELP)
     parser.add_argument('-hypclass', type=str, nargs='*', help=HYPCLASS_HELP)
     parser.add_argument('-roiclass', type=str, nargs='*', help=ROICLASS_HELP)
-    parser.add_argument('-iouthresh', type=float, nargs='*', default=[0.50],
+    parser.add_argument('-iouthresh', type=float, nargs='*', default=[0.5],
                         help=IOUTHRESH_HELP)
     parser.add_argument('-title', type=str, default="")
     args = parser.parse_args()
@@ -235,7 +321,7 @@ def main(argv):
     for iou_threshold in args.iouthresh:
 
         # generate precision/recall curve, calculate the average precision
-        precision, recall, ap = pr(ref_annos, hyp_annos, iou_threshold)
+        precision, recall, ap = pr(ref_annos, hyp_annos, iou_threshold, args)
 
         # plot the curve
         ax.plot(recall, precision,
