@@ -45,11 +45,7 @@ def main(argv):
         if not os.path.exists(anno_f):
             print('****> Skipping: Annotation File Not Found!')
             continue
-<<<<<<< HEAD
 
-=======
-            
->>>>>>> 15520819e9b287758735d8743a23c2de8f71e6cc
         # initalize the Loader
         loader = Loader(slide_f)
 
