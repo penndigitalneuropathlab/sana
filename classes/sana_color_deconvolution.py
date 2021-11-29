@@ -45,7 +45,7 @@ class StainSeparator:
             z = np.zeros_like(s1)
             if self.ret[0]: s1 = self.combine_stains(
                 np.stack((s1, z, z), axis=-1))
-            if self.ret[1]: s2 = self.combine_stains(
+            if self.ret[1]: s2 = self.combine_stains( 
                 np.stack((z, s2, z), axis=-1))
             if self.ret[2]: s3 = self.combine_stains(
                 np.stack((z, z, s3), axis=-1))

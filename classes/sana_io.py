@@ -287,6 +287,7 @@ class DataWriter:
             'angle': None,
             'crop_loc': None,
             'crop_size': None,
+            'ds': None,
         }
         self.line = '%s\t%s\n'
 
@@ -331,6 +332,8 @@ class DataWriter:
                               self.write_point(self.data['crop_loc'])))
         fp.write(self.line % ('crop_size',
                               self.write_point(self.data['crop_size'])))
+        fp.write(self.line % ('ds',
+                              self.write_point(self.data['ds'])))
         fp.close()
     #
     # end of write_data
@@ -352,12 +355,14 @@ class DataWriter:
             return self.parse_int(val)
         elif key == 'stain_threshold':
             return self.parse_int(val)
-        elif key == 'tissue_angle':
+        elif key == 'angle':
             return self.parse_float(val)
         elif key == 'crop_loc':
             return self.parse_point(val)
         elif key == 'crop_size':
-            return self.parse_point(val)        
+            return self.parse_point(val)
+        elif key == 'ds':
+            return self.parse_point(val)
         else:
             return None
     #

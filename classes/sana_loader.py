@@ -16,7 +16,7 @@ from sana_frame import Frame, get_csf_threshold, orient_tissue
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
 class Loader(openslide.OpenSlide):
-    def __init__(self, fname):
+    def __init__(self, fname, calc_thresh=True):
 
         # initialize the object with the slide
         self.fname = sana_io.get_fullpath(fname)
@@ -188,5 +188,10 @@ class Loader(openslide.OpenSlide):
 #
 # end of Loader
 
+def get_converter(slide):
+    slide = openslide.OpenSlide(slide)
+    mpp = float(slide.properties['aperio.MPP'])
+    ds = slide.level_downsamples
+    return Converter(mpp, ds)
 #
 # end of file
