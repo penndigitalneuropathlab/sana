@@ -285,6 +285,7 @@ class DataWriter:
             'csf_threshold': None,
             'stain_threshold': None,
             'angle': None,
+            'density': None,
             'crop_loc': None,
             'crop_size': None,
         }
@@ -319,6 +320,7 @@ class DataWriter:
         fp.write(self.line % ('loc', self.write_point(self.data['loc'])))
         fp.write(self.line % ('size', self.write_point(self.data['size'])))
         fp.write(self.line % ('ao', self.write_float(self.data['ao'])))
+        fp.write(self.line % ('density', self.write_float(self.data['density'])))
         fp.write(self.line % ('aos_list',
                               self.write_float_list(self.data['aos_list'])))
         fp.write(self.line % ('csf_threshold',
@@ -357,7 +359,7 @@ class DataWriter:
         elif key == 'crop_loc':
             return self.parse_point(val)
         elif key == 'crop_size':
-            return self.parse_point(val)        
+            return self.parse_point(val)
         else:
             return None
     #

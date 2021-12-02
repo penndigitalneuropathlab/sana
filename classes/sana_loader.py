@@ -147,7 +147,7 @@ class Loader(openslide.OpenSlide):
         pass
     #
     # end of load_crude_roi
-    
+
     # this function loads a frame of slide data using a given GM segmentation
     # it uses the boundaries to orthoganilize the frame, then looks for slide
     # background  near the boundaries to orient the tissue boundary to the top of the frame

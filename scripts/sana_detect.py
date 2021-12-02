@@ -13,6 +13,7 @@ import sana_io
 from sana_io import DataWriter
 from sana_frame import Frame, get_stain_threshold, create_mask
 from sana_loader import Loader
+from sana_geo import Polygon
 
 # this script loads a series of slides and ROIs within the given slides
 # it loads the data within ROIs, and generates a probability map representing
@@ -70,7 +71,7 @@ def main(argv):
                 fpath=args.idir, rpath=args.rdir)
             mask = Frame(mask_f, lvl, converter)
 
-            if method == 'naive':
+            if args.method == 'naive':
 
                 # get the threshold
                 try:
@@ -81,10 +82,10 @@ def main(argv):
                 writer.data['stain_threshold'] = stain_threshold
 
                 # threshold the image
-                frame.threshold(stain_threshold, 0, 255)
+                frame.threshold(stain_threshold, 0, 1)
 
                 # mask the frame
-                frame.mask(orig_mask)
+                frame.mask(mask)
 
                 # detect the objects in the thresholded frame
                 frame.get_contours()
@@ -100,24 +101,22 @@ def main(argv):
                 # get the polygons, translate back to the origin
                 polygons = [d.polygon for d in detections]
                 for i in range(len(polygons)):
-                    p[i].translate(-writer.data['loc'])
-                    p[i] = p[i].connect()
+                    polygons[i].translate(-writer.data['loc'])
+                    polygons[i] = polygons[i].connect()
 
             else:
                 pass
 
-
             # convert detected polygons to annotations
-            for p in polygons:
-                anno = p.to_annotation(slide_f, args.detection_class)
+            for polygon in polygons:
+                anno = polygon.to_annotation(slide_f,"Neuron")
                 annos.append(anno)
         #
         # end of frames loop
 
         # save the results
         out_f = sana_io.create_filepath(
-            slide_f, ext='.json', suffix='' % frame_i,
-            fpath=args.odir, rpath=args.rdir)
+            slide_f, ext='.json', fpath=args.odir)
         sana_io.write_annotations(out_f, annos)
     #
     # end of slides loop

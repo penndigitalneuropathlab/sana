@@ -220,77 +220,75 @@ def pr(ref_annos, hyp_annos, iou_threshold, args):
 
 #COME BACK TO HERE TO CONTINUE WORKING ON FUNCTION
 def plot(args, slide):
+    print(slide)
     # find the annotation file based on the slide filename
-    anno_fname = sana_io.create_filepath(slide, ext='.svs', fpath=args.refdir)
+    image = sana_io.create_filepath(slide, ext='.svs', fpath=args.refdir)
+    print(image)
+    exit()
+    # # access slides
+    # slides = sana_io.read_list_file(args.slist)
+    #
+    # # loop through each of the slides in the list of slides
+    # for slide in slides:
+    # initialize loader, this will allow us to load slide data into memory
+    loader = Loader(image)
+    converter = loader.converter
+
+    # tell the loader which pixel resolution to use
+    loader.set_lvl(args.lvl)
+
+    # find the annotation file based on the slide filename
+    anno_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.refdir)
+
     print(anno_fname)
     exit()
-    # access slides
-    slides = sana_io.read_list_file(args.slist)
+    # load the annotations from the annotation file
+    ROIS = sana_io.read_annotations(anno_fname, class_name='ROI')
 
-    # loop through each of the slides in the list of slides
-    for slide in slides:
-        # initialize loader, this will allow us to load slide data into memory
-        loader = Loader(slide)
-        converter = loader.converter
+    # rescale the ROI annotations to the given pixel resolution
+    for ROI in ROIS:
+        if ROI.lvl != args.lvl:
+            converter.rescale(ROI, args.lvl)
 
-        # tell the loader which pixel resolution to use
-        loader.set_lvl(args.lvl)
+    # load the annotations from the annotation file
+    REF_ANNOS = sana_io.read_annotations(anno_fname, class_name='ARTIFACT')
 
-        # find the annotation file based on the slide filename
-        anno_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.refdir)
+    # rescale the ROI annotations to the given pixel resolution
+    for REF_ANNO in REF_ANNOS:
+        if REF_ANNO.lvl != args.lvl:
+            converter.rescale(REF_ANNO, args.lvl)
 
-        # load the annotations from the annotation file
-        ROIS = sana_io.read_annotations(anno_fname, class_name='ROI')
+    #find the hypothesis annotation file based on the slide filename
+    hypothesis_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.hypdir)
 
-        # rescale the ROI annotations to the given pixel resolution
-        for ROI in ROIS:
-            if ROI.lvl != args.lvl:
-                converter.rescale(ROI, args.lvl)
 
-        # load the annotations from the annotation file
-        REF_ANNOS = sana_io.read_annotations(anno_fname, class_name='ARTIFACT')
+    # load the annotations from the annotation file
+    HYP_ANNOS = sana_io.read_annotations(hypothesis_fname, class_name='ARTIFACT')
 
-        # rescale the ROI annotations to the given pixel resolution
+    # rescale the ROI annotations to the given pixel resolution
+    for HYP_ANNO in HYP_ANNOS:
+        if HYP_ANNO.lvl != args.lvl:
+            converter.rescale(HYP_ANNO, args.lvl)
+
+    for ROI in ROIS:
+        # get the top left coordinate and the size of the bounding centroid
+        loc, size = ROI.bounding_box()
+
+        frame = loader.load_frame(loc, size)
+
+        fig, axs = plt.subplots(1,2, sharex=False, sharey=False)
+
+        # Plotting the processed frame and processed frame with clusters
+        axs[0].imshow(frame.img, cmap='gray')
         for REF_ANNO in REF_ANNOS:
-            if REF_ANNO.lvl != args.lvl:
-                converter.rescale(REF_ANNO, args.lvl)
+            REF_ANNO.translate(loc)
+            plot_poly(axs[0], REF_ANNO, color='red')
 
-        #find the hypothesis annotation file based on the slide filename
-        hypothesis_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.hypdir)
-
-
-        # load the annotations from the annotation file
-        HYP_ANNOS = sana_io.read_annotations(hypothesis_fname, class_name='ARTIFACT')
-
-        # rescale the ROI annotations to the given pixel resolution
+        axs[1].imshow(frame.img, cmap='gray')
         for HYP_ANNO in HYP_ANNOS:
-            if HYP_ANNO.lvl != args.lvl:
-                converter.rescale(HYP_ANNO, args.lvl)
-
-        for ROI in ROIS:
-            # get the top left coordinate and the size of the bounding centroid
-            loc, size = ROI.bounding_box()
-
-            frame = loader.load_frame(loc, size)
-
-            fig, axs = plt.subplots(1,2, sharex=False, sharey=False)
-
-            # Plotting the processed frame and processed frame with clusters
-            axs[0].imshow(frame.img, cmap='gray')
-            for REF_ANNO in REF_ANNOS:
-                REF_ANNO.translate(loc)
-                plot_poly(axs[0], REF_ANNO, color='red')
-
-            axs[1].imshow(frame.img, cmap='gray')
-            for HYP_ANNO in HYP_ANNOS:
-                HYP_ANNO.translate(loc)
-                plot_poly(axs[1], HYP_ANNO, color='blue')
-            plt.show()
-
-
-
-
-
+            HYP_ANNO.translate(loc)
+            plot_poly(axs[1], HYP_ANNO, color='blue')
+        plt.show()
 
 #
 # end of pr
