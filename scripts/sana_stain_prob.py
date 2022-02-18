@@ -9,6 +9,7 @@ import argparse
 # import cv2 as cv
 import numpy as np
 from matplotlib import pyplot as plt
+from skimage.transform import hough_line, hough_line_peaks
 
 # custom modules
 import sana_io
@@ -19,8 +20,8 @@ from sana_loader import Loader
 from sana_geo import Point, separate_seg, plot_poly
 from sana_framer import Framer
 
-# import torch
-# from torch.nn import functional as F
+#import torch
+#from torch.nn import functional as F
 # from unet import UNet
 
 # this script loads a series of slides and ROIs within the given slides
@@ -148,9 +149,9 @@ def main(argv):
 
             # TODO: maybe apply this before anisodiff??
             # opening filter to remove small objects, not considered
-            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
-            cv.morphologyEx(frame.img, cv.MORPH_OPEN,
-                            kernel=kernel, dst=frame.img)
+            # kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
+            # cv.morphologyEx(frame.img, cv.MORPH_OPEN,
+            #                 kernel=kernel, dst=frame.img)
 
             # TODO: IMPORTNAT: can probably decode whole image?, would want to try with scale
             #         wouldn't fit in CUDA most likely

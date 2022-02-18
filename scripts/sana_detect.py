@@ -1,4 +1,4 @@
-#!/usr/local/bin/python3.9
+#!/usr/bin/env python
 
 # system modules
 import os
@@ -7,6 +7,7 @@ import argparse
 
 # installed modules
 import numpy as np
+from matplotlib import pyplot as plt
 
 # custom modules
 import sana_io
@@ -43,7 +44,7 @@ def main(argv):
                                   args.idir, args.rdir)
         id = sana_io.get_slide_id(os.path.basename(slide_f))
         frames = sorted([os.path.join(fpath, f) \
-                         for f in os.listdir(fpath) if 'PROB' in f and id in f])
+                         for f in os.listdir(fpath) if 'PROB' in f and id in f and f.endswith('.png')])
 
         # loop through the prob. maps
         annos = []
@@ -69,23 +70,38 @@ def main(argv):
             mask_f = sana_io.create_filepath(
                 slide_f, ext='.png', suffix='_%d_MASK' % frame_i,
                 fpath=args.idir, rpath=args.rdir)
+            if not os.path.exists(mask_f):
+                continue
+
             mask = Frame(mask_f, lvl, converter)
 
             if args.method == 'naive':
 
                 # get the threshold
+                stain_threshold = None
                 try:
                     stain_threshold = int(args.threshold)
                 except ValueError:
-                    stain_threshold = get_stain_threshold(
-                        frame, mi=args.stain_min, mx=args.stain_max)
+                    pass
+                if stain_threshold is None:
+                    try:
+                        stain_threshold = get_stain_threshold(
+                            frame, mi=args.stain_min, mx=args.stain_max)
+                    except:
+                        pass
+                if stain_threshold is None:
+                    continue
                 writer.data['stain_threshold'] = stain_threshold
+                writer.write_data()
 
                 # threshold the image
                 frame.threshold(stain_threshold, 0, 1)
 
                 # mask the frame
                 frame.mask(mask)
+
+                # binarize the frame
+                frame.img = frame.img // 255
 
                 # detect the objects in the thresholded frame
                 frame.get_contours()
@@ -101,9 +117,11 @@ def main(argv):
                 # get the polygons, translate back to the origin
                 polygons = [d.polygon for d in detections]
                 for i in range(len(polygons)):
-                    polygons[i].translate(-writer.data['loc'])
+                    converter.to_pixels(polygons[i], writer.data['lvl'])
+                    polygons[i].rotate(frame.size()//2, -writer.data['angle'])
+                    polygons[i].translate(-(writer.data['loc']+writer.data['crop_loc']))
                     polygons[i] = polygons[i].connect()
-
+                    polygons[i] = converter.to_int(polygons[i])
             else:
                 pass
 
@@ -116,7 +134,7 @@ def main(argv):
 
         # save the results
         out_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.odir)
+            slide_f, ext='.json', fpath=args.idir, rpath=args.rdir)
         sana_io.write_annotations(out_f, annos)
     #
     # end of slides loop
@@ -129,8 +147,6 @@ def cmdl_parser(argv):
                         help="filelists containing .svs files")
     parser.add_argument('-idir', type=str, default="",
                         help="location to read prob. maps from")
-    parser.add_argument('-odir', type=str, default="",
-                        help="location to write detections to")
     parser.add_argument('-rdir', type=str, default="",
                         help="directory path to replace")
     parser.add_argument('-method', type=str, default="naive",
@@ -141,6 +157,8 @@ def cmdl_parser(argv):
                         help="min value for thresholding algorithms")
     parser.add_argument('-stain_max', type=int, default=255,
                         help="max value for thresholding algorithms")
+    parser.add_argument('-detection_class', type=str, default="Detection",
+                        help="annotation class name to use for detections")
     return parser
 #
 # end of cmdl_parser

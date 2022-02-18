@@ -1,6 +1,5 @@
 #!/usr/bin/env python
 
-
 # system packages
 import os
 import sys
@@ -62,7 +61,10 @@ def score(ref_annos, hyp_annos, iou_threshold, args):
 
             # only get IOU score if ref is in the same file as hyp
             if os.path.basename(ref.file_name) == os.path.basename(hyp.file_name):
-                scores.append(iou(ref, hyp))
+                try:
+                    scores.append(iou(ref, hyp))
+                except:
+                    scores.append(0)
 
         # no ref in the current hyp's filename, FP
         if len(scores) == 0:
@@ -147,48 +149,53 @@ def get_annos(args):
 
     # loop through annotation files
     ref_annos, hyp_annos = [], []
-    for rf, hf in zip(ref_files, hyp_files):
+    for rf in ref_files:
+        for hf in hyp_files:
 
-        # make sure there is a one to one match between ref and hyp dirs
-        if os.path.basename(rf) != os.path.basename(hf):
-            print("***> ERROR: Files Not Matching -- (%s) and (%s)" % (rf, hf))
-            exit()
+            # make sure there is a one to one match between ref and hyp dirs
+            if os.path.basename(rf) == os.path.basename(hf):
 
-        # load the ref rois, if given
-        if args.roiclass is None:
-            rois = []
-        else:
-            rois = []
-            for roi_class in args.roiclass:
-                rois += read_annotations(rf, class_name=roi_class)
+                # load the ref rois, if given
+                if args.roiclass is None:
+                    rois = []
+                else:
+                    rois = []
+                    for roi_class in args.roiclass:
+                        rois += read_annotations(rf, class_name=roi_class)
+                #
+                # end of roi reading
+
+                # load the ref annotations with any of the given ref classes
+                if args.refclass is None:
+                    ra = read_annotations(rf)
+                else:
+                    ra = []
+                    for rclass in args.refclass:
+                        ra += read_annotations(rf, class_name=rclass)
+                #
+                # end of ref anno reading
+
+                # load the hyp annotations and confidences with a given hyp class
+                if args.hypclass is None:
+                    ha = read_annotations(hf)
+                else:
+                    ha = []
+                    for hclass in args.hypclass:
+                        ha += read_annotations(hf, class_name=hclass)
+                #
+                # end of hclass loop
+
+                # keep only the annotations within a given roi
+                ref_annos += check_inside(rois, ra)
+                hyp_annos += check_inside(rois, ha)
+
+                break
+            #
+            # end of file matching check
         #
-        # end of roi reading
-
-        # load the ref annotations with any of the given ref classes
-        if args.refclass is None:
-            ra = read_annotations(rf)
-        else:
-            ra = []
-            for rclass in args.refclass:
-                ra += read_annotations(rf, class_name=rclass)
-        #
-        # end of ref anno reading
-
-        # load the hyp annotations and confidences with a given hyp class
-        if args.hypclass is None:
-            ha = read_annotations(hf)
-        else:
-            ha = []
-            for hclass in args.hypclass:
-                ha += read_annotations(hf, class_name=hclass)
-        #
-        # end of hclass loop
-
-        # keep only the annotations within a given roi
-        ref_annos += check_inside(rois, ra)
-        hyp_annos += check_inside(rois, ha)
+        # end of hyp file loop
     #
-    # end of file loop
+    # end of ref file loop
 
     # sort the hyp annotations from most to least confident
     hyp_annos.sort(key=lambda x: x.confidence, reverse=True)
@@ -307,6 +314,7 @@ def main(argv):
     parser.add_argument('-roiclass', type=str, nargs='*', help=ROICLASS_HELP)
     parser.add_argument('-iouthresh', type=float, nargs='*', default=[0.5],
                         help=IOUTHRESH_HELP)
+    parser.add_argument('-odir', type=str, default='.')
     parser.add_argument('-title', type=str, default="")
     args = parser.parse_args()
 
@@ -331,8 +339,10 @@ def main(argv):
     ax.set_title(args.title)
     ax.set_ylabel('Precision')
     ax.set_xlabel('Recall')
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
     plt.legend()
-    plt.show()
+    plt.savefig(os.path.join(args.odir, 'pr_curves.png'), dpi=300)
 #
 # end of main
 

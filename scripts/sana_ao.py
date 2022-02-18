@@ -7,6 +7,7 @@ import argparse
 
 # installed modules
 import numpy as np
+from matplotlib import pyplot as plt
 
 # custom modules
 import sana_io
@@ -38,25 +39,23 @@ def main(argv):
         print('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
 
-        # get the prob. map frames to process
-        fpath = sana_io.get_fpath(os.path.dirname(slide_f),
-                                  args.idir, args.rdir)
-        id = sana_io.get_slide_id(os.path.basename(slide_f))
-        frames = sorted([os.path.join(fpath, f) \
-                         for f in os.listdir(fpath) if 'PROB' in f and id in f])
-
-        # loop through the prob. maps
-        for frame_i, frame_f in enumerate(frames):
+        anno_f = sana_io.create_filepath(slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+        rois = sana_io.read_annotations(anno_f, class_name=args.roi_class)
+        for roi_i, roi in enumerate(rois):
             print('----> Processing Frame (%d/%d)' % \
-                  (frame_i+1, len(frames)), flush=True)
-
+                  (roi_i+1, len(rois)), flush=True)            
+            
             # load the data writer
             data_f = sana_io.create_filepath(
-                slide_f, ext='.csv', suffix='_%d' % frame_i,
+                slide_f, ext='.csv', suffix='_%d' % roi_i,
                 fpath=args.idir, rpath=args.rdir)
             writer = DataWriter(data_f)
 
             # load the frame
+            frame_f = sana_io.create_filepath(slide_f, ext='.png', fpath=args.idir, rpath=args.rdir,
+                                              suffix='_%d_PROB' % roi_i)
+            if not os.path.exists(frame_f):
+                continue
             loader = Loader(slide_f)
             lvl = writer.data['lvl']
             loc = writer.data['loc']
@@ -64,9 +63,12 @@ def main(argv):
             converter = loader.converter
             frame = Frame(frame_f, lvl, converter)
 
+            roi.translate(writer.data['loc']+writer.data['crop_loc'])
+            roi.rotate(frame.size()//2, writer.data['angle'])
+            
             # load the original mask
             mask_f = sana_io.create_filepath(
-                slide_f, ext='.png', suffix='_%d_MASK' % frame_i,
+                slide_f, ext='.png', suffix='_%d_MASK' % roi_i,
                 fpath=args.idir, rpath=args.rdir)
             orig_mask = Frame(mask_f, lvl, converter)
 
@@ -78,7 +80,8 @@ def main(argv):
             for roi_class in args.roi_classes:
                 rois = sana_io.read_annotations(anno_f, roi_class)
                 for roi in rois:
-                    roi.translate(loc)
+                    roi.translate(writer.data['loc']+writer.data['crop_loc'])
+                    roi.rotate(frame.size()//2, writer.data['angle'])                    
                 masks.append(create_mask(
                     rois, frame.size(), lvl, converter, y=255))
             #
@@ -121,7 +124,7 @@ def main(argv):
             # calculate %AO
             ao = area / total_area
             writer.data['ao'] = ao
-
+            
             # apply the supplementary masks and get the %AO
             aos = []
             for mask in masks:
@@ -133,9 +136,11 @@ def main(argv):
                 aos.append(ao)
             writer.data['aos_list'] = aos
 
+            print(ao, aos)
+            
             # save the results
             out_f = sana_io.create_filepath(
-                slide_f, ext='.png', suffix='_%d_THRESH' % frame_i,
+                slide_f, ext='.png', suffix='_%d_THRESH' % roi_i,
                 fpath=args.idir, rpath=args.rdir)
             frame_orig_mask.save(out_f)
             writer.write_data()
@@ -156,6 +161,7 @@ def cmdl_parser(argv):
                         help="location to read masks from")
     parser.add_argument('-rdir', type=str, default="",
                         help="directory path to replace")
+    parser.add_argument('-roi_class', type=str, default='ROI')
     parser.add_argument('-roi_classes', type=str, nargs='*', default=[],
                         help="ROI to use to generate the mask, if wanted")
     parser.add_argument('-threshold', type=str, default="kittler",
