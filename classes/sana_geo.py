@@ -46,11 +46,15 @@ def ray_tracing(x,y,poly):
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent
 #  vertices to separate into the 2 annotations
-def separate_seg(x):
+def separate_seg(x, y_only=False):
     dist = []
     for i in range(x.shape[0]-1):
         a, b = x[i], x[i+1]
-        dist.append((a[0] - b[0])**2 + (a[1] - b[1])**2)
+        if not y_only:
+            score = (a[0] - b[0])**2 + (a[1] - b[1])**2
+        else:
+            score = (a[1] - b[1])**2
+        dist.append(score)
     dist = np.array(dist)
 
     # get the 2 separation vertices
@@ -99,10 +103,21 @@ def get_ortho_angle(seg):
 #
 # end of get_ortho_seg
 
+def transform_poly(x, loc, crop_loc, M1, M2):
+    x.translate(loc)
+    x = x.transform(M1)
+    x.translate(crop_loc)
+    x = x.transform(M2)
+    return x
+
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, color='black'):
-    for i in range(x.shape[0]-1):
-        ax.plot((x[i][0],x[i+1][0]),(x[i][1],x[i+1][1]), color=color)
+def plot_poly(ax, x, color='black', last=True):
+    if last:
+        en = x.shape[0]-1
+    else:
+        en = x.shape[0]-2
+    for i in range(en):
+        ax.plot((x[i][0],x[i+1][0]),(x[i][1],x[i+1][1]), color=color)            
 
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best
@@ -294,6 +309,13 @@ class Polygon(Array):
             self.y1 = np.roll(y0, 1)
         return self.x1, self.y1
 
+    # TODO: make this inplace
+    def transform(self, M):
+        x = self @ M[:,:2].T + M[:,2]
+        return Polygon(x[:,0], x[:,1], self.is_micron, self.lvl, self.order)
+    def transform_inv(self, M):
+        x = (self - M[:,2]) @ np.linalg.inv(M[:,:2].T)
+        return Polygon(x[:,0], x[:,1], self.is_micron, self.lvl, self.order)
 
     # calculates the area of the Polygon
     # TODO: this should return a Value (or something) that tracks the order
@@ -380,12 +402,21 @@ class Polygon(Array):
     # convert the Array to a Annotation to prepare for file io
     def to_annotation(self, file_name, class_name,
                       anno_name="", confidence=1.0):
-        x, y = self.get_xy()
+        x, y = self.connect().get_xy()
         return Annotation(None, file_name, class_name, anno_name,
                           confidence=confidence, is_micron=self.is_micron,
                           lvl=self.lvl, order=self.order, x=x, y=y)
     #
     # end of to_annotation
+
+    def clip(self, x0, x1, y0, y1):
+        x, y = [], []
+        for i in range(self.shape[0]):
+            if self[i][0] <= x1 and self[i][0] >= x0 and \
+                self[i][1] <= y1 and self[i][1] >= y0:
+                x.append(self[i][0])
+                y.append(self[i][1])
+        return Polygon(x, y, self.is_micron, self.lvl, self.order)
 #
 # end of Polygon
 
@@ -461,6 +492,10 @@ class Annotation(Polygon):
             coords = geo['coordinates']
             x = np.array([float(c[0]) for c in coords[0]])
             y = np.array([float(c[1]) for c in coords[0]])
+        elif geo['type'] == 'MultiPoint':
+            coords = geo['coordinates']
+            x = np.array([float(c[0]) for c in coords])
+            y = np.array([float(c[1]) for c in coords])            
         else:
             x = np.array([])
             y = np.array([])
