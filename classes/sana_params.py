@@ -1,0 +1,142 @@
+
+# installed modules
+import numpy as np
+
+# custom modules
+from sana_geo import Point
+
+# NOTE: to add a new field to an existing datatype:
+#           1) add the key to X_KEYS list below
+
+# NOTE: to add a new datatype:
+#           1) create a X_KEYS list at top of file
+#           2) add X_KEYS to the KEYS list below
+#           3) create a parse_X() function
+#           4) create a convert_X() function
+#           5) add X_KEYS to conditional in parse_val()
+#           6) add datatype check to to_string()
+
+# lists of fields to store, separated by the datatype they should be stored as
+INT_KEYS = ['lvl', 'csf_threshold', 'stain_threshold']
+FLOAT_KEYS = ['ao', 'area', 'angle']
+LIST_KEYS = ['aos', 'areas']
+POINT_KEYS = ['loc', 'size', 'crop_loc', 'crop_size', 'ds']
+M_KEYS = ['M1', 'M2']
+KEYS = INT_KEYS + FLOAT_KEYS + LIST_KEYS + POINT_KEYS + M_KEYS
+
+# this class reads and writes the parameters and data associated with processed Frames
+# TODO: Params isn't a great name since it also includes calculated data...
+class Params:
+    def __init__(self, fname):
+
+        # initalize the data
+        self.data = {k: None for k in KEYS}
+
+        # line format in the output file
+        self.line = '%s\t%s\n'
+
+        # load the data from the filename into memory, if exists
+        self.read_data(fname)
+    #
+    # end of constructor
+
+    # reads the params/data from the .csv file
+    def read_data(self, fname):
+        self.fname = fname
+
+        # make sure the file exists already
+        if not os.path.exists(self.fname):
+            return
+
+        # load the fields into memory
+        for line in open(self.fname, 'r'):
+            key, val = line.split('\t', maxsplit=1)
+            self.data[key] = self.parse_val(key, val.rstrip())
+    #
+    # end of read_data
+
+    # loops through the stored key value pairs and writes them to the file
+    def write_data(self):
+        fp = open(self.fname, 'w')
+        for key in sorted(self.data.keys()):
+            self.write_line(fp, key, self.data[key])
+        fp.close()
+    #
+    # end of write_data
+
+    # converts the value to a string then writes the data to a line
+    def write_line(self, fp, key, val):
+        val = self.to_string(val)
+        fp.write(self.line % (key, val))
+    #
+    # end of write_line
+
+    # parses the value from string to a specific datatype based on the key
+    def parse_val(self, key, val):
+        if len(val) == 0:
+            return None
+        elif key in INT_KEYS:
+            return self.parse_int(val)
+        elif key in FLOAT_KEYS:
+            return self.parse_float(val)
+        elif key in LIST_KEYS:
+            return self.parse_list(val)
+        elif key in POINT_KEYS:
+            return self.parse_point(val)
+        elif key in M_KEYS:
+            return self.parse_M(val)
+        else:
+            return None
+    #
+    # end of parse_val
+
+    # functions to parse strings into different datatypes
+    def parse_int(self, x):
+        return int(x)
+    def parse_float(self, x):
+        return float(x)
+    def parse_list(self, x):
+        return [float(y) for y in x.split('\t')]
+    def parse_point(self, val):
+        x0, x1 = [float(x) for x in val.split('\t')]
+        return Point(x0, x1, False, 0)
+    def parse_M(self, val):
+        M = self.parse_list(val)
+        return np.array(M, dtype=np.float64).reshape((2,3))
+    #
+    # end of parsing
+    
+    # converts a value into a string based on its datatype
+    def to_string(self, x):
+        if x is None:
+            return None
+        elif type(x) is str:
+            return x
+        elif type(x) is int:
+            return convert_int(x)
+        elif type(x) is float:
+            return convert_float(x)
+        elif type(x) is Point or type(x) is list:
+            return convert_list(x)
+        elif type(x) is np.ndarray and x.shape == (2,3):
+            return convert_M(x)
+        else:
+            return None
+    #
+    # end of to_string
+    
+    # functions for converting values of different datatypes to strings
+    def convert_int(self, x):
+        return "%d" % (x)
+    def convert_float(self, x):
+        return '%.6f' % (x)
+    def convert_list(self, x):
+        return '\t'.join([to_string(y) for y in x])
+    def convert_point(self, x):
+        return '\t'.join([to_string(y) for y in x])
+    def convert_M(self, val):
+        return self.write_float_list(val.flatten()) if not val is None else ""
+    #
+    # end of string conversion    
+#
+# end of Params
