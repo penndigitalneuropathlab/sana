@@ -3,6 +3,8 @@
 import os
 import sys
 import json
+import re
+import fnmatch
 
 # installed packages
 import numpy as np
@@ -124,7 +126,8 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
     fpath = get_fpath(ifpath, fpath, rpath)
 
     # construct the filepath
-    ofile = get_fullpath(os.path.join(fpath, fname))
+    #ofile = get_fullpath(os.path.join(fpath, fname))
+    ofile = os.path.join(fpath, fname)
 
     return ofile
 #
@@ -134,10 +137,8 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 def read_list_file(list_f):
 
     # read the data from the filelist
-    lines = [get_fullpath(l.rstrip()) for l in open(get_fullpath(list_f), 'r')]
-
-    # keep only the files that actually exist
-    return [l for l in lines if os.path.exists(l)]
+    files = [get_fullpath(l.rstrip()) for l in open(get_fullpath(list_f), 'r')]
+    return files
 #
 # end of read_list_file
 
@@ -166,8 +167,10 @@ def fix_annotations(ifile):
 # loads a JSON annotation file into memory
 #  -ifile: input JSON file to be read
 #  -class_name: if given, only returns annotations with this class
-def read_annotations(ifile, class_name=None):
-
+def read_annotations(ifile, class_name=None, name=None):
+    if not ifile.endswith('.json'):
+        print('ERROR: Bad Filetype!')
+        exit()
     # remove unwanted header bytes if they exist
     fix_annotations(ifile)
 
@@ -176,7 +179,7 @@ def read_annotations(ifile, class_name=None):
         return []
 
     # load the json data
-    fp = open(ifile, 'r')
+    fp = open(ifile, 'r', encoding='utf-8')
     data = json.loads(fp.read())
 
     # load the annotations
@@ -220,7 +223,9 @@ def read_annotations(ifile, class_name=None):
 
     # only return annotations with the given class name
     if not class_name is None:
-        annotations = [a for a in annotations if a.class_name == class_name]
+        annotations = [a for a in annotations if fnmatch.fnmatch(a.class_name, class_name)]
+    if not name is None:
+        annotations = [a for a in annotations if fnmatch.fnmatch(a.name, name)]
 
     return annotations
 #
@@ -282,12 +287,16 @@ class DataWriter:
             'size': None,
             'ao': None,
             'aos_list': [],
+            'area': None,
+            'areas_list': [],
             'csf_threshold': None,
             'stain_threshold': None,
             'angle': None,
             'crop_loc': None,
             'crop_size': None,
             'ds': None,
+            'M1': None,
+            'M2': None,            
         }
         self.line = '%s\t%s\n'
 
@@ -322,6 +331,9 @@ class DataWriter:
         fp.write(self.line % ('ao', self.write_float(self.data['ao'])))
         fp.write(self.line % ('aos_list',
                               self.write_float_list(self.data['aos_list'])))
+        fp.write(self.line % ('area', self.write_float(self.data['area'])))
+        fp.write(self.line % ('areas_list',
+                              self.write_float_list(self.data['areas_list'])))
         fp.write(self.line % ('csf_threshold',
                               self.write_int(self.data['csf_threshold'])))
         fp.write(self.line % ('stain_threshold',
@@ -334,6 +346,10 @@ class DataWriter:
                               self.write_point(self.data['crop_size'])))
         fp.write(self.line % ('ds',
                               self.write_point(self.data['ds'])))
+        fp.write(self.line % ('M1',
+                              self.write_M(self.data['M1'])))
+        fp.write(self.line % ('M2',
+                              self.write_M(self.data['M2'])))
         fp.close()
     #
     # end of write_data
@@ -351,6 +367,10 @@ class DataWriter:
             return self.parse_float(val)
         elif key == 'aos_list':
             return self.parse_float_list(val)
+        elif key == 'area':
+            return self.parse_float(val)
+        elif key == 'areas_list':
+            return self.parse_float_list(val)
         elif key == 'csf_threshold':
             return self.parse_int(val)
         elif key == 'stain_threshold':
@@ -363,6 +383,10 @@ class DataWriter:
             return self.parse_point(val)
         elif key == 'ds':
             return self.parse_point(val)
+        elif key == 'M1':
+            return self.parse_M(val)
+        elif key == 'M2':
+            return self.parse_M(val)
         else:
             return None
     #
@@ -377,6 +401,9 @@ class DataWriter:
         return Point(x0, x1, False, 0)
     def parse_float_list(self, val):
         return [float(x) for x in val.split('\t') if len(x) != 0]
+    def parse_M(self, val):
+        M = self.parse_float_list(val)
+        return np.array(M, dtype=np.float64).reshape((2,3))
     #
     # end of parsing
 
@@ -387,7 +414,9 @@ class DataWriter:
     def write_point(self, val):
         return '%.6f\t%.6f' % (val[0], val[1]) if not val is None else ""
     def write_float_list(self, val):
-        return '%.6f\t'*len(val) % tuple(val)
+        return '%.6f\t'*len(val) % tuple(val) if not val is None else ""
+    def write_M(self, val):
+        return self.write_float_list(val.flatten()) if not val is None else ""
     #
     # end of writing
 #
