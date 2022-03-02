@@ -665,8 +665,8 @@ def mean_normalize(loader, frame):
 
     lvl = 1
     ds = int(loader.ds[lvl] / loader.ds[loader.lvl])
-    tsize = Point(100, 100, True, lvl)
-    tstep = Point(10, 10, True, lvl)
+    tsize = Point(200, 200, True, 0)
+    tstep = Point(10, 10, True, 0)
     tiler = Tiler(lvl, frame.converter, tsize, tstep)
 
     frame_ds = frame.copy()
@@ -691,10 +691,12 @@ def mean_normalize(loader, frame):
     frame_norm.scale([1/ds, 1/ds])
     frame_norm.img = frame_norm.img[:frame.img.shape[0], :frame.img.shape[1], :]
 
+    frame_norm.converter.to_pixels(tsize, lvl)
+    frame_norm.img = cv2.GaussianBlur(frame.img, ksize=(0,0), sigmaX=tsize[0], sigmaY=tsize[1])[:,:,None]
     frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
     frame.img = frame.img.astype(np.uint8)
-    return frame
+    return frame, frame_norm
 #
 # end of mean_normalize
 

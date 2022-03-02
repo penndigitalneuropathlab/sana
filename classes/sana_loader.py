@@ -22,7 +22,7 @@ class FileNotSupported(Exception):
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
 class Loader(openslide.OpenSlide):
-    def __init__(self, fname, calc_thresh=True):
+    def __init__(self, fname, get_thumb=True):
 
         # initialize the object with the slide
         self.fname = sana_io.get_fullpath(fname)
@@ -39,15 +39,15 @@ class Loader(openslide.OpenSlide):
         self.converter = Converter(self.mpp, self.ds)
         self.csf_threshold = None
 
-        # pre-load the thumbnail for easy access
-        if calc_thresh:
-            thumbnail = self.load_thumbnail()
+        if get_thumb:
+            # pre-load the thumbnail for easy access
+            self.thumbnail = self.load_thumbnail()
 
             # calculate the color of the slide background
-            self.slide_color = copy(thumbnail).get_bg_color()
+            self.slide_color = copy(self.thumbnail).get_bg_color()
 
             # calculate the Slide/Tissue threshold
-            self.csf_threshold = get_csf_threshold(copy(thumbnail))
+            self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
     #
     # end of constructor
 
@@ -148,6 +148,8 @@ class Loader(openslide.OpenSlide):
         # store the processing params and return the frame
         writer.data['loc'] = loc
         writer.data['size'] = size
+        writer.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
+        writer.data['crop_size'] = np.copy(size)
         return frame
     #
     # end of load_roi
