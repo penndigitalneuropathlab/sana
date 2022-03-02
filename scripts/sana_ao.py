@@ -8,12 +8,14 @@ import argparse
 # installed modules
 import numpy as np
 from matplotlib import pyplot as plt
+from PIL import Image
 
 # custom modules
 import sana_io
 from sana_io import DataWriter
 from sana_frame import Frame, get_stain_threshold, create_mask
 from sana_loader import Loader
+from sana_geo import transform_poly
 
 # this script loads a series of slides and ROIs within the given slides
 # it loads the data within ROIs, and generates a probability map representing
@@ -39,6 +41,10 @@ def main(argv):
               (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
 
         anno_f = sana_io.create_filepath(slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+        
+        if not os.path.exists(anno_f):
+            continue
+        
         rois = sana_io.read_annotations(anno_f, class_name=args.roi_class)
         for roi_i, roi in enumerate(rois):
             print('----> Processing Frame (%d/%d)' % \
@@ -62,8 +68,9 @@ def main(argv):
             converter = loader.converter
             frame = Frame(frame_f, lvl, converter)
 
-            roi.translate(writer.data['loc']+writer.data['crop_loc'])
-            roi.rotate(frame.size()//2, writer.data['angle'])
+            roi = transform_poly(
+                roi, writer.data['loc'], writer.data['crop_loc'],
+                writer.data['M1'], writer.data['M2'])
             
             # load the original mask
             mask_f = sana_io.create_filepath(
@@ -78,9 +85,11 @@ def main(argv):
             masks = []
             for roi_class in args.roi_classes:
                 rois = sana_io.read_annotations(anno_f, roi_class)
-                for roi in rois:
-                    roi.translate(writer.data['loc']+writer.data['crop_loc'])
-                    roi.rotate(frame.size()//2, writer.data['angle'])                    
+                for roi_i in range(len(rois)):
+                    rois[roi_i] = transform_poly(
+                        rois[roi_i], writer.data['loc'], writer.data['crop_loc'],
+                        writer.data['M1'], writer.data['M2'])
+
                 masks.append(create_mask(
                     rois, frame.size(), lvl, converter, y=255))
             #
@@ -123,24 +132,45 @@ def main(argv):
             # calculate %AO
             ao = area / total_area
             writer.data['ao'] = ao
-            
+            writer.data['area'] = total_area
+
             # apply the supplementary masks and get the %AO
-            aos = []
+            aos, areas = [], []
             for mask in masks:
                 frame_mask = frame.copy()
                 frame_mask.mask(mask)
                 total_area = np.sum(mask.img / 255)
                 area = np.sum(frame_mask.img / 255)
                 ao = area / total_area
+                areas.append(total_area)
                 aos.append(ao)
             writer.data['aos_list'] = aos
+            writer.data['areas_list'] = areas
 
-            print(ao, aos)
-            
             # save the results
             out_f = sana_io.create_filepath(
                 slide_f, ext='.png', suffix='_%d_THRESH' % roi_i,
                 fpath=args.idir, rpath=args.rdir)
+            qc_f = sana_io.create_filepath(
+                slide_f, ext='.png', suffix='_%d_QC' % roi_i,
+                fpath=args.idir, rpath=args.rdir)
+            orig_frame_f = sana_io.create_filepath(
+                slide_f, ext='.png', suffix='_%d_ORIG' % roi_i,
+                fpath=args.idir, rpath=args.rdir)            
+            orig_frame = Frame(orig_frame_f, loader.lvl, loader.converter)
+            img1 = orig_frame.img.astype(float)/255
+            img2 = frame.img.astype(float)/255
+                
+            z = np.zeros((frame.img.shape[0], frame.img.shape[1], 1)).astype(float)
+            img2 = np.concatenate((img2, z, z), axis=-1)
+            
+            alpha = 0.7
+            a2 = np.clip(img2 - (1-alpha), 0, 1)
+                
+            img3 = (1.0-a2) * img1 + a2 * img2
+            img3 = np.rint(img3*255).astype(np.uint8)
+            
+            Image.fromarray(img3).save(qc_f)
             frame_orig_mask.save(out_f)
             writer.write_data()
         #
