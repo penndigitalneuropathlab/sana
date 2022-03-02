@@ -6,7 +6,7 @@ import sys
 import argparse
 
 # installed modules
-import cv2 as cv
+import cv2
 import numpy as np
 from matplotlib import pyplot as plt
 from skimage.transform import hough_line, hough_line_peaks
@@ -17,7 +17,7 @@ from sana_io import DataWriter
 from sana_frame import Frame, mean_normalize, create_mask
 from sana_color_deconvolution import StainSeparator
 from sana_loader import Loader
-from sana_geo import Point, separate_seg, plot_poly
+from sana_geo import Point, separate_seg, plot_poly, transform_poly
 from sana_framer import Framer
 
 import torch
@@ -48,7 +48,14 @@ def main(argv):
         device = torch.device('cpu')
         net.to(device=device)
         net.load_state_dict(torch.load(model, map_location=device))
-        
+
+    if args.algo == 'tangle':
+        model = 'C:/DNPL/data/tangle_unet/data/unet/checkpoint_epoch3.pth'
+        net = UNet(n_channels=1, n_classes=2)
+        device = torch.device('cpu')
+        net.to(device=device)
+        net.load_state_dict(torch.load(model, map_location=device))
+
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
         print("--> Processing: %s (%d/%d)" % \
@@ -71,7 +78,7 @@ def main(argv):
         loader.set_lvl(args.lvl)
 
         # load the ROIs to process
-        rois = sana_io.read_annotations(anno_f, args.roi_class)
+        rois = sana_io.read_annotations(anno_f, class_name=args.roi_class, name=args.anno_name)
         if rois is None or len(rois) == 0:
             print("****> Skipping: No ROIs Found!")
             continue
@@ -82,14 +89,17 @@ def main(argv):
                   (roi_i+1, len(rois)), flush=True)
 
             # get the prob map output filename
+            orig_f = sana_io.create_filepath(
+                slide_f, ext=args.ofiletype, suffix='_%d_ORIG' % roi_i,
+                fpath=args.odir, rpath=args.rdir)
             out_f = sana_io.create_filepath(
                 slide_f, ext=args.ofiletype, suffix='_%d_PROB' % roi_i,
                 fpath=args.odir, rpath=args.rdir)
 
-            # skip the image if already generated
-            if os.path.exists(out_f):
-                continue
-            
+            # # skip the image if already generated
+            # if os.path.exists(out_f):
+            #     continue
+
             # initialize the data writer
             data_f = sana_io.create_filepath(
                 slide_f, ext='.csv', suffix='_%d' % roi_i,
@@ -97,7 +107,7 @@ def main(argv):
             writer = DataWriter(data_f)
             writer.data['lvl'] = loader.lvl
             writer.data['csf_threshold'] = loader.csf_threshold
-
+            
             # get the mask output filename
             mask_f = sana_io.create_filepath(
                 slide_f, ext=args.ofiletype, suffix='_%d_MASK' % roi_i,
@@ -106,61 +116,73 @@ def main(argv):
             # scale the roi to current resolution
             converter.rescale(roi, loader.lvl)
 
+            # load the frame into memory
             try:
+
+                # rotate the image so that the segmentation is orthogonal
+                # and layer 1 is on top
                 if args.gm_seg:
                     frame = loader.load_gm_seg(writer, roi)
 
-                # TODO: implement this, maybe use hough, or rely on slide, or use same method as above
-                elif args.crude_roi:
-                    frame = loader.load_crude_roi(writer, roi)
-                
                 # no need to rotate, just load the image inside the rectangle roi
                 else:
                     frame = loader.load_roi(writer, roi)
-            except:
+            except Exception as e:
                 print('****> Skipping: Cant load frame!')
-                continue
+                print(e)
+                raise e
             #
             # end of frame loading
+
+            # save the original frame data
+            frame.save(orig_f)
+
+            # transform the roi to the frame's coordinate system
+            roi = transform_poly(
+                roi, writer.data['loc'], writer.data['crop_loc'],
+                writer.data['M1'], writer.data['M2'])
 
             # create a binary mask to remove data outside the ROI
             mask = create_mask([roi], frame.size(), frame.lvl, frame.converter)
 
-            # TODO: need to get this from the stain type (NeuN -> H-DAB)
-            # separate the target stain from the image
-            stain = 'H-DAB'
-            separator = StainSeparator(stain, args.target, od=False, gray=True)
-            frame = Frame(separator.run(frame.img)[0],
-                          loader.lvl, loader.converter)
+            if args.algo == 'tangle':
+                separator = StainSeparator('H-DAB', 'HEM', gray=True)
+                hem = Frame(separator.run(frame.img), loader.lvl, loader.converter)
 
-            # inverse image to create a stain prob map
-            frame.img = 255 - frame.img
+                separator = StainSeparator('H-DAB', 'DAB', gray=True)
+                frame = Frame(separator.run(frame.img), loader.lvl, loader.converter)
 
-            # mask out unwanted data
-            frame.mask(mask)
+                frame.img = 255 - frame.img
 
-            # TODO: check order of operations
-            # normalize image by the local means to remove
-            #  inconsistent background staining
-            frame = mean_normalize(loader, frame)
+                frame = mean_normalize(loader, frame)
 
-            # anistrophic diffusion filter to smooth the interior of objects
-            frame.anisodiff()
+                frame.anisodiff()
 
-            # TODO: maybe apply this before anisodiff??
-            # opening filter to remove small objects, not considered
-            kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
-            cv.morphologyEx(frame.img, cv.MORPH_OPEN,
-                            kernel=kernel, dst=frame.img)
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
+                cv2.morphologyEx(frame.img, cv2.MORPH_OPEN,
+                                kernel=kernel, dst=frame.img)
 
-            # TODO: IMPORTNAT: can probably decode whole image?, would want to try with scale
-            #         wouldn't fit in CUDA most likely
-            # TODO: instead could try to pad to avoid black bars in image, although 1kx1k is pretty big
-            # TODO: try different models, maybe with RGB?
-            # TODO: need to check the hyper parameters of the model
-            if args.algo == 'unet':
+                frame.img = 255 - frame.img
+                hem = separator.to_od(hem.img[:,:,0])
+                img = separator.to_od(frame.img[:,:,0])
+                z = np.zeros_like(img)
+                frame = Frame(separator.combine_stains(np.stack((hem, img, z), axis=-1)), frame.lvl, frame.converter)
 
-                img = frame.img.astype(float) / 255
+                # TODO: need to get this from the stain type (NeuN -> H-DAB)
+                # separate the target stain from the image
+                stain = 'H-DAB'
+                separator = StainSeparator(stain, args.target, od=False, gray=True)
+                frame = Frame(separator.run(frame.img),
+                              loader.lvl, loader.converter)
+
+                # inverse image to create a stain prob map
+                frame.img = 255 - frame.img
+
+                frame.mask(mask)
+
+                orig_size = frame.img.shape[:2]
+                img = cv2.resize(frame.img, dsize=(orig_size[0]//2, orig_size[1]//2), interpolation=cv2.INTER_CUBIC)[:,:,None]
+                img = img.astype(float) / 255
                 img = img.transpose((2, 0, 1))
                 net.eval()
                 img = torch.from_numpy(img)
@@ -169,8 +191,72 @@ def main(argv):
                 with torch.no_grad():
                     output = net(img)
                     probs = F.softmax(output, dim=1)[0][1]
-                    frame.img[:, :, 0] = (255*probs.cpu().detach().numpy()).astype(np.uint8)
-                
+                    img = (255*probs.cpu().detach().numpy()).astype(np.uint8)
+                    frame.img[:, :, 0] = cv2.resize(img, dsize=orig_size, interpolation=cv2.INTER_CUBIC)
+
+            if args.algo == 'basic':
+
+                # TODO: need to get this from the stain type (NeuN -> H-DAB)
+                # separate the target stain from the image
+                stain = 'H-DAB'
+                separator = StainSeparator(stain, args.target, od=False, gray=True)
+                frame = Frame(separator.run(frame.img),
+                              loader.lvl, loader.converter)
+
+                # inverse image to create a stain prob map
+                frame.img = 255 - frame.img
+
+                # mask out unwanted data
+                frame.mask(mask)
+
+                # TODO: check order of operations
+                # normalize image by the local means to remove
+                #  inconsistent background staining
+                frame = mean_normalize(loader, frame)
+
+                # anistrophic diffusion filter to smooth the interior of objects
+                frame.anisodiff()
+
+                # TODO: maybe apply this before anisodiff??
+                # opening filter to remove small objects, not considered
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
+                cv2.morphologyEx(frame.img, cv2.MORPH_OPEN,
+                                kernel=kernel, dst=frame.img)
+
+            # TODO: IMPORTNAT: can probably decode whole image?, would want to try with scale
+            #         wouldn't fit in CUDA most likely
+            # TODO: instead could try to pad to avoid black bars in image, although 1kx1k is pretty big
+            # TODO: try different models, maybe with RGB?
+            # TODO: need to check the hyper parameters of the model
+            if args.algo == 'unet':
+
+                # TODO: need to get this from the stain type (NeuN -> H-DAB)
+                # separate the target stain from the image
+                stain = 'H-DAB'
+                separator = StainSeparator(stain, args.target, od=False, gray=True)
+                frame = Frame(separator.run(frame.img),
+                              loader.lvl, loader.converter)
+
+                # inverse image to create a stain prob map
+                frame.img = 255 - frame.img
+
+                # mask out unwanted data
+                frame.mask(mask)
+
+                orig_size = frame.img.shape[:2]
+                img = cv2.resize(frame.img, dsize=(orig_size[0]//2, orig_size[1]//2), interpolation=cv2.INTER_CUBIC)[:,:,None]
+                img = img.astype(float) / 255
+                img = img.transpose((2, 0, 1))
+                net.eval()
+                img = torch.from_numpy(img)
+                img = img.unsqueeze(0)
+                img = img.to(device=device, dtype=torch.float32)
+                with torch.no_grad():
+                    output = net(img)
+                    probs = F.softmax(output, dim=1)[0][1]
+                    img = (255*probs.cpu().detach().numpy()).astype(np.uint8)
+                    frame.img[:, :, 0] = cv2.resize(img, dsize=orig_size, interpolation=cv2.INTER_CUBIC)
+
                 # fs = 1000
                 # for i in range(0, 1+frame.img.shape[0]//fs):
                 #     for j in range(0, 1+frame.img.shape[1]//fs):
@@ -245,16 +331,17 @@ def cmdl_parser(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('-lists', type=str, nargs='*', required=True,
                         help="filelists containing .svs files")
-    parser.add_argument('-algo', required=True, choices=['basic', 'unet'],
+    parser.add_argument('-algo', required=True, choices=['basic', 'unet', 'tangle'],
                         help="type of processing algorithm to use")
     parser.add_argument('-lvl', type=int, default=2, choices=[0, 1, 2],
                         help="specify the slide level to process on")
     parser.add_argument('-gm_seg', action='store_true')
-    parser.add_argument('-crude_roi', action='store_true')    
+    parser.add_argument('-roi', action='store_true')
     parser.add_argument('-target', type=str, choices=['DAB', 'HEM'],
                         help="stain to process in the image")
-    parser.add_argument('-roi_class', type=str, default='ROI',
+    parser.add_argument('-roi_class', type=str, default=None,
                         help="class name of the ROI to process")
+    parser.add_argument('-anno_name', type=str, default=None)
     parser.add_argument('-adir', type=str, default="",
                         help="location of files containing ROIs")
     parser.add_argument('-odir', type=str, default="",
