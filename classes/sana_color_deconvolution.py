@@ -19,7 +19,9 @@ class StainSeparator:
         self.rgb_to_stain = self.stain_vector.v_inv
 
         # define which stains to return
-        if self.stain_target.upper() == 'ALL':
+        if type(self.stain_target) is list:
+            self.ret = self.stain_target
+        elif self.stain_target.upper() == 'ALL':
             self.ret = [True, True, True]
         else:
             self.ret = list(map(lambda x: x == self.stain_target.upper(),
@@ -43,35 +45,25 @@ class StainSeparator:
         #  using the original stain vector
         if not self.od:
             z = np.zeros_like(s1)
-            if self.ret[0]: s1 = self.combine_stains(
-                np.stack((s1, z, z), axis=-1))
-            if self.ret[1]: s2 = self.combine_stains( 
-                np.stack((z, s2, z), axis=-1))
-            if self.ret[2]: s3 = self.combine_stains(
-                np.stack((z, z, s3), axis=-1))
+            s = np.stack((z,z,z), axis=-1)
+            if self.ret[0]:
+                s[:,:,0] = s1
+            if self.ret[1]:
+                s[:,:,1] = s2
+            if self.ret[2]:
+                s[:,:,2] = s3
+            s = self.combine_stains(s)
 
             # convert to grayscale
             if self.gray:
-                if self.ret[0]: s1 = np.rint(np.dot(s1.astype(float),
-                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
-                if self.ret[1]: s2 = np.rint(np.dot(s2.astype(float),
-                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
-                if self.ret[2]: s3 = np.rint(np.dot(s3.astype(float),
-                                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
+                s = np.rint(np.dot(s.astype(float),
+                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
             #
             # end of to grayscale processing
         #
         # end of to rgb processing
 
-        # return only the stains in the target
-        ret = []
-        if self.ret[0]:
-            ret.append(s1)
-        if self.ret[1]:
-            ret.append(s2)
-        if self.ret[2]:
-            ret.append(s3)
-        return ret
+        return s
     #
     # end of run
 

@@ -14,7 +14,7 @@ from matplotlib import pyplot as plt
 
 # custom packages
 import sana_io
-from sana_geo import Point, Polygon, Line, ray_tracing, separate_seg
+from sana_geo import Point, Polygon, Line, ray_tracing, separate_seg, plot_poly
 from sana_color_deconvolution import StainSeparator
 from sana_thresholds import kittler
 from sana_tiler import Tiler
@@ -83,7 +83,7 @@ class Frame:
     # returns a duplicate of the Frame
     # NOTE: this is useful because most functions do not create copies
     def copy(self):
-        return Frame(np.copy(self.img), self.lvl, self.converter)
+        return Frame(np.copy(self.img), self.lvl, self.converter, self.csf_threshold)
     #
     # end of copy
 
@@ -127,6 +127,10 @@ class Frame:
         self.converter.to_pixels(size, self.lvl)
         loc = self.converter.to_int(loc)
         size = self.converter.to_int(size)
+        if loc[0] < 0: # TODO: sometimes bounding_box gives us negative values
+            loc[0] = 0
+        if loc[1] < 0:
+            loc[1] = 0
         self.img = self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
     #
     # end of crop
@@ -144,15 +148,38 @@ class Frame:
     #
     # end of resize
 
-    # rotates the image array around it's center based on a angle in degrees
-    def rotate(self, angle):
-        w, h = self.size()
-        cx, cy = int(w//2), int(h//2)
-        rot_mat = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
-        self.img = cv2.warpAffine(self.img, rot_mat, (w, h))
+    def get_rotation_mat(self, angle):
 
+        # get the dims and the center of the image
+        h, w = self.img.shape[:2]
+        cx, cy = w//2, h//2
+
+        # get the rotation matrix and the rotation components of the mat
+        M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+        cos = np.abs(M[0,0])
+        sin = np.abs(M[0,1])
+
+        # compute the new bounding dims
+        nw = int((h * sin) + (w * cos))
+        nh = int((h * cos) + (w * sin))
+
+        # translate the rotation mat to the new bounds
+        M[0,2] += (nw / 2) - cx
+        M[1,2] += (nh / 2) - cy
+
+        return M, nw, nh
+
+    def warp_affine(self, M, nw, nh):
+        self.img = cv2.warpAffine(self.img, M, (nw, nh))
         if self.img.ndim == 2:
             self.img = self.img[:,:,None]
+            
+    # rotates the image array around it's center based on a angle in degrees
+    def rotate(self, angle):
+        M, nw, nh = self.get_rotation_mat(angle)
+
+        # perform the rotation
+        self.warp_affine(M, nw, nh)
     #
     # end of rotate
 
@@ -285,6 +312,17 @@ class Frame:
     #
     # end of threshold
 
+    def get_intensity(self, p):
+        loc, size = p.bounding_box()
+        loc = loc.astype(int)
+        size = size.astype(int)
+        x = self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
+        p.translate(loc)
+        mask = create_mask([p], size, self.lvl, self.converter, x=0, y=1).img
+        p.translate(-loc)
+        x = np.where(mask==1, x, np.zeros_like(x))
+        return np.sum(x)
+    
     # generates the contours on all edges of the image, then filters
     #  based on size of body and hole criteria
     def get_contours(self):
@@ -338,14 +376,14 @@ class Frame:
         return [c for c in self.contours if c.body]
     def get_hole_contours(self):
         return [c for c in self.contours if c.hole]
-    
+
     # get only the vertices of the contours within the given roi
     def ray_trace_contours(self, roi):
 
         # rescale roi to current lvl
         roi_lvl = roi.lvl
         self.converter.rescale(roi, self.lvl)
-        
+
         # loop through all body contours
         x, y = [], []
         for c in self.get_body_contours():
@@ -384,21 +422,21 @@ class Frame:
                              min_hole_area=min_hole_area)
 
         return self.contours
-    
+
     # generates the CSF Line boundary from an RGB image
     # NOTE: this function can fail if given only slide or only tissue
     # TODO: does blurring affect the accuracy of the CSF boundary?
     def get_csf_boundary(self, roi):
         if not self.is_rgb():
             raise TypeException('Cannot get CSF Boundary of non-RGB image')
-                
+
         # get the contours of the tissue within the image
         # TODO: get proper parameters for this
         self.get_tissue_contours(min_body_area=1e5, min_hole_area=1e5)
 
         # form a Line array based on the body contours within the roi
         csf_boundary = self.ray_trace_contours(roi)
-        
+
         return csf_boundary
     #
     # end of get_csf_boundary
@@ -406,7 +444,7 @@ class Frame:
     # calculates the rotation of the Frame based on the linear regression of
     # the csf boundary detected within the given roi
     def get_rotation(self, roi):
-        
+
         # get the csf boundary within the roi
         csf_boundary = self.get_csf_boundary(roi)
 
@@ -564,8 +602,8 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def orient_tissue(frame, roi, angle):
-    
+def get_tissue_orientation(frame, roi, angle):
+
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
     if np.mean(s0[:,1]) > np.mean(s1[:,1]):
@@ -573,7 +611,7 @@ def orient_tissue(frame, roi, angle):
     else:
         top, bot = s0, s1
 
-    # get the amount of tissue found near each of the boundaries
+        # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()
     top.threshold(top.csf_threshold, 1, 0)
@@ -581,19 +619,14 @@ def orient_tissue(frame, roi, angle):
     bot = Frame(frame.img[int(np.min(bot[:,1])):, :], frame.lvl, frame.converter, frame.csf_threshold)
     bot.to_gray()
     bot.threshold(bot.csf_threshold, 1, 0)
-    bot_perc = np.sum(bot.img)/bot.img.size    
+    bot_perc = np.sum(bot.img)/bot.img.size
+
+    # TODO: get a new M based on the new angle and then use orig_frame to return the proper oriented frame, do this for the roi as well?
 
     # top image should have less tissue than the bottom
-    if top_perc < bot_perc:
-        pass
-    else:
-        angle += 180
-        frame.rotate(180)
-        roi.rotate(frame.size()//2, 180)
-        
-    return angle
+    return top_perc < bot_perc
 #
-# end of orient_tissue
+# end of get_tissue_orientation
 
 # generates a binary mask based on a list of given Polygons
 #  -polygons: list of polygons to be filled with value y

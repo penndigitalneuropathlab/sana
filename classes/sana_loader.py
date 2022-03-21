@@ -10,8 +10,14 @@ import numpy as np
 
 # custom packages
 import sana_io
-from sana_geo import Converter, Point, get_ortho_angle
-from sana_frame import Frame, get_csf_threshold, orient_tissue
+from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly
+from sana_frame import Frame, get_csf_threshold, get_tissue_orientation
+from matplotlib import pyplot as plt
+
+class FileNotSupported(Exception):
+    def __init__(self):
+        self.message = 'File not found or not supported.'
+        super().__init__(self.message)
 
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
@@ -20,7 +26,10 @@ class Loader(openslide.OpenSlide):
 
         # initialize the object with the slide
         self.fname = sana_io.get_fullpath(fname)
-        super().__init__(self.fname)
+        try:
+            super().__init__(self.fname)
+        except:
+            raise FileNotSupported
 
         # define the necessary attributes
         self.lc = self.level_count
@@ -155,21 +164,24 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganilize the frame, then looks for slide
     # background  near the boundaries to orient the tissue boundary to the top of the frame
     # NOTE: this is a beefed version of just using roi.bounding_box() to load the frame
-    def load_gm_seg(self, writer, roi):
-
-        self.converter.to_pixels(roi, self.lvl)
+    def load_gm_seg(self, writer, orig_roi):
+        roi = copy(orig_roi)
+        
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
 
-        # TODO: this function has a bug in it, seems to create too big images
+        # TODO: ensure that everything is done properly here.
         # load the frame based on the segmentation
-        loc, size = roi.bounding_centroid()
+        loc, size = roi.bounding_box()
         roi.translate(loc)
-        frame = self.load_frame(loc, size)
 
-        # rotate the segmentation and frame by the ortho angle
-        frame.rotate(angle)
-        roi.rotate(frame.size()//2, angle)
+        orig_frame = self.load_frame(loc, size)
+        frame = orig_frame.copy()
+
+        # rotate the image to be vertical
+        M1, nw, nh = frame.get_rotation_mat(angle)
+        frame.warp_affine(M1, nw, nh)
+        roi = roi.transform(M1)
 
         # TODO: this might affect the amount of slide that is foound near boundaries
         # crop the frame to remove borders
@@ -178,17 +190,123 @@ class Loader(openslide.OpenSlide):
         frame.crop(crop_loc, crop_size)
 
         # make sure the tissue boundary is at the top of the image
-        angle = orient_tissue(frame, roi, angle)
+        l1_on_top = get_tissue_orientation(frame, roi, angle)
+        if not l1_on_top:
+            rotate_angle = 180
+        else:
+            rotate_angle = 0
+        M2, nw, nh = frame.get_rotation_mat(rotate_angle)
+        frame.warp_affine(M2, nw, nh)
 
-        # store the processing parameters and return the frame
+        # store the processing parameters
         writer.data['loc'] = loc
         writer.data['size'] = size
         writer.data['angle'] = angle
         writer.data['crop_loc'] = crop_loc
         writer.data['crop_size'] = crop_size
+        writer.data['M1'] = M1
+        writer.data['M2'] = M2
+
+        # finally, return the orthogonalized frame
         return frame
     #
     # end of load_gm_seg
+
+    def from_vector(self, writer, v, l):
+
+        # get the angle of the vector
+        angle = v.get_angle()
+        angle += 90 # TODO: check why this is necessary
+
+        # rotate the vector to be vertical
+        c = Point(0, 0, False, self.lvl)        
+        v.rotate(c, angle)
+        if not l is None:
+            l[0].rotate(c, angle)
+            w = np.max(l[0][:,0])-np.min(l[0][:,0])
+            l[0].rotate(c, -angle)
+        else:
+            w = 1600
+
+        # sort the vector by the y values
+        v = v[np.argsort(v[:,1])]
+        
+        # define the coords of the rotated frame to load
+        rect = Polygon(np.array([v[0][0]-w//2, v[0][0]+w//2, v[0][0]+w//2, v[0][0]-w//2]),
+                       np.array([v[0][1], v[0][1], v[-1][1], v[-1][1]]), False, self.lvl)
+
+        # rotate back to the original orientation
+        v.rotate(c, -angle)
+        rect.rotate(c, -angle)
+
+        # load a bigger frame based on the rotated rect
+        rect_loc, rect_size = rect.bounding_box()
+        frame = self.load_frame(rect_loc, rect_size)
+        orig_frame = frame.copy()
+
+        # get the local intensities at the vertices
+        v.translate(rect_loc)
+        x = v[0].astype(int)
+        x1, x2, y1, y2 = x[0]-100, x[0]+100, x[1]-100, x[1]+100
+        if x1 < 0: x1 = 0
+        if x2 > frame.img.shape[1]: x2 = frame.img.shape[1]
+        if y1 < 0: y1 = 0
+        if y2 > frame.img.shape[0]: y2 = frame.img.shape[0]
+        x = frame.img[y1:y2, x1:x2]
+        int_first = np.mean(x**2)
+
+        x = v[-1].astype(int)
+        x1, x2, y1, y2 = x[0]-100, x[0]+100, x[1]-100, x[1]+100
+        if x1 < 0: x1 = 0
+        if x2 > frame.img.shape[1]: x2 = frame.img.shape[1]
+        if y1 < 0: y1 = 0
+        if y2 > frame.img.shape[0]: y2 = frame.img.shape[0]
+        x = frame.img[y1:y2, x1:x2]
+        int_last = np.mean(x**2)
+
+        v.translate(-rect_loc)
+        
+        # make sure the intensity of v[0] is higher (this is the glass slide)
+        if int_first < int_last:
+            angle += 180
+            
+        # rotate the image to be vertical
+        M, nw, nh = frame.get_rotation_mat(angle)
+        frame.warp_affine(M, nw, nh)
+
+        # transform the landmarks to fit on the image
+        v.translate(rect_loc)
+        v = v.transform(M)
+        rect.translate(rect_loc)
+        rect = rect.transform(M)
+        if not l is None:
+            for i in range(len(l)):
+                l[i].translate(rect_loc)
+                l[i] = l[i].transform(M)
+
+        # re-sort the vector by the y values
+        v = v[np.argsort(v[:,1])]
+                
+        # crop the bigger frame by the rect coords
+        loc, size = rect.bounding_box()
+        x1, x2 = int(loc[0]), int(loc[0]+size[0])
+        y1, y2 = int(loc[1]), int(loc[1]+size[1])
+        frame.img = frame.img[y1:y2, x1:x2]
+        v.translate(loc)
+        if not l is None:
+            for i in range(len(l)):
+                l[i].translate(loc)
+
+        # store the processing parameters and return the frame
+        # TODO: change the naming convention
+        writer.data['loc'] = rect_loc
+        writer.data['size'] = rect_size
+        writer.data['angle'] = angle
+        writer.data['crop_loc'] = loc
+        writer.data['crop_size'] = size
+        return frame, v, l, M, orig_frame
+    #
+    # end of from_vector
 #
 # end of Loader
 
