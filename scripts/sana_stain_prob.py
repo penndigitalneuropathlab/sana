@@ -6,11 +6,7 @@ import sys
 import argparse
 
 # installed modules
-<<<<<<< HEAD
-# import cv2 as cv
-=======
 import cv2
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
 import numpy as np
 from matplotlib import pyplot as plt
 from skimage.transform import hough_line, hough_line_peaks
@@ -46,14 +42,6 @@ def main(argv):
         parser.print_usage()
         exit()
 
-<<<<<<< HEAD
-    # if args.algo == 'unet':
-    #     model = 'C:/DNPL/data/neuron_processing/data/unet/checkpoints/checkpoint_epoch5.pth'
-    #     net = UNet(n_channels=1, n_classes=2)
-    #     device = torch.device('cpu')
-    #     net.to(device=device)
-    #     net.load_state_dict(torch.load(model, map_location=device))
-=======
     if args.algo == 'unet':
         model = 'C:/DNPL/data/neuron_processing/data/unet/checkpoints/checkpoint_epoch5.pth'
         net = UNet(n_channels=1, n_classes=2)
@@ -67,7 +55,6 @@ def main(argv):
         device = torch.device('cpu')
         net.to(device=device)
         net.load_state_dict(torch.load(model, map_location=device))
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
@@ -109,15 +96,9 @@ def main(argv):
                 slide_f, ext=args.ofiletype, suffix='_%d_PROB' % roi_i,
                 fpath=args.odir, rpath=args.rdir)
 
-<<<<<<< HEAD
-            # skip the image if already generated
-            if os.path.exists(out_f):
-                continue
-=======
             # # skip the image if already generated
             # if os.path.exists(out_f):
             #     continue
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
 
             # initialize the data writer
             data_f = sana_io.create_filepath(
@@ -126,7 +107,7 @@ def main(argv):
             writer = DataWriter(data_f)
             writer.data['lvl'] = loader.lvl
             writer.data['csf_threshold'] = loader.csf_threshold
-            
+
             # get the mask output filename
             mask_f = sana_io.create_filepath(
                 slide_f, ext=args.ofiletype, suffix='_%d_MASK' % roi_i,
@@ -143,13 +124,6 @@ def main(argv):
                 if args.gm_seg:
                     frame = loader.load_gm_seg(writer, roi)
 
-<<<<<<< HEAD
-                # TODO: implement this, maybe use hough, or rely on slide, or use same method as above
-                elif args.crude_roi:
-                    frame = loader.load_crude_roi(writer, roi)
-
-=======
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
                 # no need to rotate, just load the image inside the rectangle roi
                 else:
                     frame = loader.load_roi(writer, roi)
@@ -206,13 +180,6 @@ def main(argv):
 
                 frame.mask(mask)
 
-<<<<<<< HEAD
-            # TODO: maybe apply this before anisodiff??
-            # opening filter to remove small objects, not considered
-            # kernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, (5,5))
-            # cv.morphologyEx(frame.img, cv.MORPH_OPEN,
-            #                 kernel=kernel, dst=frame.img)
-=======
                 orig_size = frame.img.shape[:2]
                 img = cv2.resize(frame.img, dsize=(orig_size[0]//2, orig_size[1]//2), interpolation=cv2.INTER_CUBIC)[:,:,None]
                 img = img.astype(float) / 255
@@ -255,27 +222,12 @@ def main(argv):
                 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
                 cv2.morphologyEx(frame.img, cv2.MORPH_OPEN,
                                 kernel=kernel, dst=frame.img)
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
 
             # TODO: IMPORTNAT: can probably decode whole image?, would want to try with scale
             #         wouldn't fit in CUDA most likely
             # TODO: instead could try to pad to avoid black bars in image, although 1kx1k is pretty big
             # TODO: try different models, maybe with RGB?
             # TODO: need to check the hyper parameters of the model
-<<<<<<< HEAD
-            # if args.algo == 'unet':
-            #
-            #     img = frame.img.astype(float) / 255
-            #     img = img.transpose((2, 0, 1))
-            #     net.eval()
-            #     img = torch.from_numpy(img)
-            #     img = img.unsqueeze(0)
-            #     img = img.to(device=device, dtype=torch.float32)
-            #     with torch.no_grad():
-            #         output = net(img)
-            #         probs = F.softmax(output, dim=1)[0][1]
-            #         frame.img[:, :, 0] = (255*probs.cpu().detach().numpy()).astype(np.uint8)
-=======
             if args.algo == 'unet':
 
                 # TODO: need to get this from the stain type (NeuN -> H-DAB)
@@ -304,7 +256,6 @@ def main(argv):
                     probs = F.softmax(output, dim=1)[0][1]
                     img = (255*probs.cpu().detach().numpy()).astype(np.uint8)
                     frame.img[:, :, 0] = cv2.resize(img, dsize=orig_size, interpolation=cv2.INTER_CUBIC)
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
 
                 # fs = 1000
                 # for i in range(0, 1+frame.img.shape[0]//fs):
@@ -380,21 +331,12 @@ def cmdl_parser(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('-lists', type=str, nargs='*', required=True,
                         help="filelists containing .svs files")
-<<<<<<< HEAD
-    # parser.add_argument('-algo', required=True, choices=['basic', 'unet'],
-    #                     help="type of processing algorithm to use")
-    parser.add_argument('-lvl', type=int, default=2, choices=[0, 1, 2],
-                        help="specify the slide level to process on")
-    parser.add_argument('-gm_seg', action='store_true')
-    parser.add_argument('-crude_roi', action='store_true')
-=======
     parser.add_argument('-algo', required=True, choices=['basic', 'unet', 'tangle'],
                         help="type of processing algorithm to use")
     parser.add_argument('-lvl', type=int, default=2, choices=[0, 1, 2],
                         help="specify the slide level to process on")
     parser.add_argument('-gm_seg', action='store_true')
     parser.add_argument('-roi', action='store_true')
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
     parser.add_argument('-target', type=str, choices=['DAB', 'HEM'],
                         help="stain to process in the image")
     parser.add_argument('-roi_class', type=str, default=None,

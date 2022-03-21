@@ -297,7 +297,11 @@ class DataWriter:
             'crop_size': None,
             'ds': None,
             'M1': None,
+<<<<<<< Updated upstream
             'M2': None,
+=======
+            'M2': None,            
+>>>>>>> Stashed changes
         }
         self.line = '%s\t%s\n'
 
@@ -386,6 +390,10 @@ class DataWriter:
         elif key == 'ds':
             return self.parse_point(val)
 <<<<<<< HEAD
+<<<<<<< Updated upstream
+=======
+>>>>>>> a8183d0f585d3bf28971d7166953986deb47c88f
+>>>>>>> Stashed changes
 =======
         elif key == 'M1':
             return self.parse_M(val)
