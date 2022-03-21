@@ -292,20 +292,11 @@ class DataWriter:
             'csf_threshold': None,
             'stain_threshold': None,
             'angle': None,
-            'density': None,
             'crop_loc': None,
             'crop_size': None,
             'ds': None,
             'M1': None,
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
             'M2': None,
-=======
-            'M2': None,            
->>>>>>> Stashed changes
-=======
-            'M2': None,            
->>>>>>> Stashed changes
         }
         self.line = '%s\t%s\n'
 
@@ -338,7 +329,6 @@ class DataWriter:
         fp.write(self.line % ('loc', self.write_point(self.data['loc'])))
         fp.write(self.line % ('size', self.write_point(self.data['size'])))
         fp.write(self.line % ('ao', self.write_float(self.data['ao'])))
-        fp.write(self.line % ('density', self.write_float(self.data['density'])))
         fp.write(self.line % ('aos_list',
                               self.write_float_list(self.data['aos_list'])))
         fp.write(self.line % ('area', self.write_float(self.data['area'])))
@@ -393,21 +383,10 @@ class DataWriter:
             return self.parse_point(val)
         elif key == 'ds':
             return self.parse_point(val)
-<<<<<<< HEAD
-<<<<<<< Updated upstream
-<<<<<<< Updated upstream
-=======
->>>>>>> a8183d0f585d3bf28971d7166953986deb47c88f
->>>>>>> Stashed changes
-=======
->>>>>>> a8183d0f585d3bf28971d7166953986deb47c88f
->>>>>>> Stashed changes
-=======
         elif key == 'M1':
             return self.parse_M(val)
         elif key == 'M2':
             return self.parse_M(val)
->>>>>>> af7da75ed9e64e4ccda6e042a67f287eed3e2c47
         else:
             return None
     #
