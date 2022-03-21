@@ -298,7 +298,11 @@ class DataWriter:
             'ds': None,
             'M1': None,
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
             'M2': None,
+=======
+            'M2': None,            
+>>>>>>> Stashed changes
 =======
             'M2': None,            
 >>>>>>> Stashed changes
@@ -391,6 +395,10 @@ class DataWriter:
             return self.parse_point(val)
 <<<<<<< HEAD
 <<<<<<< Updated upstream
+<<<<<<< Updated upstream
+=======
+>>>>>>> a8183d0f585d3bf28971d7166953986deb47c88f
+>>>>>>> Stashed changes
 =======
 >>>>>>> a8183d0f585d3bf28971d7166953986deb47c88f
 >>>>>>> Stashed changes
