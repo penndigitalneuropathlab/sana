@@ -383,10 +383,14 @@ class DataWriter:
             return self.parse_point(val)
         elif key == 'ds':
             return self.parse_point(val)
+<<<<<<< HEAD
+=======
+>>>>>>> Stashed changes
         elif key == 'M1':
             return self.parse_M(val)
         elif key == 'M2':
             return self.parse_M(val)
+>>>>>>> Stashed changes
         else:
             return None
     #
