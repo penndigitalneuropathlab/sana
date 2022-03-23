@@ -1,6 +1,7 @@
 
 # system packages
 import os
+import ntpath
 import sys
 import json
 import re
@@ -11,6 +12,7 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
+from sana_loader import Loader
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -64,7 +66,7 @@ def is_slide(f):
     try:
         Loader(f)
         return True
-    except:
+    except Exception as e:
         return False
 #
 # end of is_slide
@@ -81,6 +83,20 @@ def is_anno(f):
 
 def get_slide_id(fname):
     return fname.split('_')[0]
+
+def get_antibody(fname):    
+    if not is_slide(fname):
+        print('ERROR: Cannot get antibody from file: %s' % fname)
+        exit()
+    fname = ntpath.basename(fname)        
+    parts = fname.split('_')
+    if len(parts) == 7:
+        return parts[3]
+    elif len(parts) == 6:
+        return parts[2]
+    else:
+        print('ERROR: Cannot get antibody from file: %s' % fname)
+        exit()
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
@@ -112,7 +128,7 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 
     # get the parts of the original filepath
     ifpath = os.path.dirname(ifile)
-    ifname = os.path.basename(ifile)
+    ifname = ntpath.basename(ifile)
     ifname, iext = os.path.splitext(ifname)
 
     # extension not given, use current extension
@@ -169,8 +185,8 @@ def fix_annotations(ifile):
 #  -class_name: if given, only returns annotations with this class
 def read_annotations(ifile, class_name=None, name=None):
     if not ifile.endswith('.json'):
-        print('ERROR: Bad Filetype!')
-        exit()
+        raise Exception
+        
     # remove unwanted header bytes if they exist
     fix_annotations(ifile)
 
