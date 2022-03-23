@@ -19,6 +19,7 @@ class FileNotSupported(Exception):
         self.message = 'File not found or not supported.'
         super().__init__(self.message)
 
+# TODO: make a default loader class which has MPP and ds values
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
 class Loader(openslide.OpenSlide):
@@ -47,6 +48,7 @@ class Loader(openslide.OpenSlide):
             self.slide_color = copy(self.thumbnail).get_bg_color()
 
             # calculate the Slide/Tissue threshold
+            # TODO: make this much faster!
             self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
     #
     # end of constructor
@@ -140,6 +142,9 @@ class Loader(openslide.OpenSlide):
     # this function uses the bounding box of an annotation to load a frame of data
     def load_roi(self, writer, roi):
 
+        # scale the roi to the current resolution
+        self.converter.rescale(orig_roi, self.lvl)
+        
         # load the frame based on the roi
         loc, size = roi.bounding_box()
         roi.translate(loc)
@@ -160,11 +165,16 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_crude_roi
 
+    # TODO: need to pad the segmentation somehow to provide context for tiling
     # this function loads a frame of slide data using a given GM segmentation
     # it uses the boundaries to orthoganilize the frame, then looks for slide
     # background  near the boundaries to orient the tissue boundary to the top of the frame
     # NOTE: this is a beefed version of just using roi.bounding_box() to load the frame
     def load_gm_seg(self, writer, orig_roi):
+
+        # scale the roi to the current resolution
+        self.converter.rescale(orig_roi, self.lvl)
+        
         roi = copy(orig_roi)
         
         # get the angle that best orthogonalizes the segmentation
