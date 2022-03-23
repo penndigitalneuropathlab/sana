@@ -1,4 +1,7 @@
 
+# system modules
+import os
+
 # installed modules
 import numpy as np
 
@@ -19,7 +22,7 @@ from sana_geo import Point
 # lists of fields to store, separated by the datatype they should be stored as
 INT_KEYS = ['lvl', 'csf_threshold', 'stain_threshold']
 FLOAT_KEYS = ['ao', 'area', 'angle']
-LIST_KEYS = ['aos', 'areas']
+LIST_KEYS = ['aos_list', 'areas_list']
 POINT_KEYS = ['loc', 'size', 'crop_loc', 'crop_size', 'ds']
 M_KEYS = ['M1', 'M2']
 KEYS = INT_KEYS + FLOAT_KEYS + LIST_KEYS + POINT_KEYS + M_KEYS
@@ -30,6 +33,7 @@ class Params:
     def __init__(self, fname):
 
         # initalize the data
+        # TODO: may eventually want Params to inherit dict so that it doesn't have to store a dict
         self.data = {k: None for k in KEYS}
 
         # line format in the output file
@@ -113,13 +117,13 @@ class Params:
         elif type(x) is str:
             return x
         elif type(x) is int:
-            return convert_int(x)
+            return self.convert_int(x)
         elif type(x) is float:
-            return convert_float(x)
+            return self.convert_float(x)
         elif type(x) is Point or type(x) is list:
-            return convert_list(x)
+            return self.convert_list(x)
         elif type(x) is np.ndarray and x.shape == (2,3):
-            return convert_M(x)
+            return self.convert_M(x)
         else:
             return None
     #
@@ -131,11 +135,11 @@ class Params:
     def convert_float(self, x):
         return '%.6f' % (x)
     def convert_list(self, x):
-        return '\t'.join([to_string(y) for y in x])
+        return '\t'.join([self.to_string(y) for y in x])
     def convert_point(self, x):
-        return '\t'.join([to_string(y) for y in x])
+        return '\t'.join([self.to_string(y) for y in x])
     def convert_M(self, val):
-        return self.write_float_list(val.flatten()) if not val is None else ""
+        return self.convert_list(val.flatten()) if not val is None else ""
     #
     # end of string conversion    
 #
