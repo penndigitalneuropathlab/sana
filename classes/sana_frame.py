@@ -110,9 +110,18 @@ class Frame:
     #
     # end of round
 
+    def rescale(self, mi=None, mx=None):
+        if mi is None:
+            mi = np.min(self.img)
+        if mx is None:
+            mx = np.max(self.img)
+            
+        if self.is_float():
+            self.img = 255 * (self.img - mi) / (mx - mi)
+            self.round()
+
     # generates a 256 bin histogram for each color channel
     def histogram(self):
-        self.round()
         histogram = np.zeros((256, self.img.shape[-1]))
         for i in range(histogram.shape[-1]):
             histogram[:, i] = np.histogram(self.img[:, :, i],
@@ -231,13 +240,12 @@ class Frame:
     # end of get_bg_color
 
     # apply a binary mask to the image
-    def mask(self, mask, value=None):
+    def mask(self, mask, value=0):
         if self.is_float():
             raise TypeException('Cannot apply mask to floating point image')
-        self.img = cv2.bitwise_and(
-            self.img, self.img, mask=mask.img)[:, :, None]
-        if value is not None:
-            self.img[self.img == 0] = value
+        if self.is_rgb() and value is int:
+            value = (value, value, value)
+        self.img[mask.img[:,:,0] == 0] = value
     #
     # end of mask
 
@@ -631,7 +639,7 @@ def get_tissue_orientation(frame, roi, angle):
 # generates a binary mask based on a list of given Polygons
 #  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
-#  -x, y: ints defining the negative and positive values in the mask
+#  -x, y: vals defining the negative and positive values in the mask
 def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
@@ -661,23 +669,34 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
 # end of create_mask
 
 # TODO: check if right aligned padding is correct
-def mean_normalize(loader, frame):
-
+# TODO: there are better methods to do this, ask paul in MRI e.g.
+# this function subtracts background from the frame, by finding the local
+# background intensity throughout the frame
+def mean_normalize(orig_frame):
+    frame = orig_frame.copy()
+    
+    # want to downsample the image to make it run faster, don't need full resolution
     lvl = 1
-    ds = int(loader.ds[lvl] / loader.ds[loader.lvl])
+    ds = int(frame.converter.ds[lvl] / frame.converter.ds[frame.lvl])
+
+    # prepare the 200x200um tiles, shift 10um
     tsize = Point(200, 200, True, 0)
     tstep = Point(10, 10, True, 0)
     tiler = Tiler(lvl, frame.converter, tsize, tstep)
 
+    # scale down the original frame to detection background
     frame_ds = frame.copy()
     frame_ds.scale([ds, ds])
     tiler.set_frame(frame_ds)
 
+    # loop through the tiles
     tiles = tiler.load_tiles()
     tds = tiler.ds
     norm = np.zeros([tiles.shape[0], tiles.shape[1]], dtype=float)
     for i in range(tiles.shape[0]):
         for j in range(tiles.shape[1]):
+
+            # calculate the local background in the tile
             data = tiles[i][j]
             data = data[data != 0]
             if len(data) == 0:
@@ -685,18 +704,27 @@ def mean_normalize(loader, frame):
             else:
                 mu = np.mean(data)
             norm[i][j] = mu
-    frame_norm = Frame(norm, frame.lvl, frame.converter)
+    #
+    # end of tiles loop
 
+    # scale the background frame back to original resolution
+    frame_norm = Frame(norm, frame.lvl, frame.converter)
+    frame_norm.converter.to_pixels(tsize, lvl)
+    
     frame_norm.scale(1/tds)
     frame_norm.scale([1/ds, 1/ds])
     frame_norm.img = frame_norm.img[:frame.img.shape[0], :frame.img.shape[1], :]
 
-    frame_norm.converter.to_pixels(tsize, lvl)
+    # smooth the background image a bit
     frame_norm.img = cv2.GaussianBlur(frame.img, ksize=(0,0), sigmaX=tsize[0], sigmaY=tsize[1])[:,:,None]
+
+    # finally, subtract the background
+    # NOTE: we are making sure nothing goes below 0 here!
     frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
     frame.img = frame.img.astype(np.uint8)
-    return frame, frame_norm
+    
+    return frame
 #
 # end of mean_normalize
 
