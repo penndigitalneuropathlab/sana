@@ -19,6 +19,8 @@ def get_processor(fname, frame):
         return NeuNProcessor(fname, frame)
     if antibody == 'parvalbumin':
         return parvalbuminProcessor(fname, frame)
+    if antibody == 'SMI94':
+        return MBPProcessor(fname, frame)
 #
 # end of get_processor
 
@@ -35,7 +37,7 @@ class Processor:
         # generate the main mask
         self.main_mask = create_mask(
             [main_roi],
-            frame.size(), frame.lvl, frame.converter,
+            self.frame.size(), self.frame.lvl, self.frame.converter,
             x=0, y=255, holes=[]
         )
         
@@ -44,7 +46,7 @@ class Processor:
         for i in range(len(sub_rois)):
             mask = create_mask(
                 [sub_rois[i]],
-                frame.size(), frame.lvl, frame.converter,
+                self.frame.size(), self.frame.lvl, self.frame.converter,
                 x=0, y=255, holes=[]
             )
             self.sub_masks.append(mask)
@@ -53,6 +55,8 @@ class Processor:
 
         # finally, mask the frame by the main ROI
         self.frame.mask(self.main_mask)
+        self.dab.mask(self.main_mask)
+        self.hem.mask(self.main_mask)        
     #
     # end of gen_masks
     
@@ -105,7 +109,7 @@ class Processor:
     #
     # end of save_frame
 
-    def save_params(self, params):
+    def save_params(self, odir, params):
         fpath = sana_io.create_filepath(self.fname, ext='.csv', fpath=odir)
         params.write_data(fpath)
     #
@@ -159,16 +163,17 @@ class HDABProcessor(Processor):
         self.manual_overlay = overlay_thresh(
             self.frame, self.manual_dab_thresh)        
         self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
-        self.save_frame(odir, self.auto_overlay, 'QC')        
+        self.save_frame(odir, self.manual_overlay, 'QC')        
     #
     # end of run_manual_ao
 
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, scale=1.0):
+    def run_auto_ao(self, odir, params, scale=1.0):
         
         # normalize the image
+        # TODO: this is failing because we're masking too early
         self.dab_norm = mean_normalize(self.dab)
 
         # smooth the image
@@ -230,6 +235,7 @@ class MBPProcessor(HDABProcessor):
         # NOTE: original value was DAB_OD = 0.3 in QuPath, this
         #       value is calculated from that
         # TODO: check the math!
+        # TODO: this doesn't work
         self.manual_dab_threshold = 35
 
         # generate the manually curated AO results
@@ -253,16 +259,16 @@ class MBPProcessor(HDABProcessor):
         self.save_frame(odir, self.hem, 'HEM')
         
         # save the params IO to a file
-        self.save_params(odir)
+        self.save_params(odir, params)
     #
     # end of run
 
-    def run_vertical_ao(odir, params):
+    def run_vertical_ao(self, odir, params):
 
         # for vertical
-        sigma = (100,10)
+        sigma = (10,100)
         self.vert_sta = STA(sigma)
-        self.vert_sta.run(self.dab_norm)
+        self.vert_sta.run(self.dab_norm, debug=True)
 
         # get the distance from 90, then inverse it
         # NOTE: this maps 0 and 180 -> 0, 90 -> 90
@@ -305,19 +311,19 @@ class MBPProcessor(HDABProcessor):
         # save the images used in processing
         self.vert_overlay = overlay_thresh(
             self.frame, self.vert_thresh)
-        self.save_frame(odir, self.vert_sta.coh, 'COH')
-        self.save_frame(odir, self.vert_sta.ang, 'ANG')        
+        self.save_frame(odir, Frame(self.vert_sta.coh), 'COH')
+        self.save_frame(odir, Frame(self.vert_sta.ang), 'ANG')        
         self.save_frame(odir, self.vert_prob, 'PROB')
         self.save_frame(odir, self.vert_thresh, 'THRESH')
         self.save_frame(odir, self.vert_overlay, 'QC')
     #
     # end of run_vertical_ao
 
-    def run_vertical_ao(odir, params):
+    def run_horizontal_ao(self, odir, params):
 
-        sigma = (10,100)
+        sigma = (100,10)
         self.horz_sta = STA(sigma)
-        self.horz_sta.run(self.dab_norm)
+        self.horz_sta.run(self.dab_norm, debug=True)
         
         # get the distance from 90
         # NOTE: this maps 0 and 180 -> 90, 90 -> 0
@@ -361,8 +367,8 @@ class MBPProcessor(HDABProcessor):
         # save the images used in processing
         self.horz_overlay = overlay_thresh(
             self.frame, self.horz_thresh)
-        self.save_frame(odir, self.horz_sta.coh, 'COH')
-        self.save_frame(odir, self.horz_sta.ang, 'ANG')        
+        self.save_frame(odir, Frame(self.horz_sta.coh), 'COH')
+        self.save_frame(odir, Frame(self.horz_sta.ang), 'ANG')        
         self.save_frame(odir, self.horz_prob, 'PROB')
         self.save_frame(odir, self.horz_thresh, 'THRESH')
         self.save_frame(odir, self.horz_overlay, 'QC')
@@ -406,7 +412,7 @@ class parvalbuminProcessor(HDABProcessor):
         self.save_frame(odir, self.hem, 'HEM')
         
         # save the params IO to a file
-        self.save_params(odir)
+        self.save_params(odir, params)
     #
     # end of run    
 

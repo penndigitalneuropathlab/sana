@@ -54,7 +54,8 @@ def main(argv):
         # initialize the Loader object for loading Frames
         try:
             loader = Loader(slide_f)
-        except:
+        except Exception as e:
+            print(e)
             print('***> Warning: Could\'t load .svs file, skipping...')
             continue
 

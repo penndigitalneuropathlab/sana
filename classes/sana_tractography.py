@@ -1,5 +1,10 @@
 
+# installed modules
 import cv2 as cv
+import numpy as np
+
+# debugging modules
+from matplotlib import pyplot as plt
 
 class STA:
     def __init__(self, sigma):
@@ -7,7 +12,7 @@ class STA:
     #
     # end of constructor
 
-    def run(self, frame):
+    def run(self, frame, debug=False):
 
         # f(x,y)
         img = frame.img
@@ -40,9 +45,14 @@ class STA:
         self.ang = 0.5 * cv.phase(J22 - J11, 2.0 * J12, angleInDegrees=True)
 
         # make sure there are no nan's
-        self.coh = np.nan_to_num(self.coh)
-        self.ang = np.nan_to_num(self.ang)
-        
+        self.coh = np.nan_to_num(self.coh)[:,:,None]
+        self.ang = np.nan_to_num(self.ang)[:,:,None]
+
+        if debug:
+            fig, axs = plt.subplots(1,2)
+            axs[0].imshow(self.coh)
+            axs[1].imshow(self.ang)
+            plt.show()
     #
     # end of run
 #
