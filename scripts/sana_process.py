@@ -84,9 +84,10 @@ def main(argv):
             # create the output directory path
             # TODO: do we want aid instead? would make less dirs, but then need
             #       to put the 03F part somewhere i think...
-            cid = sana_io.get_cid(slide_f)
+            # TODO: aid/region/case/stain_roiID/data
+            bid = sana_io.get_bid(slide_f)
             antibody = sana_io.get_antibody(slide_f)
-            odir = sana_io.create_odir(args.odir, cid)
+            odir = sana_io.create_odir(args.odir, bid)
             odir = sana_io.create_odir(odir, '%s_%d' % (antibody, main_roi_i))
             
             # load the frame into memory using the main roi
