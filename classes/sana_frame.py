@@ -11,6 +11,7 @@ from scipy import ndimage
 from PIL import Image, ImageDraw
 Image.MAX_IMAGE_PIXELS = None
 from matplotlib import pyplot as plt
+from webcolors import name_to_rgb
 
 # custom packages
 import sana_io
@@ -610,7 +611,7 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def get_tissue_orientation(frame, roi, angle):
+def get_tissue_orientation(frame, roi, angle, debug=False):
 
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
@@ -619,7 +620,14 @@ def get_tissue_orientation(frame, roi, angle):
     else:
         top, bot = s0, s1
 
-        # get the amount of tissue found near each of the boundaries
+    if debug:
+        fig, ax = plt.subplots(1,1)
+        ax.imshow(frame.img)
+        plot_poly(ax, s0, color='red')
+        plot_poly(ax, s1, color='blue')
+        plt.show()
+        
+    # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()
     top.threshold(top.csf_threshold, 1, 0)
@@ -727,6 +735,19 @@ def mean_normalize(orig_frame):
     return frame
 #
 # end of mean_normalize
+
+# this function overlays a thresholded image onto the original image
+def overlay_thresh(frame, thresh, alpha=0.5, color='red'):
+
+    color = np.array(name_to_rgb(color))
+
+    overlay = frame.copy()
+    overlay.img[thresh.img[:,:,0] == 255] = color
+    overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
+    
+    return overlay
+#
+# end of overlay_thresh
 
 # calculates the Slide/Tissue intensity threshold
 # NOTE: should only be called by Frame
