@@ -19,28 +19,26 @@ from sana_geo import Point
 #           5) add X_KEYS to conditional in parse_val()
 #           6) add datatype check to to_string()
 
-# lists of fields to store, separated by the datatype they should be stored as
-INT_KEYS = ['lvl', 'csf_threshold', 'stain_threshold']
-FLOAT_KEYS = ['ao', 'area', 'angle']
-LIST_KEYS = ['aos_list', 'areas_list']
+# lists of possible fields to store, separated by the datatype they should be stored as
+INT_KEYS = ['lvl', 'csf_threshold', 'manual_stain_threshold', 'auto_stain_threshold']
 POINT_KEYS = ['loc', 'size', 'crop_loc', 'crop_size', 'ds']
 M_KEYS = ['M1', 'M2']
-KEYS = INT_KEYS + FLOAT_KEYS + LIST_KEYS + POINT_KEYS + M_KEYS
+FLOAT_KEYS = ['manual_ao', 'auto_ao', 'area', 'angle1', 'angle2']
+LIST_KEYS = ['manual_sub_aos', 'auto_sub_aos', 'sub_areas']
+KEYS = INT_KEYS + POINT_KEYS + M_KEYS + FLOAT_KEYS + LIST_KEYS
 
 # this class reads and writes the parameters and data associated with processed Frames
 # TODO: Params isn't a great name since it also includes calculated data...
 class Params:
-    def __init__(self, fname):
+    def __init__(self):
 
-        # initalize the data
+        # initialize the data
         # TODO: may eventually want Params to inherit dict so that it doesn't have to store a dict
-        self.data = {k: None for k in KEYS}
+        #self.data = {k: None for k in KEYS}
+        self.data = {}
 
         # line format in the output file
         self.line = '%s\t%s\n'
-
-        # load the data from the filename into memory, if exists
-        self.read_data(fname)
     #
     # end of constructor
 
@@ -60,10 +58,11 @@ class Params:
     # end of read_data
 
     # loops through the stored key value pairs and writes them to the file
-    def write_data(self):
-        fp = open(self.fname, 'w')
-        for key in sorted(self.data.keys()):
-            self.write_line(fp, key, self.data[key])
+    def write_data(self, fname):
+        fp = open(fname, 'w')
+        for key in KEYS:
+            if key in self.data:
+                self.write_line(fp, key, self.data[key])
         fp.close()
     #
     # end of write_data
@@ -116,11 +115,11 @@ class Params:
             return None
         elif type(x) is str:
             return x
-        elif type(x) is int:
+        elif type(x) is int or type(x) is np.int64 or type(x) is np.int32:
             return self.convert_int(x)
-        elif type(x) is float:
+        elif type(x) is float or type(x) is np.float64 or type(x) is np.float32:
             return self.convert_float(x)
-        elif type(x) is Point or type(x) is list:
+        elif type(x) is list or type(x) is Point:
             return self.convert_list(x)
         elif type(x) is np.ndarray and x.shape == (2,3):
             return self.convert_M(x)
@@ -136,10 +135,8 @@ class Params:
         return '%.6f' % (x)
     def convert_list(self, x):
         return '\t'.join([self.to_string(y) for y in x])
-    def convert_point(self, x):
-        return '\t'.join([self.to_string(y) for y in x])
-    def convert_M(self, val):
-        return self.convert_list(val.flatten()) if not val is None else ""
+    def convert_M(self, x):
+        return self.convert_list(x.flatten())
     #
     # end of string conversion    
 #
