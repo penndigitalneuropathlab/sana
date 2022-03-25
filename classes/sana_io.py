@@ -12,7 +12,6 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
-from sana_loader import Loader
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -63,11 +62,7 @@ def get_anno_files(d):
 
 # returns True if Loader can handle the given file
 def is_slide(f):
-    try:
-        Loader(f)
-        return True
-    except Exception as e:
-        return False
+    return f.endswith('.svs')
 #
 # end of is_slide
 
@@ -103,8 +98,15 @@ def get_slide_parts(fname):
 #
 # end of get_slide_parts
 
-def get_cid(fname):
+# e.g. 2017-191-25F
+def get_bid(fname):
     return get_slide_parts(fname)[0]
+# e.g. 25F
+def get_bnum(fname):
+    return get_slide_parts(fname)[0].split('-')[2]
+# e.g. 2017-191
+def get_aid(fname):
+    return '-'.join(get_slide_parts(fname)[0].split('-')[:2])
 def get_region(fname):
     return get_slide_parts(fname)[2]
 def get_antibody(fname):    

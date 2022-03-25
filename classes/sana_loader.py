@@ -9,7 +9,6 @@ import openslide
 import numpy as np
 
 # custom packages
-import sana_io
 from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly
 from sana_frame import Frame, get_csf_threshold, get_tissue_orientation
 from matplotlib import pyplot as plt
@@ -26,7 +25,7 @@ class Loader(openslide.OpenSlide):
     def __init__(self, fname, get_thumb=True):
 
         # initialize the object with the slide
-        self.fname = sana_io.get_fullpath(fname)
+        self.fname = fname
         try:
             super().__init__(self.fname)
         except:
@@ -36,7 +35,10 @@ class Loader(openslide.OpenSlide):
         self.lc = self.level_count
         self.dim = self.level_dimensions
         self.ds = self.level_downsamples
-        self.mpp = float(self.properties['aperio.MPP'])
+        try:
+            self.mpp = float(self.properties['aperio.MPP'])
+        except:
+            self.mpp = 0.5045
         self.converter = Converter(self.mpp, self.ds)
         self.csf_threshold = None
 
