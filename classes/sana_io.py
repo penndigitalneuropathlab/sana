@@ -84,19 +84,31 @@ def is_anno(f):
 def get_slide_id(fname):
     return fname.split('_')[0]
 
-def get_antibody(fname):    
+def get_slide_parts(fname):
     if not is_slide(fname):
         print('ERROR: Cannot get antibody from file: %s' % fname)
         exit()
     fname = ntpath.basename(fname)        
     parts = fname.split('_')
     if len(parts) == 7:
-        return parts[3]
+        cid, hemi, region, antibody, dil, date, init = parts
     elif len(parts) == 6:
-        return parts[2]
+        cid, region, antibody, dil, date, init = parts
+        hemi = 'N'
     else:
-        print('ERROR: Cannot get antibody from file: %s' % fname)
+        print('ERROR: Slide not properly named: %s' % fname)
         exit()
+        
+    return cid, hemi, region, antibody, dil, date, init
+#
+# end of get_slide_parts
+
+def get_cid(fname):
+    return get_slide_parts(fname)[0]
+def get_region(fname):
+    return get_slide_parts(fname)[2]
+def get_antibody(fname):    
+    return get_slide_parts(fname)[3]
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
@@ -135,6 +147,9 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
     if ext == "":
         ext = iext
 
+    if suffix != "":
+        suffix = '_' + suffix        
+        
     # create the output filename using the basename, suffix, and extension
     fname = '%s%s%s' % (ifname, suffix, ext)
 
@@ -149,6 +164,15 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 #
 # end of create_filepath
 
+# creates a subdirectory for the ith ROI in a given json file
+def create_odir(odir, s):
+    odir = '%s/%s' % (odir, s)
+    if not os.path.exists(odir):
+        os.makedirs(odir)
+    return odir
+#
+# end of create_odir
+
 # loads a list of files into memory, checks to make sure each file exists
 def read_list_file(list_f):
 
@@ -157,6 +181,17 @@ def read_list_file(list_f):
     return files
 #
 # end of read_list_file
+
+# generates a list of slide files from a series of lists from the commandline
+def get_slides_from_lists(lists):
+
+    # concatenate all slide lists
+    slides = []
+    for f in lists:
+        slides += read_list_file(f)
+    return slides
+#
+# end of get_slides_from_lists
 
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath

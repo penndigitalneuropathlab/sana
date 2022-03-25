@@ -101,7 +101,7 @@ def get_ortho_angle(seg):
     # get the best angle to use
     return angles[np.argmin(dist)]
 #
-# end of get_ortho_seg
+# end of get_ortho_angle
 
 # performs a series a translations and rotations to transform a polygon
 #  to the coordinate system of a processed Frame
