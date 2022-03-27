@@ -23,8 +23,10 @@ from sana_geo import Point
 INT_KEYS = ['lvl', 'csf_threshold', 'manual_stain_threshold', 'auto_stain_threshold']
 POINT_KEYS = ['loc', 'size', 'crop_loc', 'crop_size', 'ds']
 M_KEYS = ['M1', 'M2']
-FLOAT_KEYS = ['manual_ao', 'auto_ao', 'area', 'angle1', 'angle2']
-LIST_KEYS = ['manual_sub_aos', 'auto_sub_aos', 'sub_areas']
+FLOAT_KEYS = ['manual_ao', 'auto_ao', 'vert_fibers_ao', 'horz_fibers_ao',
+              'area', 'angle1', 'angle2']
+LIST_KEYS = ['manual_sub_aos', 'auto_sub_aos', 'vert_fibers_sub_aos',
+             'horz_fibers_sub_aos', 'sub_areas']
 KEYS = INT_KEYS + POINT_KEYS + M_KEYS + FLOAT_KEYS + LIST_KEYS
 
 # this class reads and writes the parameters and data associated with processed Frames

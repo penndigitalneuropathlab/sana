@@ -302,7 +302,7 @@ class MBPProcessor(HDABProcessor):
         params.data['area'] = results['area']
         params.data['sub_areas'] = results['sub_areas']        
         params.data['vert_fibers_ao'] = results['ao']
-        params.data['vert_fibers_aos'] = results['sub_aos']
+        params.data['vert_fibers_sub_aos'] = results['sub_aos']
         params.data['vert_threshold'] = self.vert_thresh
 
         # create the output directory
@@ -358,7 +358,7 @@ class MBPProcessor(HDABProcessor):
         params.data['area'] = results['area']
         params.data['sub_areas'] = results['sub_areas']        
         params.data['horz_fibers_ao'] = results['ao']
-        params.data['horz_fibers_aos'] = results['sub_aos']
+        params.data['horz_fibers_sub_aos'] = results['sub_aos']
         params.data['horz_threshold'] = self.horz_thresh
 
         # create the output directory
