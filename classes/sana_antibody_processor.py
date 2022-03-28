@@ -55,8 +55,6 @@ class Processor:
 
         # finally, mask the frame by the main ROI
         self.frame.mask(self.main_mask)
-        self.dab.mask(self.main_mask)
-        self.hem.mask(self.main_mask)        
     #
     # end of gen_masks
     
@@ -67,12 +65,11 @@ class Processor:
     # NOTE: the frame and rois must be in the same coord. system
     # TODO: any way to check the above??, could check if theres no overlap between frame nad mask
     #       IMPORTANT! not actually AO=0, if the frame is black you would still get AO=0
-    def run_ao(self, orig_frame):
+    def run_ao(self, frame):
 
-        # create a copy to not disturb the original data
-        # TODO: need to check that it is thresholded! set a flag in frame.threshold()
-        frame = orig_frame.copy()
-        
+        # apply the mask
+        frame.mask(self.main_mask)
+
         # get the total area of the roi
         area = np.sum(self.main_mask.img / 255)
 
@@ -236,7 +233,7 @@ class MBPProcessor(HDABProcessor):
         #       value is calculated from that
         # TODO: check the math!
         # TODO: this doesn't work
-        self.manual_dab_threshold = 35
+        self.manual_dab_threshold = 94
 
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)
@@ -268,7 +265,7 @@ class MBPProcessor(HDABProcessor):
         # for vertical
         sigma = (10,100)
         self.vert_sta = STA(sigma)
-        self.vert_sta.run(self.dab_norm, debug=True)
+        self.vert_sta.run(self.dab_norm)
 
         # get the distance from 90, then inverse it
         # NOTE: this maps 0 and 180 -> 0, 90 -> 90
@@ -289,7 +286,7 @@ class MBPProcessor(HDABProcessor):
 
         # get the histogram and threshold
         self.vert_hist = self.vert_prob.histogram()
-        self.vert_threshold = max_dev(self.vert_hist)
+        self.vert_threshold = max_dev(self.vert_hist, mx=150)
 
         # threshold the prob. map
         self.vert_thresh = self.vert_prob.copy()
@@ -323,13 +320,13 @@ class MBPProcessor(HDABProcessor):
 
         sigma = (100,10)
         self.horz_sta = STA(sigma)
-        self.horz_sta.run(self.dab_norm, debug=True)
-        
+        self.horz_sta.run(self.dab_norm)
+
         # get the distance from 90
         # NOTE: this maps 0 and 180 -> 90, 90 -> 0
         self.horz_sta.ang = (90 - self.horz_sta.ang)
         self.horz_sta.ang /= 90
-        
+
         # create the probability map
         # NOTE: we are essentially scaling the DAB prob. by the coh and ang
         # TODO: this part is redundant with vert_ao
@@ -345,7 +342,7 @@ class MBPProcessor(HDABProcessor):
 
         # get the histogram and threshold
         self.horz_hist = self.horz_prob.histogram()
-        self.horz_threshold = max_dev(self.horz_hist)
+        self.horz_threshold = max_dev(self.horz_hist, mx=150)
 
         # threshold the prob. map
         self.horz_thresh = self.horz_prob.copy()

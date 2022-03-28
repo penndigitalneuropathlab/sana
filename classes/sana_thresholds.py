@@ -127,14 +127,14 @@ def kittler(hist, mi=0, mx=255):
 # 2) draws a line from peak to end of histogram
 # 3) finds point on histogram which it's perp. line
 #     is longest, i.e. point is furthest from the line
-def max_dev(hist, scale=1.0, debug=False):
+def max_dev(hist, scale=1.0, debug=False, mx=255):
     hist_norm = hist.ravel()/hist.sum()
     hist_norm[0] = 0
     hist_norm /= np.max(hist_norm)
     hist_norm *= 255
 
     # get the peak and end of histogram
-    x0, x1 = np.argmax(hist_norm), 255
+    x0, x1 = np.argmax(hist_norm[:mx]), mx
     y0, y1 = hist_norm[x0], hist_norm[x1]
 
     # move the initial position by the ratio of the peak
@@ -153,6 +153,7 @@ def max_dev(hist, scale=1.0, debug=False):
     
     mx_dist = 0
     thresh = 0
+    pj = None    
     for xi in np.arange(x0, x1):
         yi = hist_norm[xi]
 
@@ -173,7 +174,8 @@ def max_dev(hist, scale=1.0, debug=False):
             pj = (xj, yj)
 
     if debug:
-        ax.plot([thresh, pj[0]], [hist_norm[thresh], pj[1]], color='black')
+        if pj:
+            ax.plot([thresh, pj[0]], [hist_norm[thresh], pj[1]], color='black')
         plt.show()
         
     return thresh
