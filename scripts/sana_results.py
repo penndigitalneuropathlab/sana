@@ -38,7 +38,10 @@ def load_data(idir, aid, antibody, region, roi):
 
     # build the filepath
     d = os.path.join(idir, aid, antibody, region, roi)
-    f = [x for x in os.listdir(d) if x.endswith('.csv')][0]
+    try:
+        f = [x for x in os.listdir(d) if x.endswith('.csv')][0]
+    except:
+        return None
     f = os.path.join(d, f)
 
     # load the data
@@ -167,13 +170,13 @@ def write_results(odir, bids, results, mu, sigma):
 
                     # write the long csv format
                     for j in range(len(x)):
-                        long_fp.write('%s,%s,%s,%s,%s,%s,%.4g,%.4g\n' % \
-                                      (aid, antibody, measurement, region,
+                        long_fp.write('%s,%s,%s,%s,%s,%.4g,%.4g\n' % \
+                                      (bid, antibody, measurement, region,
                                        layers[j], x[j], z[j]))
 
                     # write the wide csv format
-                    wide_fp.write(('%s,%s,%s,%s,%s'+',%.4g'*22+'\n') % \
-                                  (tuple((aid, antibody, measurement, region)) \
+                    wide_fp.write(('%s,%s,%s,%s'+',%.4g'*22+'\n') % \
+                                  (tuple((bid, antibody, measurement, region)) \
                                    + tuple(x) + tuple(z)))
                 #
                 # end of bids loop
@@ -213,7 +216,6 @@ def main(argv):
                 d = os.path.join(args.idir, bid, antibody, region)
                 if not os.path.isdir(d):
                     continue
-                data[bid][antibody][region] = []
                 
                 # loop and store the rois
                 for roi in os.listdir(d):
@@ -223,6 +225,8 @@ def main(argv):
 
                     # finally, load the .csv file and store it
                     x = load_data(args.idir, bid, antibody, region, roi)
+                    if x is None:
+                        continue
                     data[bid][antibody][region] = x
                     
                     # TODO: handle multiple ROIs
