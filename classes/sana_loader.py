@@ -9,7 +9,6 @@ import openslide
 import numpy as np
 
 # custom packages
-import sana_io
 from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly
 from sana_frame import Frame, get_csf_threshold, get_tissue_orientation
 from matplotlib import pyplot as plt
@@ -19,13 +18,14 @@ class FileNotSupported(Exception):
         self.message = 'File not found or not supported.'
         super().__init__(self.message)
 
+# TODO: make a default loader class which has MPP and ds values
 # provides an interface to initalize and load SVS files
 # uses OpenSlide to do this
 class Loader(openslide.OpenSlide):
     def __init__(self, fname, get_thumb=True):
 
         # initialize the object with the slide
-        self.fname = sana_io.get_fullpath(fname)
+        self.fname = fname
         try:
             super().__init__(self.fname)
         except:
@@ -35,7 +35,10 @@ class Loader(openslide.OpenSlide):
         self.lc = self.level_count
         self.dim = self.level_dimensions
         self.ds = self.level_downsamples
-        self.mpp = float(self.properties['aperio.MPP'])
+        try:
+            self.mpp = float(self.properties['aperio.MPP'])
+        except:
+            self.mpp = 0.5045
         self.converter = Converter(self.mpp, self.ds)
         self.csf_threshold = None
 
@@ -47,6 +50,7 @@ class Loader(openslide.OpenSlide):
             self.slide_color = copy(self.thumbnail).get_bg_color()
 
             # calculate the Slide/Tissue threshold
+            # TODO: make this much faster!
             self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
     #
     # end of constructor
@@ -137,80 +141,106 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_frame
 
-    # this function uses the bounding box of an annotation to load a frame of data
-    def load_roi(self, writer, roi):
+    # this function uses the bounding box of an ROI to load a frame of data
+    def load_roi_frame(self, params, orig_roi, copy=True):
 
-        # load the frame based on the roi
+        # create a copy to not disturb the original data
+        if copy:
+            roi = orig_roi.copy()
+        else:
+            roi = orig_roi
+        
+        # scale the roi to the current resolution
+        self.converter.rescale(roi, self.lvl)
+        
+        # load the frame based on the ROI bounding box
         loc, size = roi.bounding_box()
-        roi.translate(loc)
         frame = self.load_frame(loc, size)
 
-        # store the processing params and return the frame
-        writer.data['loc'] = loc
-        writer.data['size'] = size
-        writer.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
-        writer.data['crop_size'] = np.copy(size)
-        return frame
-    #
-    # end of load_roi
-
-    # TODO: implement
-    def load_crude_roi(self, writer, roi):
-        pass
-    #
-    # end of load_crude_roi
-
-    # this function loads a frame of slide data using a given GM segmentation
-    # it uses the boundaries to orthoganilize the frame, then looks for slide
-    # background  near the boundaries to orient the tissue boundary to the top of the frame
-    # NOTE: this is a beefed version of just using roi.bounding_box() to load the frame
-    def load_gm_seg(self, writer, orig_roi):
-        roi = copy(orig_roi)
-        
-        # get the angle that best orthogonalizes the segmentation
-        angle = get_ortho_angle(roi)
-
-        # TODO: ensure that everything is done properly here.
-        # load the frame based on the segmentation
-        loc, size = roi.bounding_box()
+        # translate the ROI to the new coord. system
         roi.translate(loc)
 
-        orig_frame = self.load_frame(loc, size)
-        frame = orig_frame.copy()
+        # store the processing params and return the frame
+        params.data['loc'] = loc
+        params.data['size'] = size
+        params.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
+        params.data['crop_size'] = np.copy(size)
 
-        # rotate the image to be vertical
+        return frame
+    #
+    # end of load_roi_frame
+
+    # this function loads a frame of slide data using a given GM segmentation
+    # it uses the boundaries to orthoganalize the frame, then looks for slide
+    # background near the boundaries to orient the CSF to the top of the frame
+    # TODO: need to pad the segmentation somehow to provide context for tiling 
+    def load_gm_frame(self, params, orig_roi, debug=False):
+
+        if debug:
+            fig, axs = plt.subplots(2,2)
+            axs = axs.ravel()
+        
+        # create a copy to not disturb the original data
+        roi = orig_roi.copy()
+
+        # load the frame from the ROI
+        frame = self.load_roi_frame(params, roi, copy=False)
+
+        if debug:
+            axs[0].imshow(frame.img)
+            plot_poly(axs[0], roi, color='red')
+
+        # get the angle that best orthogonalizes the segmentation
+        angle = get_ortho_angle(roi)
+        
+        # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
         roi = roi.transform(M1)
+        if debug:
+            axs[1].imshow(frame.img)
+            plot_poly(axs[1], roi, color='red')
 
-        # TODO: this might affect the amount of slide that is foound near boundaries
-        # crop the frame to remove borders
+        # crop the frame/ROI to remove borders
+        # TODO: this might affect the amount of slide that is found near boundaries
+        # TODO: do this at the end?
         crop_loc, crop_size = roi.bounding_box()
         roi.translate(crop_loc)
         frame.crop(crop_loc, crop_size)
+        if debug:
+            axs[2].imshow(frame.img)
+            plot_poly(axs[2], roi, color='red')
 
-        # make sure the tissue boundary is at the top of the image
-        l1_on_top = get_tissue_orientation(frame, roi, angle)
-        if not l1_on_top:
+        # figure out if the image is oriented with CSF on top
+        # TODO: make sure get_tissue_orientation is good
+        csf_on_top = get_tissue_orientation(frame, roi, angle, debug)
+        if not csf_on_top:
             rotate_angle = 180
         else:
             rotate_angle = 0
+
+        # rotate either 180 or 0 degrees to make sure CSF is on top
         M2, nw, nh = frame.get_rotation_mat(rotate_angle)
         frame.warp_affine(M2, nw, nh)
+        if debug:
+            axs[3].imshow(frame.img)
+            plot_poly(axs[3], roi, color='red')
+        
+        # store the values used during loading the frame
+        params.data['crop_loc'] = crop_loc
+        params.data['crop_size'] = crop_size
+        params.data['angle1'] = angle
+        params.data['angle2'] = rotate_angle
+        params.data['M1'] = M1
+        params.data['M2'] = M2
 
-        # store the processing parameters
-        writer.data['loc'] = loc
-        writer.data['size'] = size
-        writer.data['angle'] = angle
-        writer.data['crop_loc'] = crop_loc
-        writer.data['crop_size'] = crop_size
-        writer.data['M1'] = M1
-        writer.data['M2'] = M2
+        if debug:
+            plt.show()
 
         # finally, return the orthogonalized frame
         return frame
     #
-    # end of load_gm_seg
+    # end of load_gm_frame
 
     def from_vector(self, writer, v, l):
 

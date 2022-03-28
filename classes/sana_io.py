@@ -1,6 +1,7 @@
 
 # system packages
 import os
+import ntpath
 import sys
 import json
 import re
@@ -11,6 +12,8 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
+from processors.MBP_processor import MBPProcessor
+from processors.parvalbumin_processor import parvalbuminProcessor
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -61,11 +64,7 @@ def get_anno_files(d):
 
 # returns True if Loader can handle the given file
 def is_slide(f):
-    try:
-        Loader(f)
-        return True
-    except:
-        return False
+    return f.endswith('.svs')
 #
 # end of is_slide
 
@@ -81,6 +80,57 @@ def is_anno(f):
 
 def get_slide_id(fname):
     return fname.split('_')[0]
+
+def get_slide_parts(fname):
+    if not is_slide(fname):
+        print('ERROR: Cannot get antibody from file: %s' % fname)
+        exit()
+    fname = ntpath.basename(fname)        
+    parts = fname.split('_')
+    if len(parts) == 7:
+        cid, hemi, region, antibody, dil, date, init = parts
+    elif len(parts) == 6:
+        cid, region, antibody, dil, date, init = parts
+        hemi = 'N'
+    else:
+        print('ERROR: Slide not properly named: %s' % fname)
+        exit()
+        
+    return cid, hemi, region, antibody, dil, date, init
+#
+# end of get_slide_parts
+
+# e.g. 2017-191-25F
+def get_bid(fname):
+    return get_slide_parts(fname)[0]
+# e.g. 2017-191
+def get_aid(fname):
+    return '-'.join(get_slide_parts(fname)[0].split('-')[:2])
+# e.g. 25F
+def get_bnum(fname):
+    return get_slide_parts(fname)[0].split('-')[2]
+# e.g. L, R, or N
+def get_hemi(fname):
+    return get_slide_parts(fname)[1]
+# e.g. MFC
+def get_region(fname):
+    return get_slide_parts(fname)[2]
+# e.g. SMI32
+def get_antibody(fname):    
+    return get_slide_parts(fname)[3]
+
+# instantiates a Processor object based on the antibody of the svs slide
+# TODO: where to put this
+def get_processor(fname, frame):
+    antibody = get_antibody(fname)
+    if antibody == 'NeuN':
+        return NeuNProcessor(fname, frame)
+    if antibody == 'parvalbumin':
+        return parvalbuminProcessor(fname, frame)
+    if antibody == 'SMI94':
+        return MBPProcessor(fname, frame)
+#
+# end of get_processor
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
@@ -112,13 +162,16 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 
     # get the parts of the original filepath
     ifpath = os.path.dirname(ifile)
-    ifname = os.path.basename(ifile)
+    ifname = ntpath.basename(ifile)
     ifname, iext = os.path.splitext(ifname)
 
     # extension not given, use current extension
     if ext == "":
         ext = iext
 
+    if suffix != "":
+        suffix = '_' + suffix        
+        
     # create the output filename using the basename, suffix, and extension
     fname = '%s%s%s' % (ifname, suffix, ext)
 
@@ -133,6 +186,15 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 #
 # end of create_filepath
 
+# creates a subdirectory for the ith ROI in a given json file
+def create_odir(odir, s):
+    odir = '%s/%s' % (odir, s)
+    if not os.path.exists(odir):
+        os.makedirs(odir)
+    return odir
+#
+# end of create_odir
+
 # loads a list of files into memory, checks to make sure each file exists
 def read_list_file(list_f):
 
@@ -141,6 +203,17 @@ def read_list_file(list_f):
     return files
 #
 # end of read_list_file
+
+# generates a list of slide files from a series of lists from the commandline
+def get_slides_from_lists(lists):
+
+    # concatenate all slide lists
+    slides = []
+    for f in lists:
+        slides += read_list_file(f)
+    return slides
+#
+# end of get_slides_from_lists
 
 # removes unreadable header data from JSON annotation files
 # NOTE: these headers come export JSON files from Qupath
@@ -169,8 +242,8 @@ def fix_annotations(ifile):
 #  -class_name: if given, only returns annotations with this class
 def read_annotations(ifile, class_name=None, name=None):
     if not ifile.endswith('.json'):
-        print('ERROR: Bad Filetype!')
-        exit()
+        raise Exception
+        
     # remove unwanted header bytes if they exist
     fix_annotations(ifile)
 
@@ -272,159 +345,3 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
 #
 # end of append_annotations
 
-# this class reads and writes data associated with processed Frames
-# NOTE: when adding fields, be sure to edit the following:
-#           self.data
-#           parse_val()
-#           write_data()
-class DataWriter:
-    def __init__(self, fname):
-
-        # initalize the data
-        self.data = {
-            'lvl': None,
-            'loc': None,
-            'size': None,
-            'ao': None,
-            'aos_list': [],
-            'area': None,
-            'areas_list': [],
-            'csf_threshold': None,
-            'stain_threshold': None,
-            'angle': None,
-            'crop_loc': None,
-            'crop_size': None,
-            'ds': None,
-            'M1': None,
-            'M2': None,
-        }
-        self.line = '%s\t%s\n'
-
-        # load the data from the filename into memory
-        self.read_data(fname)
-    #
-    # end of constructor
-
-    def read_data(self, fname):
-        self.fname = fname
-
-        # make sure the file exists already
-        if not os.path.exists(self.fname):
-            return
-
-        # load the fields into memory
-        for line in open(self.fname, 'r'):
-            key, val = line.split('\t', maxsplit=1)
-            val = self.parse_val(key, val.rstrip())
-            if not val is None:
-                self.data[key] = val
-        #
-        # end of reading data
-    #
-    # end of read_data
-
-    def write_data(self):
-        fp = open(self.fname, 'w')
-        fp.write(self.line % ('lvl', self.write_int(self.data['lvl'])))
-        fp.write(self.line % ('loc', self.write_point(self.data['loc'])))
-        fp.write(self.line % ('size', self.write_point(self.data['size'])))
-        fp.write(self.line % ('ao', self.write_float(self.data['ao'])))
-        fp.write(self.line % ('aos_list',
-                              self.write_float_list(self.data['aos_list'])))
-        fp.write(self.line % ('area', self.write_float(self.data['area'])))
-        fp.write(self.line % ('areas_list',
-                              self.write_float_list(self.data['areas_list'])))
-        fp.write(self.line % ('csf_threshold',
-                              self.write_int(self.data['csf_threshold'])))
-        fp.write(self.line % ('stain_threshold',
-                              self.write_int(self.data['stain_threshold'])))
-        fp.write(self.line % ('angle',
-                              self.write_float(self.data['angle'])))
-        fp.write(self.line % ('crop_loc',
-                              self.write_point(self.data['crop_loc'])))
-        fp.write(self.line % ('crop_size',
-                              self.write_point(self.data['crop_size'])))
-        fp.write(self.line % ('ds',
-                              self.write_point(self.data['ds'])))
-        fp.write(self.line % ('M1',
-                              self.write_M(self.data['M1'])))
-        fp.write(self.line % ('M2',
-                              self.write_M(self.data['M2'])))
-        fp.close()
-    #
-    # end of write_data
-
-    def parse_val(self, key, val):
-        if len(val) == 0:
-            return None
-        elif key == 'lvl':
-            return self.parse_int(val)
-        elif key == 'loc':
-            return self.parse_point(val)
-        elif key == 'size':
-            return self.parse_point(val)
-        elif key == 'ao':
-            return self.parse_float(val)
-        elif key == 'aos_list':
-            return self.parse_float_list(val)
-        elif key == 'area':
-            return self.parse_float(val)
-        elif key == 'areas_list':
-            return self.parse_float_list(val)
-        elif key == 'csf_threshold':
-            return self.parse_int(val)
-        elif key == 'stain_threshold':
-            return self.parse_int(val)
-        elif key == 'angle':
-            return self.parse_float(val)
-        elif key == 'crop_loc':
-            return self.parse_point(val)
-        elif key == 'crop_size':
-            return self.parse_point(val)
-        elif key == 'ds':
-            return self.parse_point(val)
-<<<<<<< HEAD
-=======
->>>>>>> Stashed changes
-        elif key == 'M1':
-            return self.parse_M(val)
-        elif key == 'M2':
-            return self.parse_M(val)
->>>>>>> Stashed changes
-        else:
-            return None
-    #
-    # end of parse_val
-
-    def parse_int(self, val):
-        return int(val)
-    def parse_float(self, val):
-        return float(val)
-    def parse_point(self, val):
-        x0, x1 = [float(x) for x in val.split('\t')]
-        return Point(x0, x1, False, 0)
-    def parse_float_list(self, val):
-        return [float(x) for x in val.split('\t') if len(x) != 0]
-    def parse_M(self, val):
-        M = self.parse_float_list(val)
-        return np.array(M, dtype=np.float64).reshape((2,3))
-    #
-    # end of parsing
-
-    def write_int(self, val):
-        return "%d" % (val) if not val is None else ""
-    def write_float(self, val):
-        return '%.6f' % (val) if not val is None else ""
-    def write_point(self, val):
-        return '%.6f\t%.6f' % (val[0], val[1]) if not val is None else ""
-    def write_float_list(self, val):
-        return '%.6f\t'*len(val) % tuple(val) if not val is None else ""
-    def write_M(self, val):
-        return self.write_float_list(val.flatten()) if not val is None else ""
-    #
-    # end of writing
-#
-# end of DataWriter
-
-#
-# end of file

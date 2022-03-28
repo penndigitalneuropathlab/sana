@@ -101,31 +101,50 @@ def get_ortho_angle(seg):
     # get the best angle to use
     return angles[np.argmin(dist)]
 #
-# end of get_ortho_seg
+# end of get_ortho_angle
 
+# performs a series a translations and rotations to transform a polygon
+#  to the coordinate system of a processed Frame
 def transform_poly(x, loc, crop_loc, M1, M2):
-    x.translate(loc)
-    x = x.transform(M1)
-    x.translate(crop_loc)
-    x = x.transform(M2)
+    if not loc is None:
+        x.translate(loc)
+    if not M1 is None:
+        x = x.transform(M1)
+    if not crop_loc is None:
+        x.translate(crop_loc)
+    if not M2 is None:
+        x = x.transform(M2)
     return x
+#
+# end of transform_poly
+
+# performs the inverse translations and rotations to return a polygon
+#  to the original coordinate system
+def transform_inv_poly(x, loc, crop_loc, M1, M2):
+    if not M2 is None:
+        x = x.transform_inv(M2)
+    if not crop_loc is None:
+        x.translate(-crop_loc)
+    if not M1 is None:
+        x = x.transform_inv(M1)
+    if not loc is None:
+        x = x.translate(-loc)
+    return x
+#
+# end of transform_inv_poly
 
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, color='black', last=True):
+def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
     if last:
         en = x.shape[0]-1
     else:
         en = x.shape[0]-2
     for i in range(en):
-        ax.plot((x[i][0],x[i+1][0]),(x[i][1],x[i+1][1]), color=color)            
-
-# Array conversion class to handle microns, pixel resolutions, and orders
-# NOTE: SANA code supports both microns and pixel analysis, but it is best
-#       practice to use pixel units as much as possible, and convert to/from
-#       microns at the beginning or ending of analysis
-#  -mpp: microns per pixel constant, usually provided by Loader
-#  -ds: level downsample factors, usually provided by Loader
-
+        if i != 0:
+            label = None
+        ax.plot((x[i][0], x[i+1][0]),
+                (x[i][1], x[i+1][1]),
+                color=color, linestyle=linestyle, label=label)            
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, xy, lvl=0):
@@ -141,6 +160,12 @@ def hull_to_poly(hull, xy, lvl=0):
 #
 # end of hull_to_pull
 
+# Array conversion class to handle microns, pixel resolutions, and orders
+# NOTE: SANA code supports both microns and pixel analysis, but it is best
+#       practice to use pixel units as much as possible, and convert to/from
+#       microns at the beginning or ending of analysis
+#  -mpp: microns per pixel constant, usually provided by Loader
+#  -ds: level downsample factors, usually provided by Loader
 class Converter:
     def __init__(self, mpp, ds):
         self.mpp = mpp
@@ -382,9 +407,12 @@ class Polygon(Array):
                 return False
         return True
 
+    def connected(self):
+        return self[0, 0] == self[-1, 0] and self[0, 1] == self[-1, 1]
+    
     # TODO: this and filter need to return Annotation sometimes...
     def connect(self):
-        if self[0, 0] != self[-1, 0] or self[0, 1] != self[-1, 1]:
+        if not self.connected():
             x, y = self.get_xy()
             x = np.concatenate([x, [self[0,0]]], axis=0)
             y = np.concatenate([y, [self[0,1]]], axis=0)
@@ -436,11 +464,14 @@ class Line(Polygon):
         b = Point(self[-1,0], m*self[-1,0] + b, False, self.lvl)
 
         # calculate the angle of rotation in degrees
-        angle = np.rad2deg(np.arctan2(b[1]-a[1], b[0]-a[0]))
+        angle = np.rad2deg(np.arctan(m))
 
-        # transform the III and IV quadrants to I and II respectively
-        quadrant = angle // 90
-        if quadrant > 1:
+        # get only pos. angles
+        if angle < 0:
+            angle = 360 + angle
+
+        # only care about angles in quadrants I and II
+        if angle > 180:
             angle -= 180
 
         return angle
@@ -450,8 +481,8 @@ class Line(Polygon):
     # calculates the line of best fit
     def linear_regression(self):
         x, y, n = self[:, 0], self[:, 1], self.shape[0]
-        ss_xy = np.sum(y * x) - n * np.mean(y) * np.mean(x)
-        ss_xx = np.sum(x**2) - n * np.mean(x)**2
+        ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
+        ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
         m = ss_xy/ss_xx
         b = np.mean(y) - m * np.mean(x)
         return m, b
@@ -533,6 +564,17 @@ class Annotation(Polygon):
         return annotation
     #
     # end of anno_to_json
+
+    def connect(self):
+        if not self.connected():
+            x, y = self.get_xy()
+            x = np.concatenate([x, [self[0,0]]], axis=0)
+            y = np.concatenate([y, [self[0,1]]], axis=0)
+            p = Polygon(x, y, self.is_micron, self.lvl, self.order)
+            return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence)            
+        else:
+            return self
+
 #
 # end of Annotation
 

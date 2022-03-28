@@ -3,67 +3,42 @@ import os
 import sys
 import numpy as np
 from numpy.linalg import det, inv, eig, svd
+from matplotlib import pyplot as plt
 
+# TODO: test the gray
+# TODO: test the stain vector estimation
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
-    def __init__(self, stain_type, stain_target,
-                 stain_vector=None, od=False, gray=True):
-
+    def __init__(self, stain_type, stain_vector=None):
+        
         # define the stain vector
         self.stain_type = stain_type
-        self.stain_target = stain_target
-        self.stain_vector = StainVector(
-            self.stain_type, self.stain_target, stain_vector)
+        self.stain_vector = StainVector(self.stain_type, stain_vector)
         self.stain_to_rgb = self.stain_vector.v
         self.rgb_to_stain = self.stain_vector.v_inv
 
-        # define which stains to return
-        if type(self.stain_target) is list:
-            self.ret = self.stain_target
-        elif self.stain_target.upper() == 'ALL':
-            self.ret = [True, True, True]
-        else:
-            self.ret = list(map(lambda x: x == self.stain_target.upper(),
-                                self.stain_vector.stains))
+        # get the min and max possible values for each output stain
+        img = np.array([
+            [1,1,1],[1,1,255],[1,255,1],[1,255,255],
+            [255,1,1],[255,1,255],[255,255,1],[255,255,255]], dtype=np.uint8)[None,:,:]
+        stains = self.run(img)
+        self.min_od = [np.min(stains[:,:,i]) for i in range(3)]
+        self.max_od = [np.max(stains[:,:,i]) for i in range(3)]
 
-        # parameters defining the type of image to generate
-        self.od = od
-        self.gray = gray
+        tst_dab = 1.0
+        #print('parvalbumin DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
+        tst_dab = 0.3
+        #print('SMI94 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))        
     #
     # end of constructor
-
+    
     def run(self, img):
-        s1, s2, s3 = None, None, None
 
         # separate the stains, convert from rgb to stains
         stains = self.separate_stains(img)
-        s1, s2, s3 = stains[:, :, 0], stains[:, :, 1], stains[:, :, 2]
 
-        # TODO: make sure this is working properly, check the histograms
-        # convert each stain channel back to a new rgb image
-        #  using the original stain vector
-        if not self.od:
-            z = np.zeros_like(s1)
-            s = np.stack((z,z,z), axis=-1)
-            if self.ret[0]:
-                s[:,:,0] = s1
-            if self.ret[1]:
-                s[:,:,1] = s2
-            if self.ret[2]:
-                s[:,:,2] = s3
-            s = self.combine_stains(s)
-
-            # convert to grayscale
-            if self.gray:
-                s = np.rint(np.dot(s.astype(float),
-                    [0.2989, 0.5870, 0.1140])).astype(np.uint8)
-            #
-            # end of to grayscale processing
-        #
-        # end of to rgb processing
-
-        return s
+        return stains
     #
     # end of run
 
@@ -119,7 +94,7 @@ class StainSeparator:
             [0.0, 0.0, 0.0],
         ]
         self.stain_vector = StainVector(
-            self.stain_type, self.stain_target, stain_v)
+            self.stain_type, stain_v)
         self.stain_to_rgb = self.stain_vector.v
         self.rgb_to_stain = self.stain_vector.v_inv
 
@@ -138,7 +113,10 @@ class StainSeparator:
         # apply the stain vector to the OD, ensure no negative stain values
         od = self.to_od(rgb)
         stains = od @ v
-        return np.clip(stains, 0, None)
+
+        # TODO: we used to clip to 0, however i don't think it's necessary
+        return stains        
+        #return np.clip(stains, 0, None)
 
     # converts the stain separated image back to an rgb image using the stain vector
     def combine_stains(self, stain):
@@ -154,9 +132,8 @@ class StainSeparator:
 # end of StainSeparator
 
 class StainVector:
-    def __init__(self, stain_type, stain_target, stain_vector=None):
+    def __init__(self, stain_type, stain_vector=None):
         self.stain_type = stain_type
-        self.stain_target = stain_target
         if self.stain_type == 'H-DAB':
             if stain_vector is None:
                 self.v = stain_v = np.array([

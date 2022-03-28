@@ -82,9 +82,11 @@ def knn(d, k):
 def kittler(hist, mi=0, mx=255):
 
     # prepare the hist and bins
+    if len(hist.shape) == 2:
+        hist = hist[:,0]
     h = hist.astype(np.float)
     g = np.arange(0, 257, 1).astype(np.float)
-
+    
     # zero out data not within the min and max parameters
     h[:mi] = 0
     h[mx:] = 0
@@ -118,3 +120,64 @@ def kittler(hist, mi=0, mx=255):
     return [t]
 #
 # end of kittler
+
+# this threshold assumes the histogram is unimodal
+# 1) detects peak of unimodal dist.
+# 1b) moves peak downwards by a scale factor
+# 2) draws a line from peak to end of histogram
+# 3) finds point on histogram which it's perp. line
+#     is longest, i.e. point is furthest from the line
+def max_dev(hist, scale=1.0, debug=False, mx=255):
+    hist_norm = hist.ravel()/hist.sum()
+    hist_norm[0] = 0
+    hist_norm /= np.max(hist_norm)
+    hist_norm *= 255
+
+    # get the peak and end of histogram
+    x0, x1 = np.argmax(hist_norm[:mx]), mx
+    y0, y1 = hist_norm[x0], hist_norm[x1]
+
+    # move the initial position by the ratio of the peak
+    val = y0 * scale
+    x0 = np.argmax(hist_norm[x0:] <= val) + x0
+    y0 = hist_norm[x0]
+
+    m = (y1-y0)/(x1-x0)
+    b = y1 - m*x1
+    A = [m, -1, b]
+
+    if debug:
+        fig, ax = plt.subplots(1,1)
+        ax.plot(hist_norm)
+        ax.plot([x0, x1], [y0, y1], '--', color='blue')
+    
+    mx_dist = 0
+    thresh = 0
+    pj = None    
+    for xi in np.arange(x0, x1):
+        yi = hist_norm[xi]
+
+        mp = -1/m
+        bp = yi - mp * xi
+        B = [mp, -1, bp]
+
+        xj = (A[1]*B[2] - B[1]*A[2]) / (A[0]*B[1] - B[0]*A[1])
+        yj = (A[2]*B[0] - B[2]*A[0]) / (A[0]*B[1] - B[0]*A[1])
+
+        if xi % 10 == 0 and debug:
+            ax.plot([xi, xj], [yi, yj], color='red')
+        
+        dist = np.sqrt(((xi-xj)**2 + (yi-yj)**2))
+        if dist > mx_dist:
+            mx_dist = dist
+            thresh = xi
+            pj = (xj, yj)
+
+    if debug:
+        if pj:
+            ax.plot([thresh, pj[0]], [hist_norm[thresh], pj[1]], color='black')
+        plt.show()
+        
+    return thresh
+#
+# end of max_dev
