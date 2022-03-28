@@ -13,7 +13,6 @@ import sana_io
 from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly
-from sana_antibody_processor import get_processor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -83,13 +82,15 @@ def main(argv):
             params = Params()
 
             # create the output directory path
-            # TODO: do we want aid instead? would make less dirs, but then need
-            #       to put the 03F part somewhere i think...
-            # TODO: aid/region/case/stain_roiID/data
+            # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
             bid = sana_io.get_bid(slide_f)
-            antibody = sana_io.get_antibody(slide_f)
+            antibody = sana_io.get_antibody(slide_f)                        
+            region = sana_io.get_region(slide_f)
+            roi_id = '%s_%d' % ('ROI', main_roi_i)
             odir = sana_io.create_odir(args.odir, bid)
-            odir = sana_io.create_odir(odir, '%s_%d' % (antibody, main_roi_i))
+            odir = sana_io.create_odir(odir, antibody)
+            odir = sana_io.create_odir(odir, region)            
+            odir = sana_io.create_odir(odir, roi_id)
             
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -119,7 +120,7 @@ def main(argv):
                 )
                 
             # get the processor object
-            processor = get_processor(slide_f, frame)
+            processor = sana_io.get_processor(slide_f, frame)
 
             # run the processes for the antibody
             processor.run(odir, params, main_roi, sub_rois)
@@ -149,8 +150,7 @@ def cmdl_parser(argv):
         help="resolution level to use during processing")
     parser.add_argument(
         '-roi_type', type=str, required=True, choices=['GM', 'ROI'],
-        help="type of ROI the annotations should be treated as, GM ROIs will be rotated"
-    )
+        help="type of ROI, GM will be rotated, ROI is only translated")
     parser.add_argument(
         '-main_class', type=str, default='ROI',
         help="ROI class used to load and process the Frame")

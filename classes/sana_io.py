@@ -12,6 +12,8 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
+from processors.MBP_processor import MBPProcessor
+from processors.parvalbumin_processor import parvalbuminProcessor
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -101,16 +103,34 @@ def get_slide_parts(fname):
 # e.g. 2017-191-25F
 def get_bid(fname):
     return get_slide_parts(fname)[0]
-# e.g. 25F
-def get_bnum(fname):
-    return get_slide_parts(fname)[0].split('-')[2]
 # e.g. 2017-191
 def get_aid(fname):
     return '-'.join(get_slide_parts(fname)[0].split('-')[:2])
+# e.g. 25F
+def get_bnum(fname):
+    return get_slide_parts(fname)[0].split('-')[2]
+# e.g. L, R, or N
+def get_hemi(fname):
+    return get_slide_parts(fname)[1]
+# e.g. MFC
 def get_region(fname):
     return get_slide_parts(fname)[2]
+# e.g. SMI32
 def get_antibody(fname):    
     return get_slide_parts(fname)[3]
+
+# instantiates a Processor object based on the antibody of the svs slide
+# TODO: where to put this
+def get_processor(fname, frame):
+    antibody = get_antibody(fname)
+    if antibody == 'NeuN':
+        return NeuNProcessor(fname, frame)
+    if antibody == 'parvalbumin':
+        return parvalbuminProcessor(fname, frame)
+    if antibody == 'SMI94':
+        return MBPProcessor(fname, frame)
+#
+# end of get_processor
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
