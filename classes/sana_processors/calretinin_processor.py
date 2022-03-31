@@ -3,31 +3,27 @@
 from sana_thresholds import max_dev, kittler
 from processors.HDAB_processor import HDABProcessor
 
-# this is a H-DAB stain which stains for -------
-# it not a very specific antibody, therefore the thresholds are
-# more strict than usual to account for that
-class parvalbuminProcessor(HDABProcessor):
+class calretininProcessor(HDABProcessor):
     def __init__(self, fname, frame):
-        super(parvalbuminProcessor, self).__init__(fname, frame)
+        super(calretininProcessor, self).__init__(fname, frame)
     #
     # end of constructor
 
-    # TODO: might not even need run?
     def run(self, odir, params, main_roi, sub_rois=[]):
 
         self.mask_frame(main_roi, sub_rois)
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
-        # NOTE: original value was DAB_OD = 1.0 in QuPath, this
+        # NOTE: original value was DAB_OD = 0.3 in QuPath, this
         #       value is calculated from that
-        self.manual_dab_threshold = 127
+        self.manual_dab_threshold = 94
         
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params)
+        self.run_auto_ao(odir, params, scale=0.3)
 
         # save the original frame
         # TODO: where should this go? shouldn't be in every run()...

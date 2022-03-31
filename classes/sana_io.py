@@ -12,8 +12,7 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
-from processors.MBP_processor import MBPProcessor
-from processors.parvalbumin_processor import parvalbuminProcessor
+from sana_processors import *
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -125,6 +124,10 @@ def get_processor(fname, frame):
     antibody = get_antibody(fname)
     if antibody == 'NeuN':
         return NeuNProcessor(fname, frame)
+    if antibody == 'SMI32':
+        return SMI32Processor(fname, frame)
+    if antibody == 'CALR6BC':
+        return calretininProcessor(fname, frame)
     if antibody == 'parvalbumin':
         return parvalbuminProcessor(fname, frame)
     if antibody == 'SMI94':

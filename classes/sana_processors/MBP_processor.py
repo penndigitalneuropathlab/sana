@@ -33,7 +33,8 @@ class MBPProcessor(HDABProcessor):
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params)
+        # TODO: do i need scale here? or is that for PV??
+        self.run_auto_ao(odir, params, scale=0.3)
 
         # generate the vertical fibers AO
         self.run_vertical_ao(odir, params)

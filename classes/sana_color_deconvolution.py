@@ -27,9 +27,11 @@ class StainSeparator:
         self.max_od = [np.max(stains[:,:,i]) for i in range(3)]
 
         tst_dab = 1.0
-        #print('parvalbumin DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
+        print('parvalbumin DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
         tst_dab = 0.3
-        #print('SMI94 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))        
+        print('SMI94 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
+        tst_dab = 0.4
+        print('SMI32 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
     #
     # end of constructor
     
