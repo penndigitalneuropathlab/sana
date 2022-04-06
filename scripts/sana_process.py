@@ -13,6 +13,8 @@ import sana_io
 from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly
+from sana_frame import Frame
+from sana_antibody_processor import Processor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -91,7 +93,7 @@ def main(argv):
             odir = sana_io.create_odir(odir, antibody)
             odir = sana_io.create_odir(odir, region)            
             odir = sana_io.create_odir(odir, roi_id)
-            
+
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
 
@@ -118,10 +120,13 @@ def main(argv):
                     params.data['loc'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
                 )
-                
+
             # get the processor object
             processor = sana_io.get_processor(slide_f, frame)
 
+            if processor is None:
+                continue
+            
             # run the processes for the antibody
             processor.run(odir, params, main_roi, sub_rois)
         #
@@ -152,11 +157,15 @@ def cmdl_parser(argv):
         '-roi_type', type=str, required=True, choices=['GM', 'ROI'],
         help="type of ROI, GM will be rotated, ROI is only translated")
     parser.add_argument(
-        '-main_class', type=str, default='ROI',
+        '-main_class', type=str, default=None,
         help="ROI class used to load and process the Frame")
     parser.add_argument(
         '-sub_classes', type=str, nargs='*', default=[],
         help="class names of ROIs inside the main ROI to separately process")
+    parser.add_argument(
+        '-ao_only', action='store_true',
+        help="uses the already generated THRESH imgs to calculate AO")
+    parser.add_argument('-debug', action='store_true')
 
     return parser
 #

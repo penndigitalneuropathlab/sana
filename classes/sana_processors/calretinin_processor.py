@@ -1,7 +1,7 @@
 
 # custom modules
 from sana_thresholds import max_dev, kittler
-from processors.HDAB_processor import HDABProcessor
+from sana_processors.HDAB_processor import HDABProcessor
 
 class calretininProcessor(HDABProcessor):
     def __init__(self, fname, frame):

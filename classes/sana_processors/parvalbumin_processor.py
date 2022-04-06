@@ -1,7 +1,7 @@
 
 # custom modules
 from sana_thresholds import max_dev, kittler
-from processors.HDAB_processor import HDABProcessor
+from sana_processors.HDAB_processor import HDABProcessor
 
 # this is a H-DAB stain which stains for -------
 # it not a very specific antibody, therefore the thresholds are

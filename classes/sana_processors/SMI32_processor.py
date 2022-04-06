@@ -1,7 +1,7 @@
 
 # custom modules
 from sana_thresholds import max_dev, kittler
-from processors.HDAB_processor import HDABProcessor
+from sana_processors.HDAB_processor import HDABProcessor
 
 class SMI32Processor(HDABProcessor):
     def __init__(self, fname, frame):
@@ -18,7 +18,7 @@ class SMI32Processor(HDABProcessor):
         # multiple images in QuPath
         # NOTE: original value was DAB_OD = 0.4 in QuPath, this
         #       value is calculated from that
-        self.manual_dab_threshold = 100
+        self.manual_dab_threshold = 99
         
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)

@@ -9,13 +9,9 @@ from sana_tractography import STA
 from sana_thresholds import max_dev, kittler
 from sana_processors.HDAB_processor import HDABProcessor
 
-# this is a H-DAB stain which stains for -------
-# it is a specific antibody so the threshold is lenient
-# we also perform structure tensor analysis to identify
-# individual ------ in various directions in the tissue
-class MBPProcessor(HDABProcessor):
+class SMI35Processor(HDABProcessor):
     def __init__(self, fname, frame):
-        super(MBPProcessor, self).__init__(fname, frame)
+        super(SMI35Processor, self).__init__(fname, frame)
     #
     # end of constructor
 
@@ -167,7 +163,7 @@ class MBPProcessor(HDABProcessor):
     #
     # end of run_horizontal_ao
 #
-# end of MBPProcessor
+# end of SMI35Processor
 
 #
 # end of file
