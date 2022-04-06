@@ -136,6 +136,7 @@ class StainSeparator:
 class StainVector:
     def __init__(self, stain_type, stain_vector=None):
         self.stain_type = stain_type
+        
         if self.stain_type == 'H-DAB':
             if stain_vector is None:
                 self.v = stain_v = np.array([
@@ -146,7 +147,8 @@ class StainVector:
             else:
                 self.v = np.array(stain_vector)
             self.stains = ['HEM', 'DAB', 'RES']
-        if self.stain_type == 'HED':
+            
+        elif self.stain_type == 'HED':
             if stain_vector is None:
                 self.v = np.array([
                     [0.65, 0.70, 0.29],
@@ -156,7 +158,14 @@ class StainVector:
             else:
                 self.v = np.array(stain_vector)
             self.stains = ['HEM', 'EOS', 'DAB']
-
+            
+        elif self.stain_type == 'LFB':
+            self.v = np.array(stain_vector)
+            self.stains = ['HEM', 'MYE', 'RES']
+            
+        else:
+            pass
+        
         # 3rd color is unspecified, create an orthogonal residual color
         # NOTE: this color will sometimes have negative components, thats okay
         #        since we will check for this later on
@@ -170,7 +179,7 @@ class StainVector:
 
         # store the inverse of the vector
         self.v_inv = inv(self.v)
-
+    
     def norm(self, v):
         k = (np.sqrt(np.sum(v**2)))
         if k != 0:
@@ -183,7 +192,8 @@ class StainVector:
     def angle(self, i, v2):
         v1 = self.v[i, :]
         return np.arccos(np.dot(v1, v2) / (self.length(v1) * self.length(v2)))
-
+#
+# end of StainVector
 
 #
 # end of file
