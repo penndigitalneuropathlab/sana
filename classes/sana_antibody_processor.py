@@ -38,8 +38,10 @@ class Processor:
         #
         # end of sub_masks loop
 
-        # finally, mask the frame by the main ROI
-        self.frame.mask(self.main_mask)
+        if self.frame.slide_color is None:
+            self.frame.mask(self.main_mask)            
+        else:
+            self.frame.mask(self.main_mask, self.frame.slide_color)            
     #
     # end of gen_masks
     
