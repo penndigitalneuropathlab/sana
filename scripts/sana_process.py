@@ -49,7 +49,8 @@ def main(argv):
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            print('***> Warning: Annotation file doesn\'t exist, skipping...')
+            print('***> Warning: Annotation file doesn\'t exist\n' +
+                  '******> Skipping... %s' % anno_f)
             continue
 
         # initialize the Loader object for loading Frames
@@ -122,7 +123,8 @@ def main(argv):
                 )
 
             # get the processor object
-            processor = sana_io.get_processor(slide_f, frame)
+            processor = sana_io.get_processor(
+                slide_f, frame, args.debug, args.debug_fibers)
 
             if processor is None:
                 continue
@@ -165,7 +167,12 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-ao_only', action='store_true',
         help="uses the already generated THRESH imgs to calculate AO")
-    parser.add_argument('-debug', action='store_true')
+    parser.add_argument(
+        '-debug', action='store_true',
+        help="plot results of the AO analyis")    
+    parser.add_argument(
+        '-debug_fibers', action='store_true',
+        help="plot results of the fiber analyis")
 
     return parser
 #

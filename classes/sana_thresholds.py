@@ -133,6 +133,9 @@ def max_dev(hist, scale=1.0, debug=False, mx=255):
     hist_norm /= np.max(hist_norm)
     hist_norm *= 255
 
+    if mx > hist_norm.shape[0] - 1:
+        mx = hist_norm.shape[0]-1
+        
     # get the peak and end of histogram
     x0, x1 = np.argmax(hist_norm[:mx]), mx
     y0, y1 = hist_norm[x0], hist_norm[x1]

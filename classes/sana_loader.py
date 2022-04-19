@@ -40,8 +40,9 @@ class Loader(openslide.OpenSlide):
         except:
             self.mpp = 0.5045
         self.converter = Converter(self.mpp, self.ds)
+        self.slide_color = None        
         self.csf_threshold = None
-
+        
         if get_thumb:
             # pre-load the thumbnail for easy access
             self.thumbnail = self.load_thumbnail()
@@ -137,7 +138,9 @@ class Loader(openslide.OpenSlide):
         padx2 = np.full_like(img, pad_color, shape=(img.shape[0], padx2, 3))
         img = np.concatenate((padx1, img, padx2), axis=1)
 
-        return Frame(img, lvl=lvl, converter=self.converter, csf_threshold=self.csf_threshold)
+        return Frame(img, lvl=lvl, converter=self.converter,
+                     csf_threshold=self.csf_threshold,
+                     slide_color=self.slide_color)
     #
     # end of load_frame
 

@@ -27,7 +27,7 @@ class parvalbuminProcessor(HDABProcessor):
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=1.0)
+        self.run_auto_ao(odir, params, scale=0.3)
 
         # save the original frame
         # TODO: where should this go? shouldn't be in every run()...

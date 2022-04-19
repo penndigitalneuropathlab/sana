@@ -125,20 +125,20 @@ def get_antibody(fname):
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame):
+def get_processor(fname, frame, debug=False, debug_fibers=False):
     antibody = get_antibody(fname)
     if antibody == 'NeuN':
-        return NeuNProcessor(fname, frame)
+        return NeuNProcessor(fname, frame, debug)
     if antibody == 'SMI32':
-        return SMI32Processor(fname, frame)
+        return SMI32Processor(fname, frame, debug)
     if antibody == 'CALR6BC':
-        return calretininProcessor(fname, frame)
+        return calretininProcessor(fname, frame, debug)
     if antibody == 'parvalbumin':
-        return parvalbuminProcessor(fname, frame)
+        return parvalbuminProcessor(fname, frame, debug)
     if antibody == 'SMI94':
-        return MBPProcessor(fname, frame)
+        return MBPProcessor(fname, frame, debug, debug_fibers)
     if antibody == 'SMI35':
-        return SMI35Processor(fname, frame)
+        return SMI35Processor(fname, frame, debug)
 #
 # end of get_processor
 

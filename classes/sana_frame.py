@@ -1,4 +1,5 @@
 
+
 # system packages
 import os
 import sys
@@ -14,7 +15,6 @@ from matplotlib import pyplot as plt
 from webcolors import name_to_rgb
 
 # custom packages
-import sana_io
 from sana_geo import Point, Polygon, Line, ray_tracing, separate_seg, plot_poly
 from sana_color_deconvolution import StainSeparator
 from sana_thresholds import kittler
@@ -32,8 +32,8 @@ class TypeException(Exception):
 #  -lvl: pixel resolution of img
 #  -converter: Converter object from Loader
 class Frame:
-    def __init__(self, img, lvl=-1, converter=None, csf_threshold=None):
-
+    def __init__(self, img, lvl=-1, converter=None,
+                 csf_threshold=None, slide_color=None):
         if type(img) is str:
             self.img = np.array(Image.open(img))
         else:
@@ -46,6 +46,7 @@ class Frame:
         self.converter = converter
         self.contours = []
         self.csf_threshold = csf_threshold
+        self.slide_color = slide_color
     #
     # end of constructor
 
@@ -117,9 +118,8 @@ class Frame:
         if mx is None:
             mx = np.max(self.img)
             
-        if self.is_float():
-            self.img = 255 * (self.img - mi) / (mx - mi)
-            self.round()
+        self.img = 255 * (self.img.astype(float) - mi) / (mx - mi)
+        self.round()
 
     # generates a 256 bin histogram for each color channel
     def histogram(self):
@@ -217,7 +217,6 @@ class Frame:
     # NOTE: if the array is floating point, the image will be written as a
     #        numpy data file, else as whatever datatype is given
     def save(self, fname):
-        sana_io.create_directory(fname)
         if self.is_float():
             np.save(fname.split('.')[0]+'.npy', self.img)
         else:
@@ -335,8 +334,10 @@ class Frame:
     # generates the contours on all edges of the image, then filters
     #  based on size of body and hole criteria
     def get_contours(self):
-        if not self.is_binary():
-            raise TypeException('Cannot get contours of a non-binary image')
+
+        # TODO: better error checking to handle watershed
+        # if not self.is_binary():
+        #     raise TypeException('Cannot get contours of a non-binary image')
 
         # generate the contours and store as Polygons
         self.contours = []

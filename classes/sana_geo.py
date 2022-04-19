@@ -167,9 +167,13 @@ def hull_to_poly(hull, xy, lvl=0):
 #  -mpp: microns per pixel constant, usually provided by Loader
 #  -ds: level downsample factors, usually provided by Loader
 class Converter:
-    def __init__(self, mpp, ds):
-        self.mpp = mpp
-        self.ds = ds
+    def __init__(self, mpp=None, ds=None):
+        if mpp is None:
+            self.mpp = 0.5045
+            self.ds = np.array([1.0, 4.0, 16.003152252303728])
+        else:
+            self.mpp = mpp
+            self.ds = ds
     #
     # end of constructor
 
