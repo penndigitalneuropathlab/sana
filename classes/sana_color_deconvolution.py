@@ -171,7 +171,8 @@ class StainVector:
         #        since we will check for this later on
         if all(self.v[2, :] == 0):
             self.v[2, :] = np.cross(self.v[0, :], self.v[1, :])
-
+            self.orig_v = self.v.copy()
+            
         # normalize the vector
         self.v[0, :] = self.norm(self.v[0, :])
         self.v[1, :] = self.norm(self.v[1, :])
@@ -179,6 +180,7 @@ class StainVector:
 
         # store the inverse of the vector
         self.v_inv = inv(self.v)
+        self.orig_v_inv = inv(self.orig_v)
     
     def norm(self, v):
         k = (np.sqrt(np.sum(v**2)))

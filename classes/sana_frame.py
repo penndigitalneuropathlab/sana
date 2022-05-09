@@ -131,8 +131,8 @@ class Frame:
     #
     # end of histogram
 
-    # crops the image array to a new size using a loc/size variables
-    def crop(self, loc, size):
+    # returns a rectangle extracted from the frame
+    def get_tile(self, loc, size):
         self.converter.to_pixels(loc, self.lvl)
         self.converter.to_pixels(size, self.lvl)
         loc = self.converter.to_int(loc)
@@ -141,10 +141,16 @@ class Frame:
             loc[0] = 0
         if loc[1] < 0:
             loc[1] = 0
-        self.img = self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
+        return self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
+    #
+    # end of get_tile
+    
+    # crops the image array to a new size using a loc/size variables
+    def crop(self, loc, size):
+        self.img = self.get_tile(loc, size)
     #
     # end of crop
-
+    
     # scales an array to a new size given a scaling factor
     def scale(self, ds):
         size = self.size().astype(float) / ds
@@ -740,10 +746,13 @@ def mean_normalize(orig_frame):
 # this function overlays a thresholded image onto the original image
 def overlay_thresh(frame, thresh, alpha=0.5, color='red'):
 
-    color = np.array(name_to_rgb(color))
+    if type(color) is str:
+        color = np.array(name_to_rgb(color))
+    else:
+        pass
 
     overlay = frame.copy()
-    overlay.img[thresh.img[:,:,0] == 255] = color
+    overlay.img[thresh.img[:,:,0] != 0] = color
     overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
     
     return overlay
