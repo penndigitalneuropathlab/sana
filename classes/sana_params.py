@@ -32,7 +32,7 @@ KEYS = INT_KEYS + POINT_KEYS + M_KEYS + FLOAT_KEYS + LIST_KEYS
 # this class reads and writes the parameters and data associated with processed Frames
 # TODO: Params isn't a great name since it also includes calculated data...
 class Params:
-    def __init__(self):
+    def __init__(self, fname=None):
 
         # initialize the data
         # TODO: may eventually want Params to inherit dict so that it doesn't have to store a dict
@@ -41,6 +41,9 @@ class Params:
 
         # line format in the output file
         self.line = '%s\t%s\n'
+
+        if not fname is None:
+            self.read_data(fname)
     #
     # end of constructor
 

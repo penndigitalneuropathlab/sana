@@ -3,6 +3,7 @@
 import numpy as np
 import cv2
 from tqdm import tqdm
+from PIL import Image
 
 # custom modules
 import sana_io
@@ -25,6 +26,23 @@ class HDABProcessor(Processor):
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
+        # ds = 20
+        # img = self.frame.img
+        # img = img[::ds, ::ds].astype(float) / 255
+        # odimg = np.clip(-np.log10(img), 0, None)
+        # odimg[odimg==np.inf] = 0
+        # r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
+        # odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
+        # colors = [(r[i], g[i], b[i]) for i in range(len(r))]
+        # fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
+        # ax.scatter(odr, odg, odb, color=colors)
+        # x, y, z = self.ss.stain_vector.orig_v[0]
+        # ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        # x, y, z = self.ss.stain_vector.orig_v[1]
+        # ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        # plt.show()
+        # exit()
+        
         # separate out the HEM and DAB stains
         self.stains = self.ss.run(self.frame.img)
         self.hem = Frame(self.stains[:,:,0], frame.lvl, frame.converter)
@@ -69,7 +87,7 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, debug=False):
         
         # normalize the image
         self.dab_norm = mean_normalize(self.dab)
@@ -82,8 +100,10 @@ class HDABProcessor(Processor):
         self.dab_norm_hist = self.dab_norm.histogram()
 
         # get the stain threshold
-        self.auto_dab_threshold = max_dev(self.dab_hist, scale=scale)
-        self.auto_dab_norm_threshold = max_dev(self.dab_norm_hist, scale=scale)
+        self.auto_dab_threshold = max_dev(
+            self.dab_hist, scale=scale, mx=mx)
+        self.auto_dab_norm_threshold = max_dev(
+            self.dab_norm_hist, scale=scale, mx=mx, debug=debug)
 
         # apply the thresholding
         self.auto_dab_norm_thresh = self.dab_norm.copy()
@@ -185,6 +205,10 @@ class HDABProcessor(Processor):
         markers[unknown == 255] = 0
         rgb_hem = np.stack((self.hem.img[:,:,0],)*3, axis=-1)
         markers = cv2.watershed(rgb_hem, markers)
+        markers[:,0] = 0
+        markers[:,-1] = 0
+        markers[0,:] = 0
+        markers[-1,:] = 0        
         rgb_markers = np.zeros_like(rgb_hem)
         colors = [(np.random.randint(10, 255),
                    np.random.randint(10, 255),
@@ -195,13 +219,29 @@ class HDABProcessor(Processor):
             for i in range(rgb_markers.shape[1]):
                 rgb_markers[j,i] = colors[markers[j,i]]
                 
-        # mframe = self.frame.copy()
-        # mframe.img = np.where(markers <= 0, 0, 1).astype(np.uint8)
-        # mframe.get_contours()
-        # mframe.filter_contours(min_body_area=8)
-        # markers = create_mask(
-        #     [c.polygon for c in mframe.contours],
-        #     self.frame.size(), self.frame.lvl, self.frame.converter, 0, 255)
+        mframe = self.frame.copy()
+        mframe.img = np.where(markers <= 1, 0, 1).astype(np.uint8)
+        mframe.get_contours()
+        mframe.filter_contours()
+
+        gray = self.frame.copy()
+        gray.to_gray()
+        
+        cells = [c.polygon for c in mframe.get_body_contours()]
+        cell_eccs = np.array([cell.eccentricity() for cell in cells])
+        cell_ints = np.array([np.mean(gray.get_tile(*cell.bounding_box())) \
+                     for cell in cells])
+        cell_dabs = np.array([np.mean(self.dab.get_tile(*cell.bounding_box())) \
+                     for cell in cells])
+        
+        fig, axs = plt.subplots(1,3)
+        axs[0].hist(cell_eccs, bins=100, range=(0,1))
+        axs[0].set_xlabel('eccentricity')
+        axs[1].hist(cell_ints, bins=255, range=(0,255))
+        axs[1].set_xlabel('grayscale intensity')
+        axs[2].hist(cell_dabs, bins=255, range=(0,255))
+        axs[2].set_xlabel('dab intensity')
+        fig.suptitle('histograms for detected cells')
         
         fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
         axs[0].imshow(self.frame.img)
@@ -214,9 +254,13 @@ class HDABProcessor(Processor):
         axs[3].imshow(rgb_markers)
         axs[3].set_title('segmented cells')
         axs[4].imshow(self.frame.img)
-        axs[4].plot(candidates[1], candidates[0], '+', color='black', markersize=4)
+        axs[4].plot(candidates[1], candidates[0], '+', color='green', markersize=4)
         axs[4].set_title('candidate locs')
         plt.show()
+
+        return cells
+    #
+    # end of detect_hem_cells
 #
 # end of HDABProcessor
 
