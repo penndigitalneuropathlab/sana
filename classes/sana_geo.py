@@ -6,6 +6,8 @@ import numpy as np
 from numba import jit
 from shapely import geometry
 from matplotlib import pyplot as plt
+from scipy.spatial import ConvexHull
+from scipy.ndimage.interpolation import rotate
 
 # custom packages
 
@@ -42,6 +44,57 @@ def ray_tracing(x,y,poly):
     return inside
 #
 # end of ray_tracing
+
+def minimum_bounding_rectangle(p):
+
+    pi2 = np.pi/2
+    hull = p[ConvexHull(p).vertices]
+
+    edges = hull[1:] - hull[:-1]
+
+    angles = np.arctan2(edges[:,1], edges[:,0])
+
+    angles = np.abs(np.mod(angles, pi2))
+    angles = np.unique(angles)
+
+    rotations = np.vstack([
+        np.cos(angles),
+        np.cos(angles-pi2),
+        np.cos(angles+pi2),
+        np.cos(angles),
+    ]).T
+    rotations = rotations.reshape((-1, 2, 2))
+
+    rot_points = np.dot(rotations, hull.T)
+
+    min_x = np.nanmin(rot_points[:, 0], axis=1)
+    max_x = np.nanmax(rot_points[:, 0], axis=1)
+    min_y = np.nanmin(rot_points[:, 1], axis=1)
+    max_y = np.nanmax(rot_points[:, 1], axis=1)
+
+    areas = (max_x - min_x) * (max_y - min_y)
+    best_ind = np.argmin(areas)
+
+    x1 = max_x[best_ind]
+    x2 = min_x[best_ind]
+    y1 = max_y[best_ind]
+    y2 = min_y[best_ind]
+    r = rotations[best_ind]
+
+    rect = np.zeros((4,2))
+    rect[0] = np.dot([x1, y2], r)
+    rect[1] = np.dot([x2, y2], r)
+    rect[2] = np.dot([x2, y1], r)
+    rect[3] = np.dot([x1, y1], r)
+    
+    return Polygon(rect[:,0], rect[:,1], p.is_micron, p.lvl, p.order)
+
+def get_axes_from_poly(p):
+    rect = minimum_bounding_rectangle(p)
+    side_lengths = np.sqrt(np.sum((rect[:-1] - rect[1:])**2, axis=1))
+    major = float(np.max(side_lengths)/2)
+    minor = float(np.min(side_lengths)/2)
+    return major, minor
 
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent
@@ -333,7 +386,7 @@ class Polygon(Array):
 
     def get_rolled_xy(self):
         x0, y0 = self.get_xy()
-        if not hasattr(self, 'x'):
+        if not hasattr(self, 'x1'):
             self.x1 = np.roll(x0, 1)
             self.y1 = np.roll(y0, 1)
         return self.x1, self.y1
@@ -349,9 +402,11 @@ class Polygon(Array):
     # calculates the area of the Polygon
     # TODO: this should return a Value (or something) that tracks the order
     def area(self):
-        x0, y0 = self.get_xy()
-        x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
-        return 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        if not hasattr(self, 'A'):
+            x0, y0 = self.get_xy()
+            x1, y1 = np.roll(x0, 1), np.roll(y0, 1)
+            A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        return A
     #
     # end of area
 
@@ -371,7 +426,37 @@ class Polygon(Array):
     #
     # end of centroid
 
+    def major(self):
+        if not hasattr(self, 'majo'):
+            self.majo, self.mino = get_axes_from_poly(self)
+        return self.majo
+        
+    def minor(self):
+        if not hasattr(self, 'mino'):
+            self.majo, self.mino = get_axes_from_poly(self)
+        return self.mino
+        
+    def eccentricity(self):
+        if not hasattr(self, 'eccen'):
+            majo = self.major()
+            mino = self.minor()
+            self.eccen = np.sqrt(1 - mino**2/majo**2)
+        return self.eccen
+    #
+    # end of eccentricity
+
+    def perimeter(self):
+        if not hasattr(self, 'perim'):
+            x0, y0 = self.get_xy()
+            x1, y1 = self.get_rolled_xy()
+            self.perim = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
+        return self.perim
+
+    def circularity(self):
+        return (4*self.area()*np.pi) / (self.perimeter()**2)
+    
     # gets a bounding rectangle based on the centroid of the Polygon
+    # TODO: i think this might be bugged
     def bounding_centroid(self):
         c, r = self.centroid()
         loc = Point(c[0]-r, c[1]-r, self.is_micron, self.lvl, self.order)
