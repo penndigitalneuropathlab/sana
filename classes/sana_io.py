@@ -12,12 +12,6 @@ import numpy as np
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
-from sana_processors.NeuN_processor import NeuNProcessor
-from sana_processors.SMI32_processor import SMI32Processor
-from sana_processors.calretinin_processor import calretininProcessor
-from sana_processors.MBP_processor import MBPProcessor
-from sana_processors.SMI35_processor import SMI35Processor
-from sana_processors.parvalbumin_processor import parvalbuminProcessor
 
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
@@ -122,25 +116,6 @@ def get_region(fname):
 # e.g. SMI32
 def get_antibody(fname):    
     return get_slide_parts(fname)[3]
-
-# instantiates a Processor object based on the antibody of the svs slide
-# TODO: where to put this
-def get_processor(fname, frame, debug=False, debug_fibers=False):
-    antibody = get_antibody(fname)
-    if antibody == 'NeuN':
-        return NeuNProcessor(fname, frame, debug)
-    if antibody == 'SMI32':
-        return SMI32Processor(fname, frame, debug)
-    if antibody == 'CALR6BC':
-        return calretininProcessor(fname, frame, debug)
-    if antibody == 'parvalbumin':
-        return parvalbuminProcessor(fname, frame, debug)
-    if antibody == 'SMI94':
-        return MBPProcessor(fname, frame, debug, debug_fibers)
-    if antibody == 'SMI35':
-        return SMI35Processor(fname, frame, debug)
-#
-# end of get_processor
 
 def get_fpath(ifpath, fpath="", rpath=""):
 

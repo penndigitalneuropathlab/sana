@@ -14,11 +14,35 @@ from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly
 from sana_frame import Frame
-from sana_antibody_processor import Processor
+from sana_processors.NeuN_processor import NeuNProcessor
+from sana_processors.SMI32_processor import SMI32Processor
+from sana_processors.calretinin_processor import calretininProcessor
+from sana_processors.MBP_processor import MBPProcessor
+from sana_processors.SMI35_processor import SMI35Processor
+from sana_processors.parvalbumin_processor import parvalbuminProcessor
 
 # debugging modules
 from sana_geo import plot_poly
 from matplotlib import pyplot as plt
+
+# instantiates a Processor object based on the antibody of the svs slide
+# TODO: where to put this
+def get_processor(fname, frame, debug=False, debug_fibers=False):
+    antibody = sana_io.get_antibody(fname)
+    if antibody == 'NeuN':
+        return NeuNProcessor(fname, frame, debug)
+    if antibody == 'SMI32':
+        return SMI32Processor(fname, frame, debug)
+    if antibody == 'CALR6BC':
+        return calretininProcessor(fname, frame, debug)
+    if antibody == 'parvalbumin':
+        return parvalbuminProcessor(fname, frame, debug)
+    if antibody == 'SMI94':
+        return MBPProcessor(fname, frame, debug, debug_fibers)
+    if antibody == 'SMI35':
+        return SMI35Processor(fname, frame, debug)
+#
+# end of get_processor
 
 # this script loads a series of slides and ROIs within the given slides
 # it loads and processes the data within ROIs, and calculates the percentage
@@ -123,7 +147,7 @@ def main(argv):
                 )
 
             # get the processor object
-            processor = sana_io.get_processor(
+            processor = get_processor(
                 slide_f, frame, args.debug, args.debug_fibers)
 
             if processor is None:
