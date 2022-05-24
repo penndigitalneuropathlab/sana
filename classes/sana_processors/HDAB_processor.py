@@ -87,7 +87,10 @@ class HDABProcessor(Processor):
         self.manual_overlay = overlay_thresh(
             self.frame, self.manual_dab_thresh)        
         self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
-        self.save_frame(odir, self.manual_overlay, 'QC')        
+        self.save_frame(odir, self.manual_overlay, 'QC')
+
+        # save the %AO depth curve
+        self.save_curve(odir, results['ao_depth'], 'AO')
     #
     # end of run_manual_ao
 

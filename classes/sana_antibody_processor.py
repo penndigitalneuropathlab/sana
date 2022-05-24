@@ -77,15 +77,45 @@ class Processor:
             sub_aos.append(sub_ao)
             sub_areas.append(sub_area)
 
+        # calculate the %AO as a function of depth
+        ao_depth = self.get_profile(frame)
+        
         # finally, return the results
         ret = {
             'ao': ao, 'area': area,
             'sub_aos': sub_aos, 'sub_areas': sub_areas,
+            'ao_depth': ao_depth,
         }
         return ret
     #
     # end of run_ao
 
+    def get_profile(self, frame, tsize=None, tstep=None):
+        if tsize is None:
+            tsize = TSIZE
+        if tstep is None:
+            tstep = TSTEP
+
+        # get the %AO heatmap, smoothed in the x and y direction
+        heatmap = Heatmap(frame, [], tsize, tstep)
+        ao_heatmap = heatmap.ao
+
+        # deform the heatmap to the sub (or main) masks
+        # TODO: don't hard code nsamp, should be an argument!
+        if len(self.sub_masks) == 0:
+            deform_ao = heatmap.deform(
+                ao_heatmap, [self.main_mask], [100, 0])
+        else:
+            deform_ao = heatmap.deform(
+                ao_heatmap, self.sub_masks, [10, 10, 20, 10, 20, 15, 0])
+
+        # finally, calculate the %AO as a function of depth
+        profile = np.mean(deform_ao, axis=1)
+
+        return profile
+    #
+    # end of get_profile
+    
     def save_frame(self, odir, frame, suffix):
         fpath = sana_io.create_filepath(
             self.fname, ext='.png', suffix=suffix, fpath=odir)
@@ -93,6 +123,13 @@ class Processor:
     #
     # end of save_frame
 
+    def save_curve(self, odir, curve, suffix):
+        fpath = sana_io.create_filepath(
+            self.fname, ext='.npy', suffix=suffix, fpath=odir)
+        np.save(fpath, curve)
+    #
+    # end of save_curve
+    
     def save_params(self, odir, params):
         fpath = sana_io.create_filepath(self.fname, ext='.csv', fpath=odir)
         params.write_data(fpath)
