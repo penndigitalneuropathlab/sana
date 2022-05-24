@@ -22,6 +22,7 @@ from matplotlib import pyplot as plt
 class NeuNProcessor(HDABProcessor):
     def __init__(self, fname, frame, debug=False):
         super(NeuNProcessor, self).__init__(fname, frame)
+        self.debug = debug
     #
     # end of constructor
 
@@ -42,9 +43,9 @@ class NeuNProcessor(HDABProcessor):
         self.run_auto_ao(odir, params, scale=1.0, mx=90)
 
         # run the neuron detection algorithms
-        # TODO: rename this function, should be a get_features() that calls detect_nurons
+        # TODO: this only writes neurons to a file, need to do the analysis in this class!
         self.detect_neurons(odir, params, disk_r=11, sigma=3,
-                            n_iterations=2, close_r=9, open_r=5, soma_r=15, debug=False)
+                            n_iterations=2, close_r=9, open_r=5, soma_r=15, debug=self.debug)
         
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -84,7 +85,7 @@ class NeuNProcessor(HDABProcessor):
         # perform the min-max filtering to maximize centers of cells
         # NOTE: this finds the so called seeds of the image, in a thresholded image with dendrites
         # TODO: inverse this filter
-        img_minmax = minmax_filter(255-seed_img, disk_r, sigma, n_iterations, debug)
+        img_minmax = minmax_filter(255-seed_img, disk_r, sigma, n_iterations, self.debug)
 
         # define the sure foreground, small circles at minimums of filter output
         # NOTE: this is done on the somas only image
@@ -135,38 +136,40 @@ class NeuNProcessor(HDABProcessor):
         tstep = Point(50, 50, True)
         heatmap = Heatmap(self.dab_norm, cells, tsize, tstep, debug=True)
 
+
         # # TODO: this should be like heatmap.get_density()
         # # TODO: could do this all in one loop, add a list of functions to call
         # funcs = [heatmap.density, heatmap.eccentricity, heatmap.circulatiry]
         # titles = ['density', 'eccentricity', 'perimeter to area ratio']
         # feats = heatmap.run(funcs)
-        
-        # fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
-        # ax = axs[0]
-        # ax.imshow(self.dab.img)
-        # ax.set_title('orig')
-        # ax = axs[1]
-        # ax.imshow(seed_img, vmin=vmi, vmax=vmx)
-        # ax.set_title('soma preprocess')
-        # ax = axs[2]        
-        # # ax.imshow(img_minmax)
-        # # ax.plot(candidates[1], candidates[0], '+', color='red', markersize=3)
-        # # ax.set_title('min-max filter (somas)')
-        # ax.imshow(orig_markers, vmax=2)
-        # ax = axs[3]
-        # ax.imshow(rgb_markers)
-        # ax.set_title('segmented cells')
-        # ax = axs[4]
-        # ax.imshow(self.frame.img)
-        # ax.plot(candidates[1], candidates[0], '+', color='green', markersize=4)
-        # ax.set_title('candidate locs')
 
-        # for i in range(len(feats)):
-        #     fig, ax = plt.subplots(1, 1)            
-        #     ax.imshow(feats[i], cmap='coolwarm')
-        #     ax.set_title(titles[i])
+        if self.debug:        
+            fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
+            ax = axs[0]
+            ax.imshow(self.dab.img)
+            ax.set_title('orig')
+            ax = axs[1]
+            ax.imshow(seed_img, vmin=vmi, vmax=vmx)
+            ax.set_title('soma preprocess')
+            ax = axs[2]        
+            ax.imshow(img_minmax)
+            ax.plot(candidates[1], candidates[0], '+', color='red', markersize=3)
+            ax.set_title('min-max filter (somas)')
+            # ax.imshow(orig_markers, vmax=2)
+            ax = axs[3]
+            ax.imshow(rgb_markers)
+            ax.set_title('segmented cells')
+            ax = axs[4]
+            ax.imshow(self.frame.img)
+            ax.plot(candidates[1], candidates[0], '+', color='green', markersize=4)
+            ax.set_title('candidate locs')
+            
+            # for i in range(len(feats)):
+            #     fig, ax = plt.subplots(1, 1)            
+            #     ax.imshow(feats[i], cmap='coolwarm')
+            #     ax.set_title(titles[i])
 
-        # plt.show()
+            plt.show()
             
         annos = []
         for c in cells:
