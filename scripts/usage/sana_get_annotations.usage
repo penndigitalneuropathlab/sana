@@ -1,3 +1,3 @@
-usage:
-  sana_get_annotations.py annos.list -target ROI -odir /path/to/out
-  sana_get_annotations.py annos.list -target ROI -odir /path/to/out -rdir /path/to/replace
+version https://git-lfs.github.com/spec/v1
+oid sha256:0424ab2340cc16b773e91defb6f5820eff5ea4924acda853acf647ac5873ce03
+size 166

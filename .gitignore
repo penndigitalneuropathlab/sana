@@ -1,10 +1,3 @@
-.DS_Store
-*~
-workspace/
-__pycache__/
-
-examples/data/
-*.pyc
-*.json
-*.svs
-*.sh
+version https://git-lfs.github.com/spec/v1
+oid sha256:23279104795fcb57dc58316462fb36e7e31a4bde2fcf0ffb8ea6e41fafb01da8
+size 76

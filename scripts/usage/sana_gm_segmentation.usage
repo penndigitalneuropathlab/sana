@@ -1,3 +1,3 @@
-  sana_gm_segmentation -lists files.list -adir /path/to/annos
-  sana_gm_segmentation -lists files.list -adir /path/to/annos -roi_class GM_ROI -seg_class GM_SEG
-  sana_gm_segmentation -lists files.list -adir /path/to/annos -proc_stain
+version https://git-lfs.github.com/spec/v1
+oid sha256:811adae3f40d7bf1cf2e4d5d23f22e048f8b866fb4795204fa79aef466b97684
+size 234

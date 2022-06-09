@@ -1,0 +1,6 @@
+*.gitignore filter=lfs diff=lfs merge=lfs -text
+*.md filter=lfs diff=lfs merge=lfs -text
+*.py filter=lfs diff=lfs merge=lfs -text
+/classes/wildcat/LICENSE filter=lfs diff=lfs merge=lfs -text
+*.dat filter=lfs diff=lfs merge=lfs -text
+*.usage filter=lfs diff=lfs merge=lfs -text
