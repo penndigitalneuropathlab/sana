@@ -20,6 +20,8 @@ from sana_processors.calretinin_processor import calretininProcessor
 from sana_processors.MBP_processor import MBPProcessor
 from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
+from sana_processors.meguro_processor import meguro_Processor
+from sana_processors.AT8_processor import AT8Processor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -41,6 +43,11 @@ def get_processor(fname, frame, debug=False, debug_fibers=False):
         return MBPProcessor(fname, frame, debug, debug_fibers)
     if antibody == 'SMI35':
         return SMI35Processor(fname, frame, debug)
+    if antibody == 'MEGURO':
+        pass
+        #return meguro_Processor(fname, frame, debug)
+    if antibody == 'AT8':
+        return AT8Processor(fname, frame, debug)
 #
 # end of get_processor
 
@@ -87,7 +94,7 @@ def main(argv):
 
         # set the image resolution level
         loader.set_lvl(args.lvl)
-        
+
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class)
 
@@ -95,14 +102,14 @@ def main(argv):
         sub_rois = []
         for sub_class in args.sub_classes:
             sub_rois += sana_io.read_annotations(anno_f, sub_class)
-        
+
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
 
             # progress messaging
             print('----> Processing Frame (%d/%d)' % \
                   (main_roi_i+1, len(main_rois)), flush=True)
-            
+
             # initialize the Params IO object, this will store parameters
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
@@ -111,12 +118,12 @@ def main(argv):
             # create the output directory path
             # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
             bid = sana_io.get_bid(slide_f)
-            antibody = sana_io.get_antibody(slide_f)                        
+            antibody = sana_io.get_antibody(slide_f)
             region = sana_io.get_region(slide_f)
             roi_id = '%s_%d' % ('ROI', main_roi_i)
             odir = sana_io.create_odir(args.odir, bid)
             odir = sana_io.create_odir(odir, antibody)
-            odir = sana_io.create_odir(odir, region)            
+            odir = sana_io.create_odir(odir, region)
             odir = sana_io.create_odir(odir, roi_id)
 
             # load the frame into memory using the main roi
@@ -152,7 +159,7 @@ def main(argv):
 
             if processor is None:
                 continue
-            
+
             # run the processes for the antibody
             processor.run(odir, params, main_roi, sub_rois)
         #
@@ -193,7 +200,7 @@ def cmdl_parser(argv):
         help="uses the already generated THRESH imgs to calculate AO")
     parser.add_argument(
         '-debug', action='store_true',
-        help="plot results of the AO analyis")    
+        help="plot results of the AO analyis")
     parser.add_argument(
         '-debug_fibers', action='store_true',
         help="plot results of the fiber analyis")
