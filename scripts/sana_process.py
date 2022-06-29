@@ -20,7 +20,7 @@ from sana_processors.calretinin_processor import calretininProcessor
 from sana_processors.MBP_processor import MBPProcessor
 from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
-from sana_processors.meguro_processor import meguro_Processor
+from sana_processors.meguro_processor import meguroProcessor
 from sana_processors.AT8_processor import AT8Processor
 
 # debugging modules
@@ -30,24 +30,27 @@ from matplotlib import pyplot as plt
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
 def get_processor(fname, frame, debug=False, debug_fibers=False):
-    antibody = sana_io.get_antibody(fname)
-    if antibody == 'NeuN':
+    try:
+        antibody = sana_io.get_antibody(fname)
+    except:
+        antibody = ''
+    if 'NeuN' in [antibody, target_antibody]:
         return NeuNProcessor(fname, frame, debug)
-    if antibody == 'SMI32':
+    if 'SMI32' in [antibody, target_antibody]:
         return SMI32Processor(fname, frame, debug)
-    if antibody == 'CALR6BC':
+    if 'CALR6BC' in [antibody, target_antibody]:
         return calretininProcessor(fname, frame, debug)
-    if antibody == 'parvalbumin':
+    if 'parvalbumin' in [antibody, target_antibody]:
         return parvalbuminProcessor(fname, frame, debug)
-    if antibody == 'SMI94':
+    if 'SMI94' in [antibody, target_antibody]:
         return MBPProcessor(fname, frame, debug, debug_fibers)
-    if antibody == 'SMI35':
+    if 'SMI35' in [antibody, target_antibody]:
         return SMI35Processor(fname, frame, debug)
-    if antibody == 'MEGURO':
-        pass
-        #return meguro_Processor(fname, frame, debug)
-    if antibody == 'AT8':
+    if 'MEGURO' in [antibody, target_antibody]:
+        return meguroProcessor(fname, frame, debug)
+    if 'AT8' in [antibody, target_antibody]:
         return AT8Processor(fname, frame, debug)
+    return None
 #
 # end of get_processor
 
@@ -76,7 +79,7 @@ def main(argv):
 
         # get the annotation file containing ROIs
         anno_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+            slide_f, ext=args.aext, fpath=args.adir, rpath=args.rdir)
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
@@ -96,7 +99,8 @@ def main(argv):
         loader.set_lvl(args.lvl)
 
         # load the main roi(s) from the json file
-        main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class)
+        main_rois = sana_io.read_annotations(
+            anno_f, class_name=args.main_class, name=args.main_name)
 
         # load the sub roi(s) from the json file
         sub_rois = []
@@ -117,14 +121,18 @@ def main(argv):
 
             # create the output directory path
             # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-            bid = sana_io.get_bid(slide_f)
-            antibody = sana_io.get_antibody(slide_f)
-            region = sana_io.get_region(slide_f)
-            roi_id = '%s_%d' % ('ROI', main_roi_i)
-            odir = sana_io.create_odir(args.odir, bid)
-            odir = sana_io.create_odir(odir, antibody)
-            odir = sana_io.create_odir(odir, region)
-            odir = sana_io.create_odir(odir, roi_id)
+            try:
+                bid = sana_io.get_bid(slide_f)
+                antibody = sana_io.get_antibody(slide_f)
+                region = sana_io.get_region(slide_f)
+                roi_id = '%s_%d' % ('ROI', main_roi_i)
+                odir = sana_io.create_odir(args.odir, bid)
+                odir = sana_io.create_odir(odir, antibody)
+                odir = sana_io.create_odir(odir, region)
+                odir = sana_io.create_odir(odir, roi_id)
+            except:
+                odir = sana_io.create_odir(
+                    args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
 
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -178,8 +186,11 @@ def cmdl_parser(argv):
         '-adir', type=str, default="",
         help="directory path containing .json files")
     parser.add_argument(
+        '-aext', type=str, default=".json",
+        help="file extension to use with annotation files")
+    parser.add_argument(
         '-odir', type=str, default="",
-        help="directory path to write the results to")
+        help="directory path to write to")
     parser.add_argument(
         '-rdir', type=str, default="",
         help="directory path to replace")
@@ -193,11 +204,14 @@ def cmdl_parser(argv):
         '-main_class', type=str, default=None,
         help="ROI class used to load and process the Frame")
     parser.add_argument(
+        '-main_name', type=str, default=None,
+        help="name of annotation to match")
+    parser.add_argument(
         '-sub_classes', type=str, nargs='*', default=[],
         help="class names of ROIs inside the main ROI to separately process")
     parser.add_argument(
-        '-ao_only', action='store_true',
-        help="uses the already generated THRESH imgs to calculate AO")
+        '-target_antibody', type=str, default='',
+        help='antibody to use in processing instead of the filename antibody')
     parser.add_argument(
         '-debug', action='store_true',
         help="plot results of the AO analyis")
