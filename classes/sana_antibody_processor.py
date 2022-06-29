@@ -5,16 +5,22 @@ import numpy as np
 # custom modules
 import sana_io
 from sana_frame import Frame, mean_normalize, create_mask, overlay_thresh
+from sana_heatmap import Heatmap
+from sana_geo import Point
 
 # debugging modules
 from matplotlib import pyplot as plt
 
+TSIZE = Point(400, 100, is_micron=False, lvl=0)
+TSTEP = Point(50, 50, is_micron=False, lvl=0)
+
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame):
+    def __init__(self, fname, frame, roi_type=""):
         self.fname = fname
         self.frame = frame
+        self.roi_type = roi_type
     #
     # end of constructor
 
@@ -25,7 +31,7 @@ class Processor:
             self.frame.size(), self.frame.lvl, self.frame.converter,
             x=0, y=255, holes=[]
         )
-        
+
         # generate the sub masks
         self.sub_masks = []
         for i in range(len(sub_rois)):
@@ -39,12 +45,12 @@ class Processor:
         # end of sub_masks loop
 
         if self.frame.slide_color is None:
-            self.frame.mask(self.main_mask)            
+            self.frame.mask(self.main_mask)
         else:
-            self.frame.mask(self.main_mask, self.frame.slide_color)            
+            self.frame.mask(self.main_mask, self.frame.slide_color)
     #
     # end of gen_masks
-    
+
     # generic function to calculate %AO of a thresholded frame
     # 1) gets the %AO of the main_roi
     # 2) gets the %AO of the sub_rois provided (if any)
@@ -65,7 +71,7 @@ class Processor:
 
         # calculate %AO of the main roi
         ao = pos / area
-        
+
         # apply the sub masks and get the %AO of each
         sub_aos, sub_areas = [], []
         for sub_mask in self.sub_masks:
@@ -78,8 +84,11 @@ class Processor:
             sub_areas.append(sub_area)
 
         # calculate the %AO as a function of depth
-        ao_depth = self.get_profile(frame)
-        
+        if self.roi_type == 'GM':
+            ao_depth = self.get_profile(frame)
+        else:
+            ao_depth = None
+
         # finally, return the results
         ret = {
             'ao': ao, 'area': area,
@@ -115,7 +124,7 @@ class Processor:
         return profile
     #
     # end of get_profile
-    
+
     def save_frame(self, odir, frame, suffix):
         fpath = sana_io.create_filepath(
             self.fname, ext='.png', suffix=suffix, fpath=odir)
@@ -129,7 +138,14 @@ class Processor:
         np.save(fpath, curve)
     #
     # end of save_curve
-    
+
+    def save_array(self, odir, arr, suffix):
+        arr = (arr - np.min(arr)) / (np.max(arr) - np.min(arr))
+        frame = Frame(np.rint(255*arr).astype(np.uint8))
+        self.save_frame(odir, frame, suffix)
+    #
+    # end of save_array
+
     def save_params(self, odir, params):
         fpath = sana_io.create_filepath(self.fname, ext='.csv', fpath=odir)
         params.write_data(fpath)
