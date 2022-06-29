@@ -40,9 +40,9 @@ class Loader(openslide.OpenSlide):
         except:
             self.mpp = 0.5045
         self.converter = Converter(self.mpp, self.ds)
-        self.slide_color = None        
+        self.slide_color = None
         self.csf_threshold = None
-        
+
         if get_thumb:
             # pre-load the thumbnail for easy access
             self.thumbnail = self.load_thumbnail()
@@ -152,10 +152,10 @@ class Loader(openslide.OpenSlide):
             roi = orig_roi.copy()
         else:
             roi = orig_roi
-        
+
         # scale the roi to the current resolution
         self.converter.rescale(roi, self.lvl)
-        
+
         # load the frame based on the ROI bounding box
         loc, size = roi.bounding_box()
         frame = self.load_frame(loc, size)
@@ -176,13 +176,13 @@ class Loader(openslide.OpenSlide):
     # this function loads a frame of slide data using a given GM segmentation
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
-    # TODO: need to pad the segmentation somehow to provide context for tiling 
+    # TODO: need to pad the segmentation somehow to provide context for tiling
     def load_gm_frame(self, params, orig_roi, debug=False):
 
         if debug:
             fig, axs = plt.subplots(2,2)
             axs = axs.ravel()
-        
+
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
@@ -195,7 +195,7 @@ class Loader(openslide.OpenSlide):
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
-        
+
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
@@ -228,7 +228,7 @@ class Loader(openslide.OpenSlide):
         if debug:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
-        
+
         # store the values used during loading the frame
         params.data['crop_loc'] = crop_loc
         params.data['crop_size'] = crop_size
@@ -245,14 +245,14 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_gm_frame
 
-    def from_vector(self, writer, v, l):
+    def from_vector(self, paramsd, v, l, padding=0):
 
         # get the angle of the vector
         angle = v.get_angle()
         angle += 90 # TODO: check why this is necessary
 
         # rotate the vector to be vertical
-        c = Point(0, 0, False, self.lvl)        
+        c = Point(0, 0, False, self.lvl)
         v.rotate(c, angle)
         if not l is None:
             l[0].rotate(c, angle)
@@ -263,10 +263,12 @@ class Loader(openslide.OpenSlide):
 
         # sort the vector by the y values
         v = v[np.argsort(v[:,1])]
-        
+
         # define the coords of the rotated frame to load
-        rect = Polygon(np.array([v[0][0]-w//2, v[0][0]+w//2, v[0][0]+w//2, v[0][0]-w//2]),
-                       np.array([v[0][1], v[0][1], v[-1][1], v[-1][1]]), False, self.lvl)
+        # NOTE: padding also occurs here
+        # TODO: clean this code up
+        rect = Polygon(np.array([v[0][0]-w//2-padding//2, v[0][0]+w//2+padding//2, v[0][0]+w//2+padding//2, v[0][0]-w//2-padding//2]),
+                       np.array([v[0][1]-padding//2, v[0][1]-padding//2, v[-1][1]+padding//2, v[-1][1]+padding//2]), False, self.lvl)
 
         # rotate back to the original orientation
         v.rotate(c, -angle)
@@ -298,11 +300,11 @@ class Loader(openslide.OpenSlide):
         int_last = np.mean(x**2)
 
         v.translate(-rect_loc)
-        
+
         # make sure the intensity of v[0] is higher (this is the glass slide)
         if int_first < int_last:
             angle += 180
-            
+
         # rotate the image to be vertical
         M, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M, nw, nh)
@@ -319,7 +321,7 @@ class Loader(openslide.OpenSlide):
 
         # re-sort the vector by the y values
         v = v[np.argsort(v[:,1])]
-                
+
         # crop the bigger frame by the rect coords
         loc, size = rect.bounding_box()
         x1, x2 = int(loc[0]), int(loc[0]+size[0])
@@ -332,11 +334,13 @@ class Loader(openslide.OpenSlide):
 
         # store the processing parameters and return the frame
         # TODO: change the naming convention
-        writer.data['loc'] = rect_loc
-        writer.data['size'] = rect_size
-        writer.data['angle'] = angle
-        writer.data['crop_loc'] = loc
-        writer.data['crop_size'] = size
+        params.data['loc'] = rect_loc
+        params.data['size'] = rect_size
+        params.data['crop_loc'] = loc
+        params.data['crop_size'] = size
+        params.data['angle1'] = angle
+        params.data['M1'] = M
+
         return frame, v, l, M, orig_frame
     #
     # end of from_vector

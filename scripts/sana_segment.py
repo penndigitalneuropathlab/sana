@@ -86,8 +86,8 @@ def main(argv):
                 continue
 
             # convert the array to a Line array
-            v = Line(v[:,0], v[:,1], False, 0)            
-        
+            v = Line(v[:,0], v[:,1], False, 0)
+
             layers = None
             # layers_f = sana_io.create_filepath(
             #     slide_f, ext='.json', fpath='annotations/rois')
@@ -102,10 +102,10 @@ def main(argv):
             #         layers.append(None)
             # if any([x is None for x in layers]):
             #     continue
-            
+
         # just load the landmarks that were annotated
         # TODO: clean this up
-        else:    
+        else:
             landmarks_f = sana_io.create_filepath(slide_f, ext='.json', fpath=args.adir)
             if not os.path.exists(landmarks_f):
                 continue
@@ -113,13 +113,13 @@ def main(argv):
             if len(v) == 0:
                 continue
             v = v[0]
-            
+
             # convert the array to a Line array
-            v = Line(v[:,0], v[:,1], False, 0)            
-            
+            v = Line(v[:,0], v[:,1], False, 0)
+
             layers = None
 
-     
+
         # initialize the loader
         try:
             loader = Loader(slide_f)
@@ -136,11 +136,12 @@ def main(argv):
         # initialize the Params IO object, this stores params
         # relating to loading/processing the Frame
         params = Params()
-        
+
         # load the frame into memory
         # TODO: clean this up!
         print('Loading the Frame', flush=True)
-        frame, v, layers, M, orig_frame = loader.from_vector(params, v, layers)
+        frame, v, layers, M, orig_frame = loader.from_vector(
+            params, v, layers, padding=args.padding)
 
         # get the processor object
         processor = get_processor(slide_f, frame, args.debug)
@@ -152,12 +153,12 @@ def main(argv):
         v = np.copy(v)
 
         # run the GM segmentation algorithm!
-        processor.run_segment(args.odir, params, v)
+        processor.run_segment(args.odir, params, v, padding=args.padding)
     #
     # end of slides loop
 #
 # end of main
-            
+
 def cmdl_parser(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('-lists', type=str, nargs='*', required=True)
@@ -171,6 +172,8 @@ def cmdl_parser(argv):
                         help='pixel resolution to use, 0 is maximum.')
     parser.add_argument('-vector_class', type=str, default='LANDMARK_VECTOR',
                         help='class name of the landmark vector to process')
+    parser.add_argument('-padding', type=int, default=0,
+                        help="amount of padding to add to the frame")
     parser.add_argument('-debug', action='store_true')
     return parser
 #
@@ -181,5 +184,3 @@ if __name__ == '__main__':
 
 #
 # end of file
-
-

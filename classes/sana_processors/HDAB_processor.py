@@ -29,7 +29,7 @@ class HDABProcessor(Processor):
         self.ss = StainSeparator('H-DAB')
 
         self.debug = debug
-        
+
         # ds = 20
         # img = self.frame.img
         # img = img[::ds, ::ds].astype(float) / 255
@@ -46,7 +46,7 @@ class HDABProcessor(Processor):
         # ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
         # plt.show()
         # exit()
-        
+
         # separate out the HEM and DAB stains
         self.stains = self.ss.run(self.frame.img)
         self.hem = Frame(self.stains[:,:,0], frame.lvl, frame.converter)
@@ -85,7 +85,7 @@ class HDABProcessor(Processor):
 
         # save the images used in processing
         self.manual_overlay = overlay_thresh(
-            self.frame, self.manual_dab_thresh)        
+            self.frame, self.manual_dab_thresh)
         self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
         self.save_frame(odir, self.manual_overlay, 'QC')
 
@@ -98,7 +98,7 @@ class HDABProcessor(Processor):
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
     def run_auto_ao(self, odir, params, scale=1.0, mx=255, debug=False):
-        
+
         # normalize the image
         self.dab_norm = mean_normalize(self.dab)
 
@@ -118,13 +118,13 @@ class HDABProcessor(Processor):
         # apply the thresholding
         self.auto_dab_norm_thresh = self.dab_norm.copy()
         self.auto_dab_norm_thresh.threshold(self.auto_dab_norm_threshold, 0, 255)
-        
+
         # run the AO process
         results = self.run_ao(self.auto_dab_norm_thresh)
 
         # store the results of the algorithm
         params.data['area'] = results['area']
-        params.data['sub_areas'] = results['sub_areas']        
+        params.data['sub_areas'] = results['sub_areas']
         params.data['auto_ao'] = results['ao']
         params.data['auto_sub_aos'] = results['sub_aos']
         params.data['auto_stain_threshold'] = self.auto_dab_threshold
@@ -134,7 +134,7 @@ class HDABProcessor(Processor):
 
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
-            self.frame, self.auto_dab_norm_thresh)        
+            self.frame, self.auto_dab_norm_thresh)
         self.save_frame(odir, self.dab_norm, 'PROB')
         self.save_frame(odir, self.auto_dab_norm_thresh, 'THRESH')
         self.save_frame(odir, self.auto_overlay, 'QC')
@@ -142,7 +142,7 @@ class HDABProcessor(Processor):
     # end of run_auto_ao
 
     # TODO: comment and describe parameters, why current values are selected!
-    def run_segment(self, odir, params, landmarks,
+    def run_segment(self, odir, params, landmarks, padding=0,
                 disk_r=7, sigma=3,
                 close_r=9, open_r=5, debug=False):
 
@@ -150,11 +150,11 @@ class HDABProcessor(Processor):
         n_iterations = 2
         hem_cells = self.detect_hem_cells(
             params, disk_r, n_iterations, sigma, close_r, open_r, debug)
-        
+
         # calculate the relative density and size of cells throughout the tissue
         tsize = Point(400, 100, True)
         tstep = Point(30, 30, True)
-        
+
         heatmap = Heatmap(self.hem, hem_cells, tsize, tstep, debug=True)
         results = heatmap.run([heatmap.density, heatmap.area])
         cell_dens, cell_size = results[..., 0], results[..., 1]
@@ -162,10 +162,10 @@ class HDABProcessor(Processor):
         # calculate the grayscale intensity throughout the image
         # TODO: should do this slightly differently
         gray = cv2.GaussianBlur(self.hem_gray.img, ksize=(0,0), sigmaX=10, sigmaY=1)
-        
+
         # make sure the landmarks fit in the image boundaries
         landmarks = np.clip(landmarks.astype(int), 0, gray.shape[0]-1)
-        
+
         # detect the CSF to GM boundary with the grayscale intensity
         csf_gm = self.fit_boundary(gray, landmarks[0,0], landmarks[1,1])
 
@@ -187,10 +187,13 @@ class HDABProcessor(Processor):
         # NOTE: same reason we use get_ls here as L12
         l56, gm_wm = fit_boundaries(cell_dens, landmarks[3,1], landmarks[4,1])
 
+        # TODO: need to clip boundaries to padding
+
         # smooth the boundaries with a moving average filter
+        # TODO: try interpolate as well
         # TODO: this is not really how to do it, theres too much large spikes
         #       that the script attaches to. really want to do waht paul said
-        #       the general density of the layer shouldn't change that much 
+        #       the general density of the layer shouldn't change that much
         Mfilt, Nfilt = 151, 21
         csf_gm_y = convolve1d(csf_gm, np.ones(Mfilt)/Mfilt, mode='reflect')
         boundaries = [convolve1d(x, np.ones(Nfilt)/Nfilt, mode='reflect') \
@@ -219,7 +222,7 @@ class HDABProcessor(Processor):
             x, params['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) \
          for x in boundaries]
-        
+
         # finally, write the predictions
         print(ofname)
         sana_io.write_annotations(ofname, boundaries)
@@ -240,7 +243,7 @@ class HDABProcessor(Processor):
             if len(sig) == 0:
                 boundary[j] = st
                 continue
-        
+
             # get the 2 extreme values for the step function
             v0 = np.mean(img[st,:])
             v1 = np.mean(img[en,:])
@@ -278,11 +281,11 @@ class HDABProcessor(Processor):
         incline_percent = (1 - flat_percent) / 2
         x0p = int((y-x)*incline_percent) + x
         x1p = y - int((y-x)*incline_percent)
-        
+
         # calculate the boundaries at each column
         boundary0, boundary1 = np.zeros(img.shape[1]), np.zeros(img.shape[1])
         for j in range(img.shape[1]):
-            
+
             # extract the signal column
             sig = img[st:en, j]
 
@@ -295,7 +298,7 @@ class HDABProcessor(Processor):
             score = np.full((sig.shape[0], sig.shape[0]), np.inf)
             for x0 in range(sig.shape[0]):
                 for x1 in range(sig.shape[0]):
-                    
+
                     # create the template signal to compare to the original signal
                     template = np.zeros(n)
                     template[:x0] = v0
@@ -303,7 +306,7 @@ class HDABProcessor(Processor):
                     template[x0p:x1p] = v1
                     template[x1p:x1] = np.linspace(v1, v2, y-y0p)
                     template[x1:] = v2
-                    
+
                     # calculate the distance between the signals
                     score[x0][x1] = np.sum(np.abs(sig - template))
             #
@@ -317,12 +320,12 @@ class HDABProcessor(Processor):
         return boundary
     #
     # end of fit_boundaries
-    
+
     def detect_hem_cells(self, params,
                          disk_r, sigma, n_iterations, close_r, open_r, debug):
 
         # get the rescale parameters
-        hist = self.hem.histogram()        
+        hist = self.hem.histogram()
         vmi = np.argmax(hist)
         vmx = 92
 
@@ -330,16 +333,16 @@ class HDABProcessor(Processor):
         # self.hem.img = (self.hem.img.astype(float) - mi) / (mx-mi)
         # self.hem.img = np.clip(self.hem.img, 0, None)
         # self.hem.img = (255 * self.hem.img).astype(np.uint8)
-        
+
         # smooth the image
         self.hem.anisodiff()
 
         self.hem_hist = self.hem.histogram()
         self.hem_threshold = max_dev(self.hem_hist, mx=vmx)
-        
+
         # get the image array
         img = self.hem.img.copy()[:,:,0]
-        
+
         # do some thresholding and morph filters to
         # 1) remove faint objects (ambiguous)
         # 2) delete tiny objects (too small/fragments)
@@ -386,7 +389,7 @@ class HDABProcessor(Processor):
         markers[:,0] = 0
         markers[:,-1] = 0
         markers[0,:] = 0
-        markers[-1,:] = 0        
+        markers[-1,:] = 0
         rgb_markers = np.zeros_like(rgb_hem)
         colors = [(np.random.randint(10, 255),
                    np.random.randint(10, 255),
@@ -396,7 +399,7 @@ class HDABProcessor(Processor):
         for j in tqdm(range(rgb_markers.shape[0])):
             for i in range(rgb_markers.shape[1]):
                 rgb_markers[j,i] = colors[markers[j,i]]
-                
+
         mframe = self.frame.copy()
         mframe.img = np.where(markers <= 1, 0, 1).astype(np.uint8)
         mframe.get_contours()
@@ -404,7 +407,7 @@ class HDABProcessor(Processor):
 
         cells = [c.polygon for c in mframe.get_body_contours()]
 
-        if self.debug:        
+        if self.debug:
             gray = self.frame.copy()
             gray.to_gray()
 
@@ -413,7 +416,7 @@ class HDABProcessor(Processor):
                                   for cell in cells])
             cell_dabs = np.array([np.mean(self.dab.get_tile(*cell.bounding_box())) \
                                   for cell in cells])
-        
+
             fig, axs = plt.subplots(1,3)
             axs[0].hist(cell_eccs, bins=100, range=(0,1))
             axs[0].set_xlabel('eccentricity')
@@ -422,7 +425,7 @@ class HDABProcessor(Processor):
             axs[2].hist(cell_dabs, bins=255, range=(0,255))
             axs[2].set_xlabel('dab intensity')
             fig.suptitle('histograms for detected cells')
-        
+
             fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
             axs[0].imshow(self.frame.img)
             axs[0].set_title('orig')
