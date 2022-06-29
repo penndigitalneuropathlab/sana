@@ -117,7 +117,7 @@ class Frame:
             mi = np.min(self.img)
         if mx is None:
             mx = np.max(self.img)
-            
+
         self.img = 255 * (self.img.astype(float) - mi) / (mx - mi)
         self.round()
 
@@ -144,13 +144,25 @@ class Frame:
         return self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
     #
     # end of get_tile
-    
+
+    def get_intensity(self, poly):
+        loc, size = poly.bounding_box()
+        tile = self.get_tile(loc, size)
+        p = poly.copy()
+        p.translate(loc)
+        mask = create_mask([p], size, self.lvl, self.converter)
+        tile[mask == 0] = 0
+
+        return np.mean(tile)
+    #
+    # end of get_intensity
+
     # crops the image array to a new size using a loc/size variables
     def crop(self, loc, size):
         self.img = self.get_tile(loc, size)
     #
     # end of crop
-    
+
     # scales an array to a new size given a scaling factor
     def scale(self, ds):
         size = self.size().astype(float) / ds
@@ -189,7 +201,7 @@ class Frame:
         self.img = cv2.warpAffine(self.img, M, (nw, nh))
         if self.img.ndim == 2:
             self.img = self.img[:,:,None]
-            
+
     # rotates the image array around it's center based on a angle in degrees
     def rotate(self, angle):
         M, nw, nh = self.get_rotation_mat(angle)
@@ -326,17 +338,6 @@ class Frame:
     #
     # end of threshold
 
-    def get_intensity(self, p):
-        loc, size = p.bounding_box()
-        loc = loc.astype(int)
-        size = size.astype(int)
-        x = self.img[loc[1]:loc[1]+size[1], loc[0]:loc[0]+size[0]]
-        p.translate(loc)
-        mask = create_mask([p], size, self.lvl, self.converter, x=0, y=1).img
-        p.translate(-loc)
-        x = np.where(mask==1, x, np.zeros_like(x))
-        return np.sum(x)
-    
     # generates the contours on all edges of the image, then filters
     #  based on size of body and hole criteria
     def get_contours(self):
@@ -633,7 +634,7 @@ def get_tissue_orientation(frame, roi, angle, debug=False):
         plot_poly(ax, s0, color='red')
         plot_poly(ax, s1, color='blue')
         plt.show()
-        
+
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()
@@ -689,7 +690,7 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
 # background intensity throughout the frame
 def mean_normalize(orig_frame):
     frame = orig_frame.copy()
-    
+
     # want to downsample the image to make it run faster, don't need full resolution
     lvl = 1
     ds = int(frame.converter.ds[lvl] / frame.converter.ds[frame.lvl])
@@ -725,7 +726,7 @@ def mean_normalize(orig_frame):
     # scale the background frame back to original resolution
     frame_norm = Frame(norm, frame.lvl, frame.converter)
     frame_norm.converter.to_pixels(tsize, lvl)
-    
+
     frame_norm.scale(1/tds)
     frame_norm.scale([1/ds, 1/ds])
     frame_norm.img = frame_norm.img[:frame.img.shape[0], :frame.img.shape[1], :]
@@ -738,7 +739,7 @@ def mean_normalize(orig_frame):
     frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
     frame.img = frame.img.astype(np.uint8)
-    
+
     return frame
 #
 # end of mean_normalize
@@ -754,7 +755,7 @@ def overlay_thresh(frame, thresh, alpha=0.5, color='red'):
     overlay = frame.copy()
     overlay.img[thresh.img[:,:,0] != 0] = color
     overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
-    
+
     return overlay
 #
 # end of overlay_thresh
