@@ -86,7 +86,7 @@ def minimum_bounding_rectangle(p):
     rect[1] = np.dot([x2, y2], r)
     rect[2] = np.dot([x2, y1], r)
     rect[3] = np.dot([x1, y1], r)
-    
+
     return Polygon(rect[:,0], rect[:,1], p.is_micron, p.lvl, p.order)
 
 def get_axes_from_poly(p):
@@ -181,7 +181,7 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
     if not M1 is None:
         x = x.transform_inv(M1)
     if not loc is None:
-        x = x.translate(-loc)
+        x.translate(-loc)
     return x
 #
 # end of transform_inv_poly
@@ -197,7 +197,7 @@ def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
             label = None
         ax.plot((x[i][0], x[i+1][0]),
                 (x[i][1], x[i+1][1]),
-                color=color, linestyle=linestyle, label=label)            
+                color=color, linestyle=linestyle, label=label)
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, xy, lvl=0):
@@ -317,6 +317,7 @@ class Array(np.ndarray):
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p
+        return self
     #
     # end of translate
 
@@ -391,13 +392,17 @@ class Polygon(Array):
             self.y1 = np.roll(y0, 1)
         return self.x1, self.y1
 
-    # TODO: make this inplace
     def transform(self, M):
-        x = self @ M[:,:2].T + M[:,2]
-        return Polygon(x[:,0], x[:,1], self.is_micron, self.lvl, self.order)
+        self = self @ M[:,:2].T + M[:,2]
+        return self
+    #
+    # end of transform
+
     def transform_inv(self, M):
-        x = (self - M[:,2]) @ np.linalg.inv(M[:,:2].T)
-        return Polygon(x[:,0], x[:,1], self.is_micron, self.lvl, self.order)
+        self = (self - M[:,2]) @ np.linalg.inv(M[:,:2].T)
+        return self
+    #
+    # end of transform_inv
 
     # calculates the area of the Polygon
     # TODO: this should return a Value (or something) that tracks the order
@@ -426,16 +431,17 @@ class Polygon(Array):
     #
     # end of centroid
 
+    # TODO: make all these functions get_major() etc.
     def major(self):
         if not hasattr(self, 'majo'):
             self.majo, self.mino = get_axes_from_poly(self)
         return self.majo
-        
+
     def minor(self):
         if not hasattr(self, 'mino'):
             self.majo, self.mino = get_axes_from_poly(self)
         return self.mino
-        
+
     def eccentricity(self):
         if not hasattr(self, 'eccen'):
             majo = self.major()
@@ -454,7 +460,7 @@ class Polygon(Array):
 
     def circularity(self):
         return (4*self.area()*np.pi) / (self.perimeter()**2)
-    
+
     # gets a bounding rectangle based on the centroid of the Polygon
     # TODO: i think this might be bugged
     def bounding_centroid(self):
@@ -498,7 +504,7 @@ class Polygon(Array):
 
     def connected(self):
         return self[0, 0] == self[-1, 0] and self[0, 1] == self[-1, 1]
-    
+
     # TODO: this and filter need to return Annotation sometimes...
     def connect(self):
         if not self.connected():
@@ -592,6 +598,16 @@ class Annotation(Polygon):
         obj.confidence = confidence
 
         return obj
+        
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.file_name = getattr(obj, 'file_name', None)
+        self.class_name = getattr(obj, 'class_name', None)
+        self.name = getattr(obj, 'name', None)
+        self.confidence = getattr(obj, 'confidence', None)
+        self.is_micron = getattr(obj, 'is_micron', None)
+        self.lvl = getattr(obj, 'lvl', None)
+        self.order = getattr(obj, 'order', None)
     #
     # end of constructor
 
@@ -615,7 +631,7 @@ class Annotation(Polygon):
         elif geo['type'] == 'MultiPoint':
             coords = geo['coordinates']
             x = np.array([float(c[0]) for c in coords])
-            y = np.array([float(c[1]) for c in coords])            
+            y = np.array([float(c[1]) for c in coords])
         else:
             x = np.array([])
             y = np.array([])
@@ -660,7 +676,7 @@ class Annotation(Polygon):
             x = np.concatenate([x, [self[0,0]]], axis=0)
             y = np.concatenate([y, [self[0,1]]], axis=0)
             p = Polygon(x, y, self.is_micron, self.lvl, self.order)
-            return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence)            
+            return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence)
         else:
             return self
 
