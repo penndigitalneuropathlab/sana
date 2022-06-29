@@ -9,6 +9,7 @@ import fnmatch
 
 # installed packages
 import numpy as np
+import geojson
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
@@ -83,7 +84,7 @@ def get_slide_parts(fname):
     if not is_slide(fname):
         print('ERROR: Cannot get antibody from file: %s' % fname)
         exit()
-    fname = ntpath.basename(fname)        
+    fname = ntpath.basename(fname)
     parts = fname.split('_')
     if len(parts) == 7:
         cid, hemi, region, antibody, dil, date, init = parts
@@ -91,9 +92,8 @@ def get_slide_parts(fname):
         cid, region, antibody, dil, date, init = parts
         hemi = 'N'
     else:
-        print('ERROR: Slide not properly named: %s' % fname)
-        exit()
-        
+        raise Exception
+
     return cid, hemi, region, antibody, dil, date, init
 #
 # end of get_slide_parts
@@ -114,7 +114,7 @@ def get_hemi(fname):
 def get_region(fname):
     return get_slide_parts(fname)[2]
 # e.g. SMI32
-def get_antibody(fname):    
+def get_antibody(fname):
     return get_slide_parts(fname)[3]
 
 def get_fpath(ifpath, fpath="", rpath=""):
@@ -155,8 +155,8 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
         ext = iext
 
     if suffix != "":
-        suffix = '_' + suffix        
-        
+        suffix = '_' + suffix
+
     # create the output filename using the basename, suffix, and extension
     fname = '%s%s%s' % (ifname, suffix, ext)
 
@@ -226,19 +226,21 @@ def fix_annotations(ifile):
 #  -ifile: input JSON file to be read
 #  -class_name: if given, only returns annotations with this class
 def read_annotations(ifile, class_name=None, name=None):
-    if not ifile.endswith('.json'):
+    if ifile.endswith('.geojson'):
+        data = geojson.load(open(ifile, 'r'))['features']
+    elif ifile.endswith('.json'):
+        # remove unwanted header bytes if they exist
+        fix_annotations(ifile)
+
+        # blank data if the file doesn't exist
+        if not os.path.exists(ifile):
+            return []
+
+        # load the json data
+        fp = open(ifile, 'r', encoding='utf-8')
+        data = json.loads(fp.read())
+    else:
         raise Exception
-        
-    # remove unwanted header bytes if they exist
-    fix_annotations(ifile)
-
-    # blank data if the file doesn't exist
-    if not os.path.exists(ifile):
-        return []
-
-    # load the json data
-    fp = open(ifile, 'r', encoding='utf-8')
-    data = json.loads(fp.read())
 
     # load the annotations
     # NOTE: this could be handled by a GeoJSON package?
@@ -329,4 +331,3 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     write_annotations(ofile, annos, class_names, anno_names)
 #
 # end of append_annotations
-
