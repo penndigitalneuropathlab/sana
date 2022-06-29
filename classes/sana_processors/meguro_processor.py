@@ -3,7 +3,7 @@
 from sana_thresholds import max_dev, kittler
 from sana_processors.HDAB_processor import HDABProcessor
 
-class meguro_Processor(HDABProcessor):
+class meguroProcessor(HDABProcessor):
     def __init__(self, fname, frame, debug):
         super(meguro_Processor, self).__init__(fname, frame, debug)
     #

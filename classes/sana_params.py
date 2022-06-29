@@ -36,8 +36,8 @@ class Params:
 
         # initialize the data
         # TODO: may eventually want Params to inherit dict so that it doesn't have to store a dict
-        #self.data = {k: None for k in KEYS}
-        self.data = {}
+        # self.data = {}
+        self.data = {k: None for k in KEYS}
 
         # line format in the output file
         self.line = '%s\t%s\n'
@@ -113,7 +113,7 @@ class Params:
         return np.array(M, dtype=np.float64).reshape((2,3))
     #
     # end of parsing
-    
+
     # converts a value into a string based on its datatype
     def to_string(self, x):
         if x is None:
@@ -132,7 +132,7 @@ class Params:
             return None
     #
     # end of to_string
-    
+
     # functions for converting values of different datatypes to strings
     def convert_int(self, x):
         return "%d" % (x)
@@ -143,6 +143,6 @@ class Params:
     def convert_M(self, x):
         return self.convert_list(x.flatten())
     #
-    # end of string conversion    
+    # end of string conversion
 #
 # end of Params
