@@ -4,6 +4,8 @@
 import os
 import sys
 import argparse
+import logging
+import time
 
 # installed modules
 import numpy as np
@@ -34,23 +36,22 @@ def get_processor(fname, frame, debug=False, debug_fibers=False):
         antibody = sana_io.get_antibody(fname)
     except:
         antibody = ''
-    if 'NeuN' in [antibody, target_antibody]:
+    if antibody == 'NeuN':
         return NeuNProcessor(fname, frame, debug)
-    if 'SMI32' in [antibody, target_antibody]:
+    if antibody == 'SMI32':
         return SMI32Processor(fname, frame, debug)
-    if 'CALR6BC' in [antibody, target_antibody]:
+    if antibody == 'CALR6BC':
         return calretininProcessor(fname, frame, debug)
-    if 'parvalbumin' in [antibody, target_antibody]:
+    if antibody == 'parvalbumin':
         return parvalbuminProcessor(fname, frame, debug)
-    if 'SMI94' in [antibody, target_antibody]:
+    if antibody == 'SMI94':
         return MBPProcessor(fname, frame, debug, debug_fibers)
-    if 'SMI35' in [antibody, target_antibody]:
+    if antibody == 'SMI35':
         return SMI35Processor(fname, frame, debug)
-    if 'MEGURO' in [antibody, target_antibody]:
+    if antibody == 'MEGURO':
         return meguroProcessor(fname, frame, debug)
-    if 'AT8' in [antibody, target_antibody]:
+    if antibody == 'AT8':
         return AT8Processor(fname, frame, debug)
-    return None
 #
 # end of get_processor
 
@@ -63,28 +64,45 @@ def main(argv):
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
+    # Dictionary of logging levels
+    level_config = {'full': logging.DEBUG,       # value: 10
+                    'normal': logging.INFO,        # value: 20
+                    # 'WARNING': logging.WARNING,   # value: 30
+                    'quiet': logging.ERROR,       # value: 40
+                    # 'CRITICAL': logging.CRITICAL # value: 50
+                    }
+
+    # Configure logger object
+    logging.basicConfig(
+        format='%(asctime)s :: %(levelname)s :: %(funcName)s :: %(message)s',
+        handlers=[logging.FileHandler('log.log',mode='w'),logging.StreamHandler(sys.stdout)]
+        )
+    # Set logging level from commandline
+    level = level_config.get(args.debug_level.lower())
+
+    logging.root.setLevel(level)
+
     # get all the slide files to process
     slides = sana_io.get_slides_from_lists(args.lists)
     if len(slides) == 0:
-        print("***> ERROR: No Slides Found")
+        logging.error("No Slides Found")
         parser.print_usage()
         exit()
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
-
+        t0 = time.time()
         # progress messaging
-        print('--> Processing Slide: %s (%d/%d)' % \
-              (os.path.basename(slide_f), slide_i+1, len(slides)), flush=True)
+        logging.info('--> Processing Slide: %s (%d/%d)' % \
+              (os.path.basename(slide_f), slide_i+1, len(slides)))
 
         # get the annotation file containing ROIs
         anno_f = sana_io.create_filepath(
-            slide_f, ext=args.aext, fpath=args.adir, rpath=args.rdir)
+            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            print('***> Warning: Annotation file doesn\'t exist\n' +
-                  '******> Skipping... %s' % anno_f)
+            logging.warning('Annotation file %s doesn\'t exist\n' % anno_f)
             continue
 
         # initialize the Loader object for loading Frames
@@ -92,15 +110,17 @@ def main(argv):
             loader = Loader(slide_f)
         except Exception as e:
             print(e)
-            print('***> Warning: Could\'t load .svs file, skipping...')
+            logging.warning('Could\'t load .svs file: %s' % e)
             continue
 
         # set the image resolution level
         loader.set_lvl(args.lvl)
 
         # load the main roi(s) from the json file
-        main_rois = sana_io.read_annotations(
-            anno_f, class_name=args.main_class, name=args.main_name)
+        main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class)
+
+        # START HERE FOR LOGGING --> sana_io
+        # TODO: make logging.debug for # of main_roi and sub_roi
 
         # load the sub roi(s) from the json file
         sub_rois = []
@@ -111,8 +131,8 @@ def main(argv):
         for main_roi_i, main_roi in enumerate(main_rois):
 
             # progress messaging
-            print('----> Processing Frame (%d/%d)' % \
-                  (main_roi_i+1, len(main_rois)), flush=True)
+            logging.info('----> Processing Frame (%d/%d)' % \
+                  (main_roi_i+1, len(main_rois)))
 
             # initialize the Params IO object, this will store parameters
             # relating to the loading/processing of the Frame, as well as
@@ -121,18 +141,15 @@ def main(argv):
 
             # create the output directory path
             # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-            try:
-                bid = sana_io.get_bid(slide_f)
-                antibody = sana_io.get_antibody(slide_f)
-                region = sana_io.get_region(slide_f)
-                roi_id = '%s_%d' % ('ROI', main_roi_i)
-                odir = sana_io.create_odir(args.odir, bid)
-                odir = sana_io.create_odir(odir, antibody)
-                odir = sana_io.create_odir(odir, region)
-                odir = sana_io.create_odir(odir, roi_id)
-            except:
-                odir = sana_io.create_odir(
-                    args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
+            bid = sana_io.get_bid(slide_f)
+            antibody = sana_io.get_antibody(slide_f)
+            region = sana_io.get_region(slide_f)
+            roi_id = '%s_%d' % ('ROI', main_roi_i)
+            odir = sana_io.create_odir(args.odir, bid)
+            odir = sana_io.create_odir(odir, antibody)
+            odir = sana_io.create_odir(odir, region)
+            odir = sana_io.create_odir(odir, roi_id)
+            # TODO: create log.info that odir's were created
 
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -141,10 +158,12 @@ def main(argv):
                 # the slide. the frame will be orthogonalized such that CSF is
                 # at the top and WM is at the bottom of the image.
                 frame = loader.load_gm_frame(params, main_roi)
+                # check func ^^
             else:
 
                 # just translates the coord. system, no rotating or cropping
                 frame = loader.load_roi_frame(params, main_roi)
+                # check func ^^
 
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
@@ -163,14 +182,16 @@ def main(argv):
 
             # get the processor object
             processor = get_processor(
-                slide_f, frame, args.debug, args.debug_fibers)
+                slide_f, frame)
 
             if processor is None:
                 continue
 
             # run the processes for the antibody
             processor.run(odir, params, main_roi, sub_rois)
-        #
+            runtime = time.time()-t0
+            logging.info('Runtime: %0.2f (sec)' % runtime)
+
         # end of main_rois loop
     #
     # end of slides loop
@@ -186,11 +207,8 @@ def cmdl_parser(argv):
         '-adir', type=str, default="",
         help="directory path containing .json files")
     parser.add_argument(
-        '-aext', type=str, default=".json",
-        help="file extension to use with annotation files")
-    parser.add_argument(
         '-odir', type=str, default="",
-        help="directory path to write to")
+        help="directory path to write the results to")
     parser.add_argument(
         '-rdir', type=str, default="",
         help="directory path to replace")
@@ -204,20 +222,11 @@ def cmdl_parser(argv):
         '-main_class', type=str, default=None,
         help="ROI class used to load and process the Frame")
     parser.add_argument(
-        '-main_name', type=str, default=None,
-        help="name of annotation to match")
-    parser.add_argument(
         '-sub_classes', type=str, nargs='*', default=[],
         help="class names of ROIs inside the main ROI to separately process")
     parser.add_argument(
-        '-target_antibody', type=str, default='',
-        help='antibody to use in processing instead of the filename antibody')
-    parser.add_argument(
-        '-debug', action='store_true',
-        help="plot results of the AO analyis")
-    parser.add_argument(
-        '-debug_fibers', action='store_true',
-        help="plot results of the fiber analyis")
+        '-debug_level', type=str, default='normal',
+        help="Logging debug level", choices=['full', 'normal', 'quiet'])
 
     return parser
 #

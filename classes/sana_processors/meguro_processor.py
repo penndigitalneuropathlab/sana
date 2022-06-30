@@ -5,7 +5,7 @@ from sana_processors.HDAB_processor import HDABProcessor
 
 class meguroProcessor(HDABProcessor):
     def __init__(self, fname, frame, debug):
-        super(meguro_Processor, self).__init__(fname, frame, debug)
+        super(meguroProcessor, self).__init__(fname, frame, debug)
     #
     # end of constructor
 
