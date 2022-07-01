@@ -619,7 +619,7 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def get_tissue_orientation(frame, roi, angle, debug=False):
+def get_tissue_orientation(frame, roi, angle, debug=40):
 
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
@@ -628,12 +628,12 @@ def get_tissue_orientation(frame, roi, angle, debug=False):
     else:
         top, bot = s0, s1
 
-    if debug:
+    if debug < 20:
         fig, ax = plt.subplots(1,1)
         ax.imshow(frame.img)
         plot_poly(ax, s0, color='red')
         plot_poly(ax, s1, color='blue')
-        plt.show()
+        fig.show()
 
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)

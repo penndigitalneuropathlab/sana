@@ -1,5 +1,8 @@
 #!/usr/bin/env python3
 
+# git bash command to run sana_process
+# debug_sana_process -adir ./data/meguro_pilot/annotations/ -odir ./data/meguro_pilot/outputs_v1 -lists ./data/meguro_pilot/lists/all.list -roi_type GM -main_class GM -debug_level full
+
 # system modules
 import os
 import sys
@@ -65,35 +68,44 @@ def main(argv):
     args = parser.parse_args()
 
     # Dictionary of logging levels
-    level_config = {'full': logging.DEBUG,       # value: 10
+    level_config = {'full': logging.DEBUG,         # value: 10
                     'normal': logging.INFO,        # value: 20
-                    # 'WARNING': logging.WARNING,   # value: 30
-                    'quiet': logging.ERROR,       # value: 40
+                    # 'WARNING': logging.WARNING,  # value: 30
+                    'quiet': logging.ERROR,        # value: 40
                     # 'CRITICAL': logging.CRITICAL # value: 50
                     }
 
     # Configure logger object
-    logging.basicConfig(
-        format='%(asctime)s :: %(levelname)s :: %(funcName)s :: %(message)s',
-        handlers=[logging.FileHandler('log.log',mode='w'),logging.StreamHandler(sys.stdout)]
-        )
+
+    logger = logging.getLogger(__name__)
+    formatter = logging.Formatter('%(asctime)s :: %(levelname)s :: %(funcName)s :: %(message)s')
+
+    file_handler = logging.FileHandler('log.log',mode='w')
+    file_handler.setFormatter(formatter)
+    logger.addHandler(file_handler)
+
+    stream_handler = logging.StreamHandler(sys.stdout)
+    stream_handler.setFormatter(formatter)
+    logger.addHandler(stream_handler)
+
     # Set logging level from commandline
     level = level_config.get(args.debug_level.lower())
 
-    logging.root.setLevel(level)
+    logger.setLevel(level)
 
     # get all the slide files to process
     slides = sana_io.get_slides_from_lists(args.lists)
     if len(slides) == 0:
-        logging.error("No Slides Found")
+        logger.error("No Slides Found")
         parser.print_usage()
         exit()
+    logger.debug('Number of slides found: %d' % len(slides))
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
         t0 = time.time()
         # progress messaging
-        logging.info('--> Processing Slide: %s (%d/%d)' % \
+        logger.info('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)))
 
         # get the annotation file containing ROIs
@@ -102,7 +114,7 @@ def main(argv):
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            logging.warning('Annotation file %s doesn\'t exist\n' % anno_f)
+            logger.warning('Annotation file %s doesn\'t exist\n' % anno_f)
             continue
 
         # initialize the Loader object for loading Frames
@@ -110,7 +122,7 @@ def main(argv):
             loader = Loader(slide_f)
         except Exception as e:
             print(e)
-            logging.warning('Could\'t load .svs file: %s' % e)
+            logger.warning('Could\'t load .svs file: %s' % e)
             continue
 
         # set the image resolution level
@@ -119,19 +131,20 @@ def main(argv):
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class)
 
-        # START HERE FOR LOGGING --> sana_io
-        # TODO: make logging.debug for # of main_roi and sub_roi
-
         # load the sub roi(s) from the json file
         sub_rois = []
         for sub_class in args.sub_classes:
             sub_rois += sana_io.read_annotations(anno_f, sub_class)
 
+        # logger.debug for # of main_roi and sub_roi
+        logger.debug('Number of main_rois found: %d' % len(main_rois))
+        logger.debug('Number of sub_rois found: %d' % len(sub_rois))
+
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
 
             # progress messaging
-            logging.info('----> Processing Frame (%d/%d)' % \
+            logger.info('----> Processing Frame (%d/%d)' % \
                   (main_roi_i+1, len(main_rois)))
 
             # initialize the Params IO object, this will store parameters
@@ -149,7 +162,10 @@ def main(argv):
             odir = sana_io.create_odir(odir, antibody)
             odir = sana_io.create_odir(odir, region)
             odir = sana_io.create_odir(odir, roi_id)
-            # TODO: create log.info that odir's were created
+
+            logger.debug('Output directory successfully created: %s' % odir)
+
+            padding = 400
 
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -157,13 +173,10 @@ def main(argv):
                 # rotate/translate the coord. system to retrieve the frame from
                 # the slide. the frame will be orthogonalized such that CSF is
                 # at the top and WM is at the bottom of the image.
-                frame = loader.load_gm_frame(params, main_roi)
-                # check func ^^
+                frame = loader.load_gm_frame(params, main_roi, padding=padding, debug=level)
             else:
-
                 # just translates the coord. system, no rotating or cropping
-                frame = loader.load_roi_frame(params, main_roi)
-                # check func ^^
+                frame = loader.load_roi_frame(params, main_roi, padding=padding, debug=level)
 
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
@@ -189,8 +202,7 @@ def main(argv):
 
             # run the processes for the antibody
             processor.run(odir, params, main_roi, sub_rois)
-            runtime = time.time()-t0
-            logging.info('Runtime: %0.2f (sec)' % runtime)
+            logger.info('Runtime: %0.2f (sec)' % (time.time()-t0))
 
         # end of main_rois loop
     #

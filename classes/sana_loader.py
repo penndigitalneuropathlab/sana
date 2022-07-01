@@ -145,7 +145,7 @@ class Loader(openslide.OpenSlide):
     # end of load_frame
 
     # this function uses the bounding box of an ROI to load a frame of data
-    def load_roi_frame(self, params, orig_roi, copy=True):
+    def load_roi_frame(self, params, orig_roi, padding=None, copy=True, debug=40):
 
         # create a copy to not disturb the original data
         if copy:
@@ -158,6 +158,11 @@ class Loader(openslide.OpenSlide):
 
         # load the frame based on the ROI bounding box
         loc, size = roi.bounding_box()
+
+        if padding is not None:
+            loc -= (padding//2)
+            size -= -(padding//2)
+
         frame = self.load_frame(loc, size)
 
         # translate the ROI to the new coord. system
@@ -169,6 +174,12 @@ class Loader(openslide.OpenSlide):
         params.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
         params.data['crop_size'] = np.copy(size)
 
+        if debug < 20:
+            fig, axs = plt.subplots(1,1)
+            axs.imshow(frame.img)
+            plot_poly(axs, roi, color='red')
+            plt.show()
+
         return frame
     #
     # end of load_roi_frame
@@ -177,19 +188,17 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
     # TODO: need to pad the segmentation somehow to provide context for tiling
-    def load_gm_frame(self, params, orig_roi, debug=False):
-
-        if debug:
-            fig, axs = plt.subplots(2,2)
-            axs = axs.ravel()
+    def load_gm_frame(self, params, orig_roi, padding=None, debug=40):
 
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
         # load the frame from the ROI
-        frame = self.load_roi_frame(params, roi, copy=False)
+        frame = self.load_roi_frame(params, roi, padding, copy=False)
 
-        if debug:
+        if debug < 20:
+            fig, axs = plt.subplots(2,2)
+            axs = axs.ravel()
             axs[0].imshow(frame.img)
             plot_poly(axs[0], roi, color='red')
 
@@ -200,7 +209,7 @@ class Loader(openslide.OpenSlide):
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
         roi = roi.transform(M1)
-        if debug:
+        if debug < 20:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
 
@@ -210,7 +219,7 @@ class Loader(openslide.OpenSlide):
         crop_loc, crop_size = roi.bounding_box()
         roi.translate(crop_loc)
         frame.crop(crop_loc, crop_size)
-        if debug:
+        if debug < 20:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
 
@@ -225,9 +234,10 @@ class Loader(openslide.OpenSlide):
         # rotate either 180 or 0 degrees to make sure CSF is on top
         M2, nw, nh = frame.get_rotation_mat(rotate_angle)
         frame.warp_affine(M2, nw, nh)
-        if debug:
+        if debug < 20:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
+            plt.show()
 
         # store the values used during loading the frame
         params.data['crop_loc'] = crop_loc
@@ -236,9 +246,6 @@ class Loader(openslide.OpenSlide):
         params.data['angle2'] = rotate_angle
         params.data['M1'] = M1
         params.data['M2'] = M2
-
-        if debug:
-            plt.show()
 
         # finally, return the orthogonalized frame
         return frame
