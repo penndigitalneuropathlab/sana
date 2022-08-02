@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
 
-# git bash command to run sana_process
-# debug_sana_process -adir ./data/meguro_pilot/annotations/ -odir ./data/meguro_pilot/outputs_v1 -lists ./data/meguro_pilot/lists/all.list -roi_type GM -main_class GM -debug_level full
-
 # system modules
 import os
 import sys
@@ -27,6 +24,7 @@ from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
 from sana_processors.meguro_processor import meguroProcessor
 from sana_processors.AT8_processor import AT8Processor
+from sana_processors.IBA1_processor import IBA1Processor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -55,6 +53,9 @@ def get_processor(fname, frame, debug=False, debug_fibers=False):
         return meguroProcessor(fname, frame, debug)
     if antibody == 'AT8':
         return AT8Processor(fname, frame, debug)
+    if antibody == 'IBA1':
+        return IBA1Processor(fname, frame, debug)
+    return None
 #
 # end of get_processor
 
@@ -108,9 +109,13 @@ def main(argv):
         logger.info('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)))
 
-        # get the annotation file containing ROIs
+        # # get the annotation file containing ROIs
+        # anno_f = sana_io.create_filepath(
+        #     slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+
+        # Temporary fix for reading annotations (microglia)
         anno_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+            slide_f.replace('-21_EX', '-2021_EX'), ext='.json', fpath=args.adir, rpath=args.rdir)
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
@@ -132,13 +137,13 @@ def main(argv):
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class)
 
         # load the sub roi(s) from the json file
-        sub_rois = []
-        for sub_class in args.sub_classes:
-            sub_rois += sana_io.read_annotations(anno_f, sub_class)
+        # sub_rois = []
+        # for sub_class in args.sub_classes:
+        #     sub_rois += sana_io.read_annotations(anno_f, sub_class)
 
         # logger.debug for # of main_roi and sub_roi
-        logger.debug('Number of main_rois found: %d' % len(main_rois))
-        logger.debug('Number of sub_rois found: %d' % len(sub_rois))
+        # logger.debug('Number of main_rois found: %d' % len(main_rois))
+        # logger.debug('Number of sub_rois found: %d' % len(sub_rois))
 
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
@@ -147,6 +152,19 @@ def main(argv):
             logger.info('----> Processing Frame (%d/%d)' % \
                   (main_roi_i+1, len(main_rois)))
 
+
+            # load the sub roi(s) that are inside this main roi
+            # NOTE: None is used for not found sub rois since we still need to measure something
+            sub_rois = []
+            for sub_class in args.sub_classes:
+                rois = sana_io.read_annotations(anno_f, sub_class)
+                for roi in rois:
+                    if roi.inside(main_roi):
+                        sub_rois.append(roi)
+                        break
+                else:
+                    sub_rois.append(None)
+
             # initialize the Params IO object, this will store parameters
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
@@ -154,18 +172,26 @@ def main(argv):
 
             # create the output directory path
             # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-            bid = sana_io.get_bid(slide_f)
-            antibody = sana_io.get_antibody(slide_f)
-            region = sana_io.get_region(slide_f)
-            roi_id = '%s_%d' % ('ROI', main_roi_i)
-            odir = sana_io.create_odir(args.odir, bid)
-            odir = sana_io.create_odir(odir, antibody)
-            odir = sana_io.create_odir(odir, region)
-            odir = sana_io.create_odir(odir, roi_id)
+            try:
+                bid = sana_io.get_bid(slide_f)
+                antibody = sana_io.get_antibody(slide_f)
+                region = sana_io.get_region(slide_f)
+                if not main_roi.name:
+                    roi_name = str(main_roi_i)
+                else:
+                    roi_name = main_roi.name
+                roi_id = '%s_%s' % (main_roi.class_name, roi_name)
+                odir = sana_io.create_odir(args.odir, bid)
+                odir = sana_io.create_odir(odir, antibody)
+                odir = sana_io.create_odir(odir, region)
+                odir = sana_io.create_odir(odir, roi_id)
+            except:
+                odir = sana_io.create_odir(
+                    args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
 
             logger.debug('Output directory successfully created: %s' % odir)
 
-            padding = 400
+            padding = 100
 
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -178,10 +204,11 @@ def main(argv):
                 # just translates the coord. system, no rotating or cropping
                 frame = loader.load_roi_frame(params, main_roi, padding=padding, debug=level)
 
+
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
                 main_roi,
-                params.data['loc'], params.data['crop_loc'],
+                params.data['loc'], params.data['padding'], params.data['crop_loc'],
                 params.data['M1'], params.data['M2']
             )
 
@@ -189,7 +216,7 @@ def main(argv):
             for sub_roi_i in range(len(sub_rois)):
                 sub_rois[sub_roi_i] = transform_poly(
                     sub_rois[sub_roi_i],
-                    params.data['loc'], params.data['crop_loc'],
+                    params.data['loc'], params.data['padding'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
                 )
 
@@ -198,6 +225,7 @@ def main(argv):
                 slide_f, frame)
 
             if processor is None:
+                logger.debug('No processor found')
                 continue
 
             # run the processes for the antibody

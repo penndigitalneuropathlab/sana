@@ -86,7 +86,7 @@ class Loader(openslide.OpenSlide):
     #  -size: size of Frame to load (in any unit or resolution)
     #  -lvl: resolution to use, overrides the lvl attribute stored in Loader
     #  -pad_color: color to use to pad the Frame, can use slide_color or white
-    def load_frame(self, loc, size, lvl=None, pad_color=None):
+    def load_frame(self, loc, size, lvl=None, pad_color=None, padding=0):
         if lvl is None:
             lvl = self.lvl
         if pad_color is None:
@@ -140,6 +140,7 @@ class Loader(openslide.OpenSlide):
 
         return Frame(img, lvl=lvl, converter=self.converter,
                      csf_threshold=self.csf_threshold,
+                     padding=padding,
                      slide_color=self.slide_color)
     #
     # end of load_frame
@@ -161,18 +162,20 @@ class Loader(openslide.OpenSlide):
 
         if padding is not None:
             loc -= (padding//2)
-            size -= -(padding//2)
+            size += padding
 
-        frame = self.load_frame(loc, size)
+        frame = self.load_frame(loc, size, padding=padding)
 
         # translate the ROI to the new coord. system
         roi.translate(loc)
+
 
         # store the processing params and return the frame
         params.data['loc'] = loc
         params.data['size'] = size
         params.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
         params.data['crop_size'] = np.copy(size)
+        params.data['padding'] = padding
 
         if debug < 20:
             fig, axs = plt.subplots(1,1)

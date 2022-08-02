@@ -20,7 +20,7 @@ from sana_geo import Point
 #           6) add datatype check to to_string()
 
 # lists of possible fields to store, separated by the datatype they should be stored as
-INT_KEYS = ['lvl', 'csf_threshold', 'manual_stain_threshold', 'auto_stain_threshold']
+INT_KEYS = ['lvl', 'csf_threshold', 'manual_stain_threshold', 'auto_stain_threshold', 'padding']
 POINT_KEYS = ['loc', 'size', 'crop_loc', 'crop_size', 'ds']
 M_KEYS = ['M1', 'M2']
 FLOAT_KEYS = ['manual_ao', 'auto_ao', 'vert_fibers_ao', 'horz_fibers_ao',

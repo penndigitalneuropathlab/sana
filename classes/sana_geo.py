@@ -158,7 +158,7 @@ def get_ortho_angle(seg):
 
 # performs a series a translations and rotations to transform a polygon
 #  to the coordinate system of a processed Frame
-def transform_poly(x, loc, crop_loc, M1, M2):
+def transform_poly(x, loc, padding, crop_loc, M1, M2):
     if not loc is None:
         x.translate(loc)
     if not M1 is None:
@@ -173,7 +173,7 @@ def transform_poly(x, loc, crop_loc, M1, M2):
 
 # performs the inverse translations and rotations to return a polygon
 #  to the original coordinate system
-def transform_inv_poly(x, loc, crop_loc, M1, M2):
+def transform_inv_poly(x, loc, padding, crop_loc, M1, M2):
     if not M2 is None:
         x = x.transform_inv(M2)
     if not crop_loc is None:
@@ -182,6 +182,7 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
         x = x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
+
     return x
 #
 # end of transform_inv_poly
@@ -598,7 +599,7 @@ class Annotation(Polygon):
         obj.confidence = confidence
 
         return obj
-        
+
     def __array_finalize__(self, obj):
         if obj is None: return
         self.file_name = getattr(obj, 'file_name', None)

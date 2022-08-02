@@ -33,7 +33,7 @@ class TypeException(Exception):
 #  -converter: Converter object from Loader
 class Frame:
     def __init__(self, img, lvl=-1, converter=None,
-                 csf_threshold=None, slide_color=None):
+                 csf_threshold=None, slide_color=None, padding=0):
         if type(img) is str:
             self.img = np.array(Image.open(img))
         else:
@@ -47,6 +47,8 @@ class Frame:
         self.contours = []
         self.csf_threshold = csf_threshold
         self.slide_color = slide_color
+        self.padding = padding
+
     #
     # end of constructor
 

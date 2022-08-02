@@ -167,8 +167,15 @@ class Model:
         # print(output.shape, self.frame.img.shape, flush=True)
         # fig, axs = plt.subplots(1,2)
         # axs[0].imshow(self.frame.img, extent=(0,100,0,100))
-        # axs[1].imshow(output[1], extent=(0,100,0,100))
+        # axs[1].imshow(output[0], extent=(0,100,0,100))
         # plt.show()
+
+        # added for microglia pilot
+        frame_size = np.array(self.frame.img.shape[0:2])
+        output_size = np.array(output.shape[1:3])
+        new_output_size = ((frame_size - self.frame.padding)*output_size)//frame_size
+        border = (output_size - new_output_size)//2
+        output = output[:,border[0]:-border[0],border[1]:-border[1]]
 
         return output
     #
