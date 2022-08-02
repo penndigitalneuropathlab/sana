@@ -185,3 +185,11 @@ class TangleModel(Model):
     def __init__(self, frame):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tangle.dat')
         super().__init__(model_path, frame, 2, kmax=0.05, kmin=0.02, alpha=0.5, num_maps=4)
+<<<<<<< HEAD
+
+class MicrogliaModel(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'microglia.dat')
+        super().__init__(model_path, frame, 6, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+=======
+>>>>>>> parent of cf30078 (Added IBA1 processor and microglia.dat)
