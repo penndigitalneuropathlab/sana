@@ -133,7 +133,7 @@ def main(argv):
                 bid = sana_io.get_bid(slide_f)
                 antibody = sana_io.get_antibody(slide_f)
                 region = sana_io.get_region(slide_f)
-                if not main_roi.anno_name:
+                if not main_roi.name:
                     roi_name = str(main_roi_i)
                 else:
                     roi_name = main_roi.anno_name
@@ -167,6 +167,8 @@ def main(argv):
 
             # transform the sub ROIs to the Frame's coord. system
             for sub_roi_i in range(len(sub_rois)):
+                if sub_rois[sub_roi_i] is None:
+                    continue
                 sub_rois[sub_roi_i] = transform_poly(
                     sub_rois[sub_roi_i],
                     params.data['loc'], params.data['crop_loc'],
