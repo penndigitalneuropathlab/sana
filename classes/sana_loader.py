@@ -245,7 +245,7 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_gm_frame
 
-    def from_vector(self, paramsd, v, l, padding=0):
+    def from_vector(self, params, v, l, padding=0):
 
         # get the angle of the vector
         angle = v.get_angle()

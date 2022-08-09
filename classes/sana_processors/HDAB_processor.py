@@ -60,8 +60,12 @@ class HDABProcessor(Processor):
         self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
+        self.gray = self.frame.copy()
+        self.gray.to_gray()
         self.hem_gray = self.hem.copy()
         self.hem_gray.to_gray()
+        self.dab_gray = self.dab.copy()
+        self.dab_gray.to_gray()
     #
     # end of constructor
 
@@ -280,7 +284,7 @@ class HDABProcessor(Processor):
 
     # this fits a step function to each column in the img
     # TODO: the values of step function are set by the max of the row, is this good?
-    def fit_boundary(self, feats, st, en, debug=False):
+    def fit_boundary(self, feats, st, en, v0=None, v1=None, debug=False):
 
         # calculate the boundary at each column
         boundary = np.zeros(feats.shape[2])
@@ -295,8 +299,10 @@ class HDABProcessor(Processor):
                 continue
 
             # get the 2 extreme values for the step function
-            v0 = np.mean(feats[:, st,:], axis=1)[:, None]
-            v1 = np.mean(feats[:, en,:], axis=1)[:, None]
+            if v0 is None:
+                v0 = np.mean(feats[:, st,:], axis=1)[:, None]
+            if v1 is None:
+                v1 = np.mean(feats[:, en,:], axis=1)[:, None]
 
             # calculate the distance score for each possible index in the signal
             score = np.zeros(sig.shape[1], dtype=float)
@@ -419,16 +425,6 @@ class HDABProcessor(Processor):
 
     def detect_hem_cells(self, params,
                          disk_r, sigma, n_iterations, close_r, open_r, debug=False):
-
-        # get the rescale parameters
-        hist = self.hem.histogram()
-        vmi = np.argmax(hist)
-        vmx = 92
-
-        # # rescale the image
-        # self.hem.img = (self.hem.img.astype(float) - mi) / (mx-mi)
-        # self.hem.img = np.clip(self.hem.img, 0, None)
-        # self.hem.img = (255 * self.hem.img).astype(np.uint8)
 
         # smooth the image
         # self.hem.anisodiff()

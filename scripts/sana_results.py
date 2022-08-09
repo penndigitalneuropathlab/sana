@@ -23,7 +23,7 @@ sns.set_style("whitegrid")
 plt.rcParams['axes.prop_cycle'] = plt.cycler(color=sns.color_palette("Set2"))
 
 MEASUREMENTS = {
-    'NeuN': ['manual', 'auto'],
+    'NeuN': ['manual', 'auto', 'grn', 'pyr'],
     'SMI32': ['manual', 'auto'],
     'CALR6BC': ['manual', 'auto'],
     'parvalbumin': ['manual', 'auto'],    

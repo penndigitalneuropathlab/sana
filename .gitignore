@@ -2,7 +2,7 @@
 *~
 workspace/
 __pycache__/
-
+bin/
 examples/data/
 *.pyc
 *.json

@@ -35,12 +35,15 @@ class Processor:
         # generate the sub masks
         self.sub_masks = []
         for i in range(len(sub_rois)):
-            mask = create_mask(
-                [sub_rois[i]],
-                self.frame.size(), self.frame.lvl, self.frame.converter,
-                x=0, y=255, holes=[]
-            )
-            self.sub_masks.append(mask)
+            if sub_rois[i] is None:
+                self.sub_masks.append(None)
+            else:
+                mask = create_mask(
+                    [sub_rois[i]],
+                    self.frame.size(), self.frame.lvl, self.frame.converter,
+                    x=0, y=255, holes=[]
+                )
+                self.sub_masks.append(mask)
         #
         # end of sub_masks loop
 
@@ -75,13 +78,17 @@ class Processor:
         # apply the sub masks and get the %AO of each
         sub_aos, sub_areas = [], []
         for sub_mask in self.sub_masks:
-            tmp_frame = frame.copy()
-            tmp_frame.mask(sub_mask)
-            sub_area = np.sum(sub_mask.img / 255)
-            sub_pos = np.sum(tmp_frame.img / 255)
-            sub_ao = sub_pos / sub_area
-            sub_aos.append(sub_ao)
-            sub_areas.append(sub_area)
+            if sub_mask is None:
+                sub_aos.append(np.nan)
+                sub_areas.append(np.nan)
+            else:
+                tmp_frame = frame.copy()
+                tmp_frame.mask(sub_mask)
+                sub_area = np.sum(sub_mask.img / 255)
+                sub_pos = np.sum(tmp_frame.img / 255)
+                sub_ao = sub_pos / sub_area
+                sub_aos.append(sub_ao)
+                sub_areas.append(sub_area)
 
         # calculate the %AO as a function of depth
         if self.roi_type == 'GM':
