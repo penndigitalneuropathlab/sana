@@ -7,6 +7,7 @@ import argparse
 
 # install modules
 import numpy as np
+from tqdm import tqdm
 
 # custom modules
 import sana_io
@@ -22,40 +23,264 @@ import seaborn as sns; sns.set()
 sns.set_style("whitegrid")
 plt.rcParams['axes.prop_cycle'] = plt.cycler(color=sns.color_palette("Set2"))
 
-MEASUREMENTS = {
-    'NeuN': ['manual', 'auto', 'grn', 'pyr'],
-    'SMI32': ['manual', 'auto'],
-    'CALR6BC': ['manual', 'auto'],
-    'parvalbumin': ['manual', 'auto'],    
-    'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
-    'SMI35': ['manual', 'auto'],
-}
+class DirectoryIncompleteError(Exception):
+    def __init__(self, message='Directory is missing .csv file'):
+        self.message = message
+        super().__init__(self.message)
 
-def get_cohort(id, stats):
-    for x in stats:
-        parts = x.split(',')
-        aid, grp, sub, dis = parts[3], parts[13], parts[14], parts[15]
-        if '-'.join(aid.split('-')[:2]) == '-'.join(id.split('-')[:2]):
-            return grp
-
-def load_data(idir, aid, antibody, region, roi):
-
-    # build the filepath
-    d = os.path.join(idir, aid, antibody, region, roi)
-    try:
-        f = [x for x in os.listdir(d) if x.endswith('.csv')][0]
-    except:
-        return None
-    f = os.path.join(d, f)
-
-    # load the data
-    params = Params()
-    params.read_data(f)
-    data = params.data
+# stores INDD patient data an[<0;30;31Md Region data measured from the .svs slides
+class Patient:
+    def __init__(self, aid, is_hc):
+        self.aid = aid
+        self.is_hc = is_hc
+        self.regions = {}
+    #
+    # end of constructor
     
-    return data
+    # TODO: this should read the header and then find the data, but works for now
+    def get_subtype(self, pdata):
+        for l in open(pdata, 'r'):
+            parts = l.rstrip().split(',')
+            if parts[2] == self.aid:
+                return parts[14]
+        return None
+    def get_cohort(self, pdata):
+        for l in open(pdata, 'r'):
+            parts = l.rstrip().split(',')
+            if parts[2] == self.aid:
+                return parts[15]
+        return None
+    #
+    # end of INDD data retrieval
+
+    def add_data(self, entry):
+        
+        # create a new Region, if needed
+        if entry.region not in self.regions:
+            self.regions[entry.region] = Region(entry.region)
+
+        # add the data to the Region
+        self.regions[entry.region].add_data(entry)
+    #
+    # end of add_data
+
+    # gets the average ROI data over this patient
+    def collapse(self):
+
+        # collapse each region and store each antibody's measurement
+        ao_data = {}
+        for region in self.regions:
+            region_ao_data = self.regions[region].collapse()
+            for antibody in region_ao_data:
+                if antibody not in ao_data:
+                    ao_data[antibody] = []
+                ao_data[antibody].append(region_ao_data[antibody])
+
+        # calculate the average data over the regions in each antibody
+        for antibody in ao_data:
+            ao_data[antibody] = np.mean(ao_data[antibody], axis=0)
+
+        return ao_data
+    #
+    # end of collapse
 #
-# end of load_data
+# end of Patient
+
+# stores Subregions that were annotated and analyzed within the .svs slides
+class Region:
+    region_mapping = {
+        'MFC': ['ROI',],
+        'OFC': ['medOFC', 'latOFC',],
+        'aCING': ['33', '24', '32',],
+    }    
+    def __init__(self, name):
+        self.name = name
+        self.subregions = {}
+    #
+    # end of constructor
+    
+    def get_subregion_name(self, roi_name):
+        for subregion_name in self.region_mapping[self.name]:
+            if subregion_name in roi_name:
+                return subregion_name
+        return None
+    #
+    # end of get_subregion_name
+
+    def add_data(self, entry):
+        
+        # create a new Subregion, if needed
+        subregion_name = self.get_subregion_name(entry.roi)
+        if not subregion_name in self.subregions:
+            self.subregions[subregion_name] = Subregion(subregion_name)
+        
+        # add the data to the subregion
+        self.subregions[subregion_name].add_data(entry)
+    #
+    # end of add_data
+
+    # gets the average ROI data over this region
+    def collapse(self):
+
+        # collapse each subregion and store each antibody's measurement
+        ao_data = {}
+        for subregion in self.subregions:
+            subregion_ao_data = self.subregions[subregion].collapse()
+            for antibody in subregion_ao_data:
+                if antibody not in ao_data:
+                    ao_data[antibody] = []
+                ao_data[antibody].append(subregion_ao_data[antibody])
+
+        # calculate the average data over the subregions in each antibody
+        for antibody in ao_data:
+            ao_data[antibody] = np.mean(ao_data[antibody], axis=0)
+
+        return ao_data
+    #
+    # end of collapse
+#
+# end of Region
+
+# stores each Antibody that was available in this Subregion
+class Subregion:
+    def __init__(self, name):
+        self.name = name
+        self.antibodies = {}
+    #
+    # end of constructor
+    
+    def add_data(self, entry):
+
+        # create a new Antibody, if needed
+        if entry.antibody not in self.antibodies:
+            self.antibodies[entry.antibody] = Antibody(entry.antibody)
+
+        # add the data to the antibody
+        self.antibodies[entry.antibody].add_data(entry)
+    #
+    # end of add_data
+
+    # gets the average ROI data in each antibody
+    def collapse(self):
+        ao_data = {}
+        for antibody in self.antibodies:
+            ao = self.antibodies[antibody].collapse()
+            ao_data[antibody] = ao
+        return ao_data
+    #
+    # end of collapse
+#
+# end of Subregion
+
+# stores the measurements made in the ROI(s) from a Patient/Region/Subregion
+# TODO: kinda weird that the antibody could technically store a entry with a different antibody
+class Antibody:
+    ao_measurements = {
+        'NeuN': ['manual', 'auto', 'grn', 'pyr'],
+        'SMI32': ['manual', 'auto'],
+        'CALR6BC': ['manual', 'auto'],
+        'parvalbumin': ['manual', 'auto'],    
+        'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
+        'SMI35': ['manual', 'auto'],
+    }
+    
+    def __init__(self, name):
+        self.name = name
+        self.rois = {}
+    #
+    # end of constructor
+
+    def add_data(self, entry):
+        self.rois[entry.roi] = entry
+
+        self.get_ao_data()
+    #
+    # end of add_data
+
+    # TODO: create functions for Signal, Densities, Sizes, etc...
+    def get_ao_data(self):
+        
+        # collect the %AO measurements for each ROI
+        self.ao_data = {}
+        for roi_name in self.rois:
+            data = []
+            for ao_measurement in self.ao_measurements[self.name]:
+                # TODO: if sub_aos is empty need to use _ao!!!!
+                data.append(self.rois[roi_name].data[ao_measurement+'_sub_aos'])
+            self.ao_data[roi_name] = np.array(data)
+    #
+    # end of get_ao_data
+
+    # average all ROI data in this antibody into a single set of datapoints
+    def collapse(self):
+        ao = self.collapse_ao()
+
+        return ao
+    #
+    # end of collapse
+
+    def collapse_ao(self):
+
+        # calculate the mean of the measurements over the ROIs        
+        data = []
+        for roi_name in self.rois:
+            data.append(self.ao_data[roi_name])
+        return np.mean(data, axis=0)
+    #
+    # end of collapse_ao
+#
+# end of Antibody
+
+# loads and stores all data found within a ROI output directory
+class Entry:
+    def __init__(self, directory):
+        self.directory = directory
+        self.set_directory_parts()
+
+        self.load_data()
+    #
+    # end of constructor
+    
+    def set_directory_parts(self):
+        d, self.roi = os.path.split(self.directory)
+        d, self.region = os.path.split(d)
+        d, self.antibody = os.path.split(d)
+        d, self.bid = os.path.split(d)
+        
+        self.params_f = [f for f in os.listdir(self.directory) if f.endswith('.csv')]
+        if len(self.params_f) == 0:
+            raise DirectoryIncompleteError
+        self.params_f = self.params_f[0]
+        self.slide_name = os.path.splitext(self.params_f)[0]
+    #
+    # end of get_directory_parts
+
+    def load_data(self):
+        
+        # load the data stored in the params file
+        self.params = Params()
+        self.params.read_data(self.params_f)
+        self.data = self.params.data
+
+        # load extra data based on the antibody
+        if self.antibody == 'NeuN':
+            self.load_NeuN_data()
+        elif self.antibody == 'SMI32':
+            self.load_SMI32_data()
+    #
+    # end of load_data
+
+    def load_NeuN_data(self):
+        pass
+    #
+    # end of load_NeuN_data
+
+    def load_SMI32_data(self):
+        pass
+    #
+    # end of load_SMI32_data
+#
+# end of Entry
 
 def get_results(data, bids, antibodies, regions):
 
@@ -163,7 +388,7 @@ def write_results(odir, rois, results, mu, sigma):
     long_ofile = os.path.join(odir, 'results_long.csv')
     long_fp = open(long_ofile, 'w')
     wide_ofile = os.path.join(odir, 'results_wide.csv')
-    wide_fp = open(wide_ofile, 'w')    
+    wide_fp = open(wide_ofile, 'w')
     long_fp.write(
         'AutopsyID,Antibody,Measurement,Region,ROI,Layer,AO,z_AO\n')
     wide_fp.write(
@@ -207,52 +432,92 @@ def write_results(odir, rois, results, mu, sigma):
     # end of antibodies loop
 #
 # end of write_results
+
+def collect_patients(idir, hc):
+
+    # load the list of HC patients
+    hc = [l.rstrip() for l in open(hc, 'r')]
+
+    patients = {}
+    
+    # loop through the BIDs found in the idir
+    for bid in tqdm(os.listdir(idir)):
+        bid_d = os.path.join(idir, bid)
+        if not os.path.isdir(bid_d):
+            continue
+
+        # create a new Patient, if needed
+        aid = '-'.join(bid.split('-')[:-1])        
+        if aid not in patients:
+            patients[aid] = Patient(aid, (aid in hc))
+            
+        # loop through the antibodies in the BID
+        for antibody in os.listdir(bid_d):
+            antibody_d = os.path.join(bid_d, antibody)
+            if not os.path.isdir(antibody_d):
+                continue
+            
+            # loop through the regions in this antibody
+            for region in os.listdir(antibody_d):
+                region_d = os.path.join(antibody_d, region)
+                if not os.path.isdir(region_d):
+                    continue
                 
+                # loop and store the ROIs
+                for roi in os.listdir(region_d):
+                    roi_d = os.path.join(region_d, roi)
+                    if not os.path.isdir(roi_d):
+                        continue
+
+                    # load the data in this ROI
+                    try:
+                        entry = Entry(roi_d)
+                    except DirectoryIncompleteError:
+                        continue
+                    
+                    # add this ROI's data to the patient                    
+                    patients[aid].add_data(entry)
+                #
+                # end of rois loop
+            #
+            # end of regions loop
+        #
+        # end of antibodies loop
+    #
+    # end of BIDs loop
+
+    return patients
+#
+# end of collect_patients
+
 def main(argv):
 
     # parse the command line
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
-    data = {}
+    # set of Patients that will be populated with the data in args.idir
+    patients = collect_patients(args.idir, args.hc)
 
-    # loop through the IDs
-    count = len(os.listdir(args.idir))
-    for i, bid in enumerate(os.listdir(args.idir)):
-        s = '%d/%d' % (i, count)
-        print('%s%s' % (s, '\b'*len(s)), end="", flush=True)
-        d = os.path.join(args.idir, bid)
-        if not os.path.isdir(d):
-            continue
-        data[bid] = {}
-        
-        
-        # loop through the antibodies in the ID
-        for antibody in os.listdir(d):
-            d = os.path.join(args.idir, bid, antibody)
-            if not os.path.isdir(d):
-                continue
-            data[bid][antibody] = {}
-            
-            # loop through the regions
-            for region in os.listdir(d):
-                d = os.path.join(args.idir, bid, antibody, region)
-                if not os.path.isdir(d):
-                    continue
-                data[bid][antibody][region] = {}
-                
-                # loop and store the rois
-                for roi in os.listdir(d):
-                    d = os.path.join(args.idir, bid, antibody, region, roi)
-                    if not os.path.isdir(d):
-                        continue
+    # TODO: call function to generate curve plots
+    #        various combinations of curves in the plots
+    #         plots total, collapse subregion, collapse region
+    
+    # TODO: call function to generate box plots
+    #        same combinations in curve plots
+    #         also collapse combinations
+    
+    # TODO: call function to generate spreadsheets
+    #        different AO data in each sheet in the spreadsheet?
+    #        different collapse combinations in the spreadsheet?
+    #         AID, REGION, SUBREGION, ROI, X_1, ..., X_6, X_23, X_56, X_123456
+    #         AID, REGION, SUBREGION, N/A, X_1, ..., X_6, X_23, X_56, X_123456
+    #         AID, REGION, N/A, N/A, X_1, ..., X_6, X_23, X_56, X_123456
+    #         AID, N/A, N/A, N/A, X_1, ..., X_6, X_23, X_56, X_123456
+    #               
 
-                    # finally, load the .csv file and store it
-                    x = load_data(args.idir, bid, antibody, region, roi)
-                    if x is None:
-                        continue
-                    data[bid][antibody][region][roi] = x
 
+    
     # get all the block IDs in the results
     bids = sorted(list(iter(data.keys())))
             
