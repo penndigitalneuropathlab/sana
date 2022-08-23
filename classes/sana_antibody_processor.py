@@ -17,16 +17,16 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, roi_type="", Nsamp=None, debug=False):
+    def __init__(self, fname, frame, roi_type="", debug=False):
         self.fname = fname
         self.frame = frame
         self.roi_type = roi_type
-        self.Nsamp = Nsamp
         self.debug = debug
     #
     # end of constructor
 
     def mask_frame(self, main_roi, sub_rois=[]):
+        
         # generate the main mask
         self.main_mask = create_mask(
             [main_roi],
@@ -49,6 +49,8 @@ class Processor:
         #
         # end of sub_masks loop
 
+        # apply the main mask to the frame
+        # TODO: we need to check if this is needed
         if self.frame.slide_color is None:
             self.frame.mask(self.main_mask)
         else:
@@ -92,55 +94,66 @@ class Processor:
                 sub_aos.append(sub_ao)
                 sub_areas.append(sub_area)
 
-        # calculate the %AO as a function of depth
+        # calculate feature signals as a function of depth
         if self.roi_type == 'GM':
-            ao_depth = self.get_profile(frame, detections)
+            signals = self.get_signals(frame, detections)
         else:
-            ao_depth = None
+            signals = None
 
         # finally, return the results
         ret = {
             'ao': ao, 'area': area,
             'sub_aos': sub_aos, 'sub_areas': sub_areas,
-            'ao_depth': ao_depth,
+            'signals': signals,
         }
         return ret
     #
     # end of run_ao
 
-    def get_profile(self, frame, detections, tsize=None, tstep=None):
+    def get_signals(self, frame, detections=[], tsize=None, tstep=None):
+
+        # these are the size and step length of the convolution process
         if tsize is None:
             tsize = TSIZE
         if tstep is None:
             tstep = TSTEP
 
-        # get the %AO heatmap, smoothed in the x and y direction
+        # calculate the feature heatmaps
         heatmap = Heatmap(frame, detections, tsize, tstep)
-        if len(detections) == 0:
-            feat = heatmap.ao
-        else:
-            feat = heatmap.run([heatmap.density])[0]
+        feats = heatmap.run([heatmap.ao, heatmap.density, heatmap.area])
 
-        # deform the heatmap to the sub (or main) masks
-        if len(self.sub_masks) == 0:
-            deform_feat = heatmap.deform(
-                feat, [self.main_mask], self.Nsamp)
-        else:
-            deform_feat = heatmap.deform(
-                feat, self.sub_masks, self.Nsamp)
+        # deform the heatmap to the main and sub mask
+        # in: 3, H, W
+        # out: 4, 3, H, W
+        main_deformed_feats = heatmap.deform(feats, [self.main_mask])
+        sub_deformed_feats = heatmap.deform(feats, self.sub_masks))
 
-        # finally, calculate the %AO as a function of depth
-        profile = np.mean(deform_feat, axis=1)
+        # calculate the signals as the average over the columns
+        signals = {
+            'normal': np.mean(feats, axis=2)[None,...],
+            'main_deform': np.mean(main_deformed_feats, axis=3),
+            'sub_deform': np.mean(sub_deformed_feats, axis=3),
+        }
 
-        # fig, axs = plt.subplots(1,3)
-        # axs[0].imshow(frame.img)
-        # axs[1].imshow(deform_feat)
-        # axs[2].plot(profile)
-        # plt.show()
+        fig, axs = plt.subplots(1,4)
+        axs[0].imshow(frame.img)
+        axs[1].imshow(feats[0])
+        axs[2].imshow(main_deformed_feats[0])
+        axs[3].imshow(sub_deformed_feats[0])
+
+        fig, axs = plt.subplots(1,3)
+        axs[0].plot(signals['normal'][0][0])
+        axs[1].plot(signals['main_deform'][0][0])
+        for i in range(signals['sub_deform'].shape[0]):
+            n = np.arange(signals['sub_deform'].shape[2])
+            x = np.arange(n) + i*n
+            axs[2].plot(x, signals['sub_deform'][i][0])
         
-        return profile
+        plt.show()
+        
+        return signals
     #
-    # end of get_profile
+    # end of get_signals
 
     def save_frame(self, odir, frame, suffix):
         fpath = sana_io.create_filepath(
@@ -149,10 +162,11 @@ class Processor:
     #
     # end of save_frame
 
-    def save_curve(self, odir, curve, suffix):
+    # NOTE: signals is a [NSignals, NFeats, NSamples] Array
+    def save_signals(self, odir, signals, suffix):
         fpath = sana_io.create_filepath(
             self.fname, ext='.npy', suffix=suffix, fpath=odir)
-        np.save(fpath, curve)
+        np.save(fpath, signals)
     #
     # end of save_curve
 

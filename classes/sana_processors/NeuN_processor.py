@@ -25,8 +25,8 @@ from matplotlib.lines import Line2D
 from sana_geo import plot_poly
 
 class NeuNProcessor(HDABProcessor):
-    def __init__(self, fname, frame, roi_type, Nsamp, debug=False):
-        super(NeuNProcessor, self).__init__(fname, frame, roi_type=roi_type, Nsamp=Nsamp, debug=debug)
+    def __init__(self, fname, frame, roi_type, debug=False):
+        super(NeuNProcessor, self).__init__(fname, frame, roi_type=roi_type, debug=debug)
         self.debug = debug
     #
     # end of constructor
@@ -135,12 +135,16 @@ class NeuNProcessor(HDABProcessor):
         # save the original frame
         self.save_frame(odir, overlay, 'GRNPYR')
 
-        # save the depth curves
-        # TODO: want to also store the undeformed verisons?
-        # TODO: not really ao_depth, since these are actually density curves, ao curves are calculated in the auto/manual
-        self.save_curve(odir, grn_results['ao_depth'], 'GRN')
-        self.save_curve(odir, pyr_results['ao_depth'], 'PYR')
-        self.save_curve(odir, tot_results['ao_depth'], 'TOT')        
+        # save the feature signals
+        self.save_signals(odir, grn_results['normal'], 'GRN_NORMAL')
+        self.save_signals(odir, grn_results['main_deform'], 'GRN_MAIN_DEFORM')
+        self.save_signals(odir, grn_results['sub_deform'], 'GRN_SUB_DEFORM')
+        self.save_signals(odir, pyr_results['normal'], 'PYR_NORMAL')
+        self.save_signals(odir, pyr_results['main_deform'], 'PYR_MAIN_DEFORM')
+        self.save_signals(odir, pyr_results['sub_deform'], 'PYR_SUB_DEFORM')
+        self.save_signals(odir, tot_results['normal'], 'TOT_NORMAL')
+        self.save_signals(odir, tot_results['main_deform'], 'TOT_MAIN_DEFORM')
+        self.save_signals(odir, tot_results['sub_deform'], 'TOT_SUB_DEFORM')
         
         if debug:            
             custom_lines = [Line2D([0],[0], color=col, lw=4) for col in cols]

@@ -4,8 +4,8 @@ from sana_thresholds import max_dev, kittler
 from sana_processors.HDAB_processor import HDABProcessor
 
 class SMI32Processor(HDABProcessor):
-    def __init__(self, fname, frame, roi_type, Nsamp, debug):
-        super(SMI32Processor, self).__init__(fname, frame, roi_type=roi_type, Nsamp=Nsamp, debug=debug)
+    def __init__(self, fname, frame, roi_type, debug):
+        super(SMI32Processor, self).__init__(fname, frame, roi_type=roi_type, debug=debug)
     #
     # end of constructor
 

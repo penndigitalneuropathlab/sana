@@ -95,8 +95,10 @@ class HDABProcessor(Processor):
         self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
         self.save_frame(odir, self.manual_overlay, 'QC')
 
-        # save the %AO depth curve
-        self.save_curve(odir, results['ao_depth'], 'AO')
+        # save the feature signals
+        self.save_signals(odir, results['normal'], 'NORMAL')
+        self.save_signals(odir, results['main_deform'], 'MAIN_DEFORM')
+        self.save_signals(odir, results['sub_deform'], 'SUB_DEFORM')
     #
     # end of run_manual_ao
 

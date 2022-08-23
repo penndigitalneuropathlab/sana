@@ -29,15 +29,15 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, roi_type, debug=False, debug_fibers=False, Nsamp=None):
+def get_processor(fname, frame, roi_type, debug=False, debug_fibers=False):
     try:
         antibody = sana_io.get_antibody(fname)
     except:
         antibody = ''
     if 'NeuN' == antibody:
-        return NeuNProcessor(fname, frame, roi_type, Nsamp, debug)
+        return NeuNProcessor(fname, frame, roi_type, debug)
     if 'SMI32' == antibody:
-        return SMI32Processor(fname, frame, roi_type, Nsamp, debug)
+        return SMI32Processor(fname, frame, roi_type, debug)
     if 'CALR6BC' == antibody:
         return calretininProcessor(fname, frame, roi_type, debug)
     if 'parvalbumin' == antibody:
@@ -174,21 +174,10 @@ def main(argv):
                     params.data['loc'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
                 ) 
-            if len(sub_rois) == 6:
-                Nsamp = [10, 10, 20, 10, 20, 15]
-            elif len(sub_rois) == 4:
-                if sub_rois[0] is None:
-                    Nsamp = [ 0, 40, 10, 35]
-                if sub_rois[2] is None:
-                    Nsamp = [10, 35,  0, 40]
-                else:
-                    Nsamp = [10, 30, 10, 35]
-            else:
-                Nsamp = [100]
                 
             # get the processor object
             processor = get_processor(
-                slide_f, frame, args.roi_type, args.debug, args.debug_fibers, Nsamp)
+                slide_f, frame, args.roi_type, args.debug, args.debug_fibers)
 
             if processor is None:
                 continue
