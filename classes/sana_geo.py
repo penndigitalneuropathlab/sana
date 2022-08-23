@@ -493,6 +493,15 @@ class Polygon(Array):
                 y.append(self[i][1])
         return Polygon(x, y, self.is_micron, self.lvl, self.order)
 
+    def partial_inside(self, p):
+        if self.is_micron != p.is_micron or self.lvl != p.lvl:
+            raise UnitException(ERR_COMPARE)
+
+        for i in range(self.shape[0]):
+            if ray_tracing(self[i][0], self[i][1], np.array(p)):
+                return True
+        return False
+    
     def inside(self, p):
         if self.is_micron != p.is_micron or self.lvl != p.lvl:
             raise UnitException(ERR_COMPARE)

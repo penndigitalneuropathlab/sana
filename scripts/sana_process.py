@@ -29,27 +29,27 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, debug=False, debug_fibers=False):
+def get_processor(fname, frame, roi_type, debug=False, debug_fibers=False, Nsamp=None):
     try:
         antibody = sana_io.get_antibody(fname)
     except:
         antibody = ''
     if 'NeuN' == antibody:
-        return NeuNProcessor(fname, frame, debug)
+        return NeuNProcessor(fname, frame, roi_type, Nsamp, debug)
     if 'SMI32' == antibody:
-        return SMI32Processor(fname, frame, debug)
+        return SMI32Processor(fname, frame, roi_type, Nsamp, debug)
     if 'CALR6BC' == antibody:
-        return calretininProcessor(fname, frame, debug)
+        return calretininProcessor(fname, frame, roi_type, debug)
     if 'parvalbumin' == antibody:
-        return parvalbuminProcessor(fname, frame, debug)
+        return parvalbuminProcessor(fname, frame, roi_type, debug)
     if 'SMI94' == antibody:
-        return MBPProcessor(fname, frame, debug, debug_fibers)
+        return MBPProcessor(fname, frame, roi_type, debug, debug_fibers)
     if 'SMI35' == antibody:
-        return SMI35Processor(fname, frame, debug)
+        return SMI35Processor(fname, frame, roi_type, debug)
     if 'MEGURO' == antibody:
-        return meguroProcessor(fname, frame, debug)
+        return meguroProcessor(fname, frame, roi_type, debug)
     if 'AT8' == antibody:
-        return AT8Processor(fname, frame, debug)
+        return AT8Processor(fname, frame, roi_type, debug)
     return None
 #
 # end of get_processor
@@ -69,7 +69,8 @@ def main(argv):
         print("***> ERROR: No Slides Found")
         parser.print_usage()
         exit()
-
+    slides = slides[args.skip:]
+    
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
 
@@ -101,7 +102,6 @@ def main(argv):
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(
             anno_f, class_name=args.main_class, name=args.main_name)
-
                         
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
@@ -116,12 +116,12 @@ def main(argv):
             for sub_class in args.sub_classes:
                 rois = sana_io.read_annotations(anno_f, sub_class)
                 for roi in rois:
-                    if roi.inside(main_roi):
+                    if roi.partial_inside(main_roi) or main_roi.partial_inside(roi):
                         sub_rois.append(roi)
                         break
                 else:
                     sub_rois.append(None)
-            
+
             # initialize the Params IO object, this will store parameters
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
@@ -173,11 +173,22 @@ def main(argv):
                     sub_rois[sub_roi_i],
                     params.data['loc'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
-                )
-            
+                ) 
+            if len(sub_rois) == 6:
+                Nsamp = [10, 10, 20, 10, 20, 15]
+            elif len(sub_rois) == 4:
+                if sub_rois[0] is None:
+                    Nsamp = [ 0, 40, 10, 35]
+                if sub_rois[2] is None:
+                    Nsamp = [10, 35,  0, 40]
+                else:
+                    Nsamp = [10, 30, 10, 35]
+            else:
+                Nsamp = [100]
+                
             # get the processor object
             processor = get_processor(
-                slide_f, frame, args.debug, args.debug_fibers)
+                slide_f, frame, args.roi_type, args.debug, args.debug_fibers, Nsamp)
 
             if processor is None:
                 continue
@@ -232,6 +243,7 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-debug_fibers', action='store_true',
         help="plot results of the fiber analyis")
+    parser.add_argument('-skip', type=int, default=0)
 
     return parser
 #

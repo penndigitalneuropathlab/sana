@@ -25,8 +25,8 @@ from matplotlib.lines import Line2D
 from sana_geo import plot_poly
 
 class NeuNProcessor(HDABProcessor):
-    def __init__(self, fname, frame, debug=False):
-        super(NeuNProcessor, self).__init__(fname, frame, debug)
+    def __init__(self, fname, frame, roi_type, Nsamp, debug=False):
+        super(NeuNProcessor, self).__init__(fname, frame, roi_type=roi_type, Nsamp=Nsamp, debug=debug)
         self.debug = debug
     #
     # end of constructor
@@ -111,16 +111,20 @@ class NeuNProcessor(HDABProcessor):
         # get the thresholded masks of the granular and pyramidal classes
         grn_mask = create_mask(grn, self.frame.size(), self.frame.lvl, self.frame.converter)
         pyr_mask = create_mask(pyr, self.frame.size(), self.frame.lvl, self.frame.converter)
-
+        tot_mask = create_mask(grn+pyr, self.frame.size(), self.frame.lvl, self.frame.converter)
+        
         # run the AO process over grn and pyr
-        grn_results = self.run_ao(grn_mask)
-        pyr_results = self.run_ao(pyr_mask)
+        grn_results = self.run_ao(grn_mask, grn)
+        pyr_results = self.run_ao(pyr_mask, pyr)
+        tot_results = self.run_ao(tot_mask, grn+pyr)
 
         # store the results! 
         params.data['grn_ao'] = grn_results['ao']
         params.data['grn_sub_aos'] = grn_results['sub_aos']
         params.data['pyr_ao'] = pyr_results['ao']
         params.data['pyr_sub_aos'] = pyr_results['sub_aos']
+        params.data['tot_ao'] = tot_results['ao']
+        params.data['tot_sub_aos'] = tot_results['sub_aos']
 
         # create and store the debugging overlay
         overlay = self.frame.copy()
@@ -130,6 +134,13 @@ class NeuNProcessor(HDABProcessor):
 
         # save the original frame
         self.save_frame(odir, overlay, 'GRNPYR')
+
+        # save the depth curves
+        # TODO: want to also store the undeformed verisons?
+        # TODO: not really ao_depth, since these are actually density curves, ao curves are calculated in the auto/manual
+        self.save_curve(odir, grn_results['ao_depth'], 'GRN')
+        self.save_curve(odir, pyr_results['ao_depth'], 'PYR')
+        self.save_curve(odir, tot_results['ao_depth'], 'TOT')        
         
         if debug:            
             custom_lines = [Line2D([0],[0], color=col, lw=4) for col in cols]

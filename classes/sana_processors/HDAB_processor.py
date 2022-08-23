@@ -24,8 +24,8 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, debug):
-        super(HDABProcessor, self).__init__(fname, frame)
+    def __init__(self, fname, frame, roi_type="", Nsamp=None, debug=False):
+        super(HDABProcessor, self).__init__(fname, frame, roi_type=roi_type, Nsamp=Nsamp, debug=debug)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
@@ -85,7 +85,7 @@ class HDABProcessor(Processor):
         params.data['manual_ao'] = results['ao']
         params.data['manual_sub_aos'] = results['sub_aos']
         params.data['manual_stain_threshold'] = self.manual_dab_threshold
-
+        
         # create the output directory
         odir = sana_io.create_odir(odir, 'manual_ao')
 
@@ -144,6 +144,9 @@ class HDABProcessor(Processor):
         self.save_frame(odir, self.dab_norm, 'PROB')
         self.save_frame(odir, self.auto_dab_norm_thresh, 'THRESH')
         self.save_frame(odir, self.auto_overlay, 'QC')
+
+        # save the %AO depth curve
+        self.save_curve(odir, results['ao_depth'], 'AO')
     #
     # end of run_auto_ao
 
