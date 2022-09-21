@@ -162,11 +162,11 @@ def transform_poly(x, loc, crop_loc, M1, M2):
     if not loc is None:
         x.translate(loc)
     if not M1 is None:
-        x = x.transform(M1)
+        x.transform(M1)
     if not crop_loc is None:
         x.translate(crop_loc)
     if not M2 is None:
-        x = x.transform(M2)
+        x.transform(M2)
     return x
 #
 # end of transform_poly
@@ -175,11 +175,11 @@ def transform_poly(x, loc, crop_loc, M1, M2):
 #  to the original coordinate system
 def transform_inv_poly(x, loc, crop_loc, M1, M2):
     if not M2 is None:
-        x = x.transform_inv(M2)
+        x.transform_inv(M2)
     if not crop_loc is None:
         x.translate(-crop_loc)
     if not M1 is None:
-        x = x.transform_inv(M1)
+        x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
     return x
@@ -192,12 +192,9 @@ def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
         en = x.shape[0]-1
     else:
         en = x.shape[0]-2
-    for i in range(en):
-        if i != 0:
-            label = None
-        ax.plot((x[i][0], x[i+1][0]),
-                (x[i][1], x[i+1][1]),
-                color=color, linestyle=linestyle, label=label)
+    ax.plot(x[:en+1,0], x[:en+1,1], color=color, linestyle=linestyle, label=label)
+#
+# end of plot_poly
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, xy, lvl=0):
@@ -317,7 +314,6 @@ class Array(np.ndarray):
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p
-        return self
     #
     # end of translate
 
@@ -363,6 +359,18 @@ class Point(Array):
         return obj
     #
     # end of Constructor
+
+    def transform(self, M):
+        np.matmul(M[:,:2].T, self, out=self)
+        self += M[:,2]
+    #
+    # end of transform
+
+    def transform_inv(self, M):
+        self -= M[:,2]
+        np.matmul(np.linalg.inv(M[:,:2].T), self, out=self)
+    #
+    # end of transform_inv
 #
 # end of Point
 
@@ -393,14 +401,14 @@ class Polygon(Array):
         return self.x1, self.y1
 
     def transform(self, M):
-        self = self @ M[:,:2].T + M[:,2]
-        return self
+        np.matmul(self, M[:,:2].T, out=self)
+        self += M[:,2]
     #
     # end of transform
 
     def transform_inv(self, M):
-        self = (self - M[:,2]) @ np.linalg.inv(M[:,:2].T)
-        return self
+        self -= M[:,2]
+        np.matmul(self, np.linalg.inv(M[:,:2].T), out=self)
     #
     # end of transform_inv
 
@@ -512,9 +520,8 @@ class Polygon(Array):
         return True
 
     def connected(self):
-        return self[0, 0] == self[-1, 0] and self[0, 1] == self[-1, 1]
-
-    # TODO: this and filter need to return Annotation sometimes...
+        return np.isclose(self[0,0], self[-1,0]) and np.isclose(self[0,1], self[-1,1])
+    
     def connect(self):
         if not self.connected():
             x, y = self.get_xy()
@@ -524,6 +531,15 @@ class Polygon(Array):
         else:
             return self
 
+    def disconnect(self):
+        if self.connected():
+            x, y = self.get_xy()
+            x = x[:-1]
+            y = y[:-1]
+            return Polygon(x, y, self.is_micron, self.lvl, self.order)
+        else:
+            return self
+        
     # converts the Array to a Shapely object to access certain functions
     def to_shapely(self):
         return geometry.Polygon([[self[i,0], self[i,1]] \
@@ -533,8 +549,11 @@ class Polygon(Array):
 
     # convert the Array to a Annotation to prepare for file io
     def to_annotation(self, file_name, class_name,
-                      anno_name="", confidence=1.0):
-        x, y = self.connect().get_xy()
+                      anno_name="", confidence=1.0, connect=True):
+        if connect:
+            x, y = self.connect().get_xy()
+        else:
+            x, y = self.get_xy()
         return Annotation(None, file_name, class_name, anno_name,
                           confidence=confidence, is_micron=self.is_micron,
                           lvl=self.lvl, order=self.order, x=x, y=y)
@@ -688,7 +707,19 @@ class Annotation(Polygon):
             return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence)
         else:
             return self
+    #
+    # end of connect
 
+    # TODO: why can't we call p = super().disconnect() then p.to_annotation()
+    def disconnect(self):
+        if self.connected():
+            x, y = self.get_xy()
+            x = x[:-1]
+            y = y[:-1]
+            p = Polygon(x, y, self.is_micron, self.lvl, self.order)
+            return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence, connect=False)
+        else:
+            return self
 #
 # end of Annotation
 
