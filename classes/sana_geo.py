@@ -359,16 +359,16 @@ class Point(Array):
         return obj
     #
     # end of Constructor
-
+    
     def transform(self, M):
-        np.matmul(M[:,:2].T, self, out=self)
+        np.matmul(M[:,:2], self, out=self)
         self += M[:,2]
     #
     # end of transform
 
     def transform_inv(self, M):
         self -= M[:,2]
-        np.matmul(np.linalg.inv(M[:,:2].T), self, out=self)
+        np.matmul(np.linalg.inv(M[:,:2]), self, out=self)
     #
     # end of transform_inv
 #
@@ -518,10 +518,10 @@ class Polygon(Array):
             if not ray_tracing(self[i][0], self[i][1], np.array(p)):
                 return False
         return True
-
+    
     def connected(self):
         return np.isclose(self[0,0], self[-1,0]) and np.isclose(self[0,1], self[-1,1])
-    
+
     def connect(self):
         if not self.connected():
             x, y = self.get_xy()
