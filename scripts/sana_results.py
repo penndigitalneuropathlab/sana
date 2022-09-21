@@ -28,11 +28,11 @@ LAYER_NAMES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6',
                'L23', 'L56', 'L123', 'L456', 'L123456']
 LAYERS_HEADER = ''.join(['%s,' % x for x in LAYER_NAMES])
 ZLAYERS_HEADER = ''.join(['z_%s,' % x for x in LAYER_NAMES])
-FIELDS_HEADER = 'AutopsyID,Region,Subregion,ROI,Antibody,Measurement,'
+FIELDS_HEADER = 'AutopsyID,BlockID,Region,Subregion,ROI,Antibody,Measurement,'
 LONG_HEADER = FIELDS_HEADER+'Layer,AO,z_AO,'
 WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
-LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%0.6f,%0.6f\n'
-WIDE_LINE = '%s,%s,%s,%s,%s,%s,'+'%0.6f,'*22+'\n'
+LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%0.6f,%0.6f\n'
+WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,'+'%0.6f,'*22+'\n'
 
 ANTIBODY_MEASUREMENTS = {
     'NeuN': ['manual', 'auto', 'grn', 'pyr'],
@@ -82,7 +82,7 @@ class Patient:
         
         # create a new Region, if needed
         if entry.region_name not in self.regions:
-            self.regions[entry.region_name] = Region(entry.region_name)
+            self.regions[entry.region_name] = Region(entry.region_name, entry.bid)
 
         # add the data to the Region
         self.regions[entry.region_name].add_data(entry)
@@ -108,11 +108,17 @@ class Patient:
 class Region:
     region_mapping = {
         'MFC': ['ROI',],
-        'OFC': ['medOFC', 'latOFC',],
-        'aCING': ['33', '24', '32',],
+        'OFC': [
+            'medOFC', 'latOFC',
+            's32',
+            'med_GyrusRectus', 'lat_GyrusRectus',
+            'med_MedialOrbitalGyrus', 'lat_MedialOrbitalGyrus'
+        ],
+        'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
     }    
-    def __init__(self, name):
+    def __init__(self, name, bid):
         self.name = name
+        self.bid = bid
         self.subregions = {}
     #
     # end of constructor
@@ -137,11 +143,13 @@ class Region:
     # end of add_data
 
     # gets the average ROI data over this region
-    def collapse_ao(self, antibody, measurement):
+    def collapse_ao(self, antibody, measurement, subregions=[]):
 
         # collapse each subregion and store each antibody's measurement
         data = []
         for subregion_name in self.subregions:
+            if len(subregions) != 0 and not subregion_name in subregions:
+                continue
             x = self.subregions[subregion_name].collapse_ao(antibody, measurement)
             if not x is None:
                 data.append(x)
@@ -178,7 +186,7 @@ class Subregion:
         if antibody_name in self.antibodies:
             return self.antibodies[antibody_name].collapse_ao(measurement)
         else:
-            return None
+            return np.full((11,), np.nan)
     #
     # end of collapse_ao
 #
@@ -239,7 +247,7 @@ class Entry:
         d, self.antibody_name = os.path.split(d)
         d, self.bid = os.path.split(d)
 
-        region = Region(self.region_name)
+        region = Region(self.region_name, self.bid)
         self.subregion_name = region.get_subregion_name(self.roi_name)
         if self.subregion_name is None:
             raise SubregionNameError(self.region_name, self.roi_name)
@@ -430,6 +438,8 @@ def calc(func, x, debug=False):
             print(x[:,i])
             print(~np.isnan(x[:,i]))
             print(x[~np.isnan(x[:,i]), i])
+        if all(np.isnan(x[:,i])):
+            continue
         y[i] = func(x[~np.isnan(x[:,i]), i], axis=0)
         if debug:
             print(y[i])
@@ -458,6 +468,8 @@ def generate_spreadsheets(odir, patients):
                 patient = patients[aid]
                 for region_name in sorted(patient.regions.keys()):
                     region = patient.regions[region_name]
+                    bid = region.bid
+                    
                     # calcualte the HC model for this region
                     if region_name not in region_models:
                         region_models[region_name] = get_HC_model(
@@ -482,7 +494,7 @@ def generate_spreadsheets(odir, patients):
                             x = antibody.rois[roi_name].get_ao_data(measurement)
                             z = z_score(
                                 x, subregion_models[region_name][subregion_name])
-                            write_row(long_fp, wide_fp, aid,
+                            write_row(long_fp, wide_fp, aid, bid,
                                       region_name, subregion_name, roi_name,
                                       antibody_name, measurement, x, z)
                         #
@@ -492,7 +504,7 @@ def generate_spreadsheets(odir, patients):
                         x = subregion.collapse_ao(antibody_name, measurement)
                         z = z_score(
                             x, subregion_models[region_name][subregion_name])
-                        write_row(long_fp, wide_fp, aid,
+                        write_row(long_fp, wide_fp, aid, bid,
                                   region_name, subregion_name, 'AVG',
                                   antibody_name, measurement, x, z)
                     #
@@ -501,16 +513,25 @@ def generate_spreadsheets(odir, patients):
                     # write a row for the average over the subregions in the region
                     x = region.collapse_ao(antibody_name, measurement)
                     z = z_score(x, region_models[region_name])
-                    write_row(long_fp, wide_fp, aid,
+                    write_row(long_fp, wide_fp, aid, bid,
                               region_name, 'AVG', 'AVG',
                               antibody_name, measurement, x, z)
+
+                    # special case: combines a24(a-c) subregions as a24 for aCING
+                    if region.name == 'aCING':
+                        x = region.collapse_ao(antibody_name, measurement,
+                                               subregions=['a24a', 'a24b', 'a24c'])
+                        z = z_score(x, region_models[region_name])
+                        write_row(long_fp, wide_fp, aid, bid,
+                                  region_name, 'a24abc', 'AVG',
+                                  antibody_name, measurement, x, z)
                 #
                 # end of regions loop
 
                 # write a row for the average over all regions
                 x = patient.collapse_ao(antibody_name, measurement)
                 z = z_score(x, patient_model)
-                write_row(long_fp, wide_fp, aid,
+                write_row(long_fp, wide_fp, aid, bid,
                           'AVG', 'AVG', 'AVG',
                           antibody_name, measurement, x, z)
             #
@@ -520,22 +541,25 @@ def generate_spreadsheets(odir, patients):
     #
     # end of antibodies loop
 
-    print(patient_model)
-    print(region_models)
-    print(subregion_models)
+    # print('PATIENT:\n',patient_model)
+    # for region in region_models:
+    #     print('%s\n' % region, region_models[region])
+    # for region in subregion_models:
+    #     for subregion in subregion_models[region]:
+    #         print('%s\n' % subregion, subregion_models[region][subregion])
 #
 # end of generate_spreadsheets
 
-def write_row(long_fp, wide_fp, aid, region_name, subregion_name, roi_name,
+def write_row(long_fp, wide_fp, aid, bid, region_name, subregion_name, roi_name,
               antibody_name, measurement, x, z):
     for i in range(len(x)):
         long_fp.write(
             LONG_LINE % \
-            (aid, region_name, subregion_name, roi_name,
+            (aid, bid, region_name, subregion_name, roi_name,
              antibody_name, measurement, LAYER_NAMES[i], x[i], z[i]))
     wide_fp.write(
         WIDE_LINE % \
-        (aid, region_name, subregion_name, roi_name, antibody_name, measurement,
+        (aid, bid, region_name, subregion_name, roi_name, antibody_name, measurement,
          *tuple(x), *tuple(z)))
 #
 # end of write_row

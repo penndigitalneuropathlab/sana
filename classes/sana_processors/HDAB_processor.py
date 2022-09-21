@@ -24,8 +24,8 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, roi_type="", Nsamp=None, debug=False):
-        super(HDABProcessor, self).__init__(fname, frame, roi_type=roi_type, Nsamp=Nsamp, debug=debug)
+    def __init__(self, fname, frame, roi_type="", debug=False):
+        super(HDABProcessor, self).__init__(fname, frame, roi_type=roi_type, debug=debug)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
@@ -96,9 +96,10 @@ class HDABProcessor(Processor):
         self.save_frame(odir, self.manual_overlay, 'QC')
 
         # save the feature signals
-        self.save_signals(odir, results['normal'], 'NORMAL')
-        self.save_signals(odir, results['main_deform'], 'MAIN_DEFORM')
-        self.save_signals(odir, results['sub_deform'], 'SUB_DEFORM')
+        signals = results['signals']
+        self.save_signals(odir, signals['normal'], 'NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'MAIN_DEFORM')
+        self.save_signals(odir, signals['sub_deform'], 'SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -147,8 +148,11 @@ class HDABProcessor(Processor):
         self.save_frame(odir, self.auto_dab_norm_thresh, 'THRESH')
         self.save_frame(odir, self.auto_overlay, 'QC')
 
-        # save the %AO depth curve
-        self.save_curve(odir, results['ao_depth'], 'AO')
+        # save the feature signals
+        signals = results['signals']
+        self.save_signals(odir, signals['normal'], 'NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'MAIN_DEFORM')
+        self.save_signals(odir, signals['sub_deform'], 'SUB_DEFORM')
     #
     # end of run_auto_ao
 

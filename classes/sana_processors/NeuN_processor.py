@@ -136,15 +136,18 @@ class NeuNProcessor(HDABProcessor):
         self.save_frame(odir, overlay, 'GRNPYR')
 
         # save the feature signals
-        self.save_signals(odir, grn_results['normal'], 'GRN_NORMAL')
-        self.save_signals(odir, grn_results['main_deform'], 'GRN_MAIN_DEFORM')
-        self.save_signals(odir, grn_results['sub_deform'], 'GRN_SUB_DEFORM')
-        self.save_signals(odir, pyr_results['normal'], 'PYR_NORMAL')
-        self.save_signals(odir, pyr_results['main_deform'], 'PYR_MAIN_DEFORM')
-        self.save_signals(odir, pyr_results['sub_deform'], 'PYR_SUB_DEFORM')
-        self.save_signals(odir, tot_results['normal'], 'TOT_NORMAL')
-        self.save_signals(odir, tot_results['main_deform'], 'TOT_MAIN_DEFORM')
-        self.save_signals(odir, tot_results['sub_deform'], 'TOT_SUB_DEFORM')
+        grn_signals = grn_results['signals']
+        pyr_signals = pyr_results['signals']
+        tot_signals = tot_results['signals']        
+        self.save_signals(odir, grn_signals['normal'], 'GRN_NORMAL')
+        self.save_signals(odir, grn_signals['main_deform'], 'GRN_MAIN_DEFORM')
+        self.save_signals(odir, grn_signals['sub_deform'], 'GRN_SUB_DEFORM')
+        self.save_signals(odir, pyr_signals['normal'], 'PYR_NORMAL')
+        self.save_signals(odir, pyr_signals['main_deform'], 'PYR_MAIN_DEFORM')
+        self.save_signals(odir, pyr_signals['sub_deform'], 'PYR_SUB_DEFORM')
+        self.save_signals(odir, tot_signals['normal'], 'TOT_NORMAL')
+        self.save_signals(odir, tot_signals['main_deform'], 'TOT_MAIN_DEFORM')
+        self.save_signals(odir, tot_signals['sub_deform'], 'TOT_SUB_DEFORM')
         
         if debug:            
             custom_lines = [Line2D([0],[0], color=col, lw=4) for col in cols]

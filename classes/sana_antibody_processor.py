@@ -126,7 +126,7 @@ class Processor:
         # in: 3, H, W
         # out: 4, 3, H, W
         main_deformed_feats = heatmap.deform(feats, [self.main_mask])
-        sub_deformed_feats = heatmap.deform(feats, self.sub_masks))
+        sub_deformed_feats = heatmap.deform(feats, self.sub_masks)
 
         # calculate the signals as the average over the columns
         signals = {
@@ -135,21 +135,25 @@ class Processor:
             'sub_deform': np.mean(sub_deformed_feats, axis=3),
         }
 
-        fig, axs = plt.subplots(1,4)
-        axs[0].imshow(frame.img)
-        axs[1].imshow(feats[0])
-        axs[2].imshow(main_deformed_feats[0])
-        axs[3].imshow(sub_deformed_feats[0])
+        # print(feats.shape, frame.img.shape, main_deformed_feats.shape, sub_deformed_feats.shape)
+        # fig, axs = plt.subplots(2,4)
+        # axs[0][0].imshow(frame.img)
+        # axs[0][1].imshow(feats[0])
+        # axs[0][2].imshow(main_deformed_feats[0][0])
+        # axs[1][0].imshow(sub_deformed_feats[0][0])
+        # axs[1][1].imshow(sub_deformed_feats[1][0])
+        # axs[1][2].imshow(sub_deformed_feats[2][0])
+        # axs[1][3].imshow(sub_deformed_feats[3][0])        
 
-        fig, axs = plt.subplots(1,3)
-        axs[0].plot(signals['normal'][0][0])
-        axs[1].plot(signals['main_deform'][0][0])
-        for i in range(signals['sub_deform'].shape[0]):
-            n = np.arange(signals['sub_deform'].shape[2])
-            x = np.arange(n) + i*n
-            axs[2].plot(x, signals['sub_deform'][i][0])
+        # fig, axs = plt.subplots(1,3)
+        # axs[0].plot(signals['normal'][0][0])
+        # axs[1].plot(signals['main_deform'][0][0])
+        # for i in range(signals['sub_deform'].shape[0]):
+        #     n = signals['sub_deform'].shape[2]
+        #     x = np.arange(n) + i*n
+        #     axs[2].plot(x, signals['sub_deform'][i][0])
         
-        plt.show()
+        # plt.show()
         
         return signals
     #

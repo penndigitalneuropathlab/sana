@@ -35,7 +35,7 @@ class Heatmap:
 
         self.tiles = self.tiler.load_tiles()
         self.tile_area = self.tiles[0][0].size # TODO: this is in pixels, is that right?
-
+        
         # calculate the %AO heatmap
         self.ao = np.sum(self.tiles, axis=(2,3)) / self.tile_area
     #
@@ -52,6 +52,13 @@ class Heatmap:
     def run(self, funcs):
 
         feat = np.zeros((len(funcs), self.tiles.shape[0], self.tiles.shape[1]), dtype=float)
+        for i, func in enumerate(funcs):
+            if not callable(func):
+                feat[i, :, :] = func
+
+        if len(self.centers) == 0:
+            return feat
+                
         for j in range(self.tiles.shape[1]):
             for i in range(self.tiles.shape[0]):
 
@@ -87,7 +94,8 @@ class Heatmap:
 
                 # calculate and store the feature
                 for n, feat_func in enumerate(funcs):
-                    feat[n][i][j] = feat_func(inds)
+                    if callable(feat_func):
+                        feat[n][i][j] = feat_func(inds)
             #
             # end of i
         #
@@ -135,13 +143,14 @@ class Heatmap:
 
     # deforms a heatmap image over the y axis based on the layer annotations
     #  and the number of samples per layer
+    # TODO: the transitions are super harsh between layers, might be a bug?
     def deform(self, feats, masks):
         Nsamp = 500
-        nh = len(masks) // Nsamp:
+        nh = Nsamp // len(masks)
 
         # scale the masks to the heatmap resolution
         masks = [cv2.resize(x.img, (0,0), fx=1/self.tiler.ds[0], fy=1/self.tiler.ds[1]) \
-                 if not x is None else None for x in layers]
+                 if not x is None else None for x in masks]
 
         # width is also resampled
         ds = nh / feats.shape[1]
@@ -157,7 +166,7 @@ class Heatmap:
             for col in range(feats.shape[2]):
 
                 # get the indices for a rectangle of data for this column
-                col0, col1 = int(j*ds), int(j*ds+ds)
+                col0, col1 = int(col*ds), int(col*ds+ds)
                 row0, row1 = 0, nh
                 
                 # loop through the layer masks
@@ -166,7 +175,7 @@ class Heatmap:
                         continue
 
                     # get the positive indices in the layer mask
-                    inds = np.where(mask[:,j] != 0)[0]
+                    inds = np.where(mask[:,col] != 0)[0]
 
                     # if no signal, skip the layer
                     if len(inds) == 0:
