@@ -177,6 +177,7 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
     # TODO: need to pad the segmentation somehow to provide context for tiling
+    # TODO: this function is likely not in a working state?
     def load_gm_frame(self, params, orig_roi, debug=False):
 
         if debug:
@@ -187,6 +188,7 @@ class Loader(openslide.OpenSlide):
         roi = orig_roi.copy()
 
         # load the frame from the ROI
+        # TODO: not translating the ROI here?
         frame = self.load_roi_frame(params, roi, copy=False)
 
         if debug:
@@ -199,7 +201,7 @@ class Loader(openslide.OpenSlide):
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
-        roi = roi.transform(M1)
+        roi.transform(M1)
         if debug:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
@@ -311,9 +313,9 @@ class Loader(openslide.OpenSlide):
 
         # transform the landmarks to fit on the image
         v.translate(rect_loc)
-        v = v.transform(M)
+        v.transform(M)
         rect.translate(rect_loc)
-        rect = rect.transform(M)
+        rect.transform(M)
         if not l is None:
             for i in range(len(l)):
                 l[i].translate(rect_loc)

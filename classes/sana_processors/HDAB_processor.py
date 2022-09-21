@@ -170,7 +170,7 @@ class HDABProcessor(Processor):
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='CELLS', fpath=odir)
         hem_annos = [x.to_annotation(ofname, 'HEMCELL') for x in hem_cells]
-        hem_annos = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in hem_annos]
         sana_io.write_annotations(ofname, hem_annos)
@@ -278,7 +278,7 @@ class HDABProcessor(Processor):
                                  for i in range(len(boundaries_y))]
 
         # inverse transform the annotations
-        boundaries = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in boundaries]
 

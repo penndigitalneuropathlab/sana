@@ -305,7 +305,7 @@ class NeuNProcessor(HDABProcessor):
                                  for i in range(len(boundaries_y))]
 
         # inverse transform the annotations
-        boundaries = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in boundaries]
 
@@ -419,7 +419,7 @@ class NeuNProcessor(HDABProcessor):
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='NEURONS', fpath=odir)
         neuron_annos = [x.to_annotation(ofname, 'NEURON') for x in neurons]
-        neuron_annos = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in neuron_annos]
         sana_io.write_annotations(ofname, neuron_annos)

@@ -159,7 +159,7 @@ def main(argv):
                 frame = loader.load_roi_frame(params, main_roi)
             
             # transform the main ROI to the Frame's coord. system
-            main_roi = transform_poly(
+            transform_poly(
                 main_roi,
                 params.data['loc'], params.data['crop_loc'],
                 params.data['M1'], params.data['M2']
@@ -169,7 +169,7 @@ def main(argv):
             for sub_roi_i in range(len(sub_rois)):
                 if sub_rois[sub_roi_i] is None:
                     continue
-                sub_rois[sub_roi_i] = transform_poly(
+                transform_poly(
                     sub_rois[sub_roi_i],
                     params.data['loc'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
