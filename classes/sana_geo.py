@@ -197,14 +197,9 @@ def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
 # end of plot_poly
 
 # converts a Convexhull into a polygon
-def hull_to_poly(hull, xy, lvl=0):
-    x, y = [], []
-    for v in hull.vertices:
-        v = xy[v]
-        x.append(v[0])
-        y.append(v[1])
-    x, y = np.array(x), np.array(y)
-    p = Polygon(x, y, False, lvl)
+def hull_to_poly(hull, points, is_micron=False, lvl=0):
+    v = points[hull.vertices]
+    p = Polygon(v[:,0], v[:,1], is_micron=is_micron, lvl=lvl)
     poly = p.connect()
     return poly
 #
