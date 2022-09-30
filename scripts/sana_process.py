@@ -14,7 +14,7 @@ import numpy as np
 import sana_io
 from sana_params import Params
 from sana_loader import Loader
-from sana_geo import transform_inv_poly, transform_poly
+from sana_geo import transform_poly, transform_inv_poly
 from sana_frame import Frame
 from sana_processors.NeuN_processor import NeuNProcessor
 from sana_processors.SMI32_processor import SMI32Processor
@@ -143,6 +143,7 @@ def main(argv):
         # Use this to analyze a certain frame from a slide
         # main_rois = main_rois[8:]
 
+
         # load the sub roi(s) from the json file
         # sub_rois = []
         # for sub_class in args.sub_classes:
@@ -168,6 +169,18 @@ def main(argv):
                     sub_rois.append(None)
             logger.debug('Number of sub_rois found: %d' % len(sub_rois))
 
+            # load the sub roi(s) that are inside this main roi
+            # NOTE: None is used for not found sub rois since we still need to measure something
+            sub_rois = []
+            for sub_class in args.sub_classes:
+                rois = sana_io.read_annotations(anno_f, sub_class)
+                for roi in rois:
+                    if roi.inside(main_roi):
+                        sub_rois.append(roi)
+                        break
+                else:
+                    sub_rois.append(None)
+
             # initialize the Params IO object, this will store parameters
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
@@ -181,10 +194,12 @@ def main(argv):
                 bid = sana_io.get_bid(slide_f)
                 antibody = sana_io.get_antibody(slide_f)
                 region = sana_io.get_region(slide_f)
+
                 if not main_roi.name:
                     roi_name = str(main_roi_i)
                 else:
                     roi_name = main_roi.name
+
                 roi_id = '%s_%s' % (main_roi.class_name, roi_name)
                 odir = sana_io.create_odir(args.odir, bid)
                 odir = sana_io.create_odir(odir, antibody)
@@ -208,14 +223,13 @@ def main(argv):
                 # just translates the coord. system, no rotating or cropping
                 frame = loader.load_roi_frame(params, main_roi, padding=padding, debug=level)
 
-
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
                 main_roi,
                 params.data['loc'], params.data['padding'], params.data['crop_loc'],
                 params.data['M1'], params.data['M2']
             )
-            
+
             # TODO: plot main_roi and frame, before and after transformations; make sure they're lined up
             # grab frame thumbnail and run transform_invv_poly, scale to lvl 2
             # fig, axs = plt.subplots(1,2)
@@ -274,7 +288,7 @@ def main(argv):
             else:
                 last_run = False
 
-            
+
             # run the processes for the antibody
             processor.run(odir, roi_odir, first_run, last_run, params, main_roi, sub_rois)
             logger.info('Runtime: %0.2f (sec)' % (time.time()-t0))
