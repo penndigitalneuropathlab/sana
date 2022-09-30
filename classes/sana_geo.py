@@ -188,17 +188,8 @@ def transform_inv_poly(x, loc, padding, crop_loc, M1, M2):
 # end of transform_inv_poly
 
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
-    if last:
-        en = x.shape[0]-1
-    else:
-        en = x.shape[0]-2
-    for i in range(en):
-        if i != 0:
-            label = None
-        ax.plot((x[i][0], x[i+1][0]),
-                (x[i][1], x[i+1][1]),
-                color=color, linestyle=linestyle, label=label)
+def plot_poly(ax, x, **kwargs):
+    ax.plot(x[:,0],x[:,1],**kwargs)
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, xy, lvl=0):
@@ -315,6 +306,8 @@ class Array(np.ndarray):
     # NOTE: this is often used to move to the origin
     #        e.g. loc, size = x.bounding_box(); x.translate(loc)
     def translate(self, p):
+        # print(self.lvl)
+        # print(p.lvl)
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p

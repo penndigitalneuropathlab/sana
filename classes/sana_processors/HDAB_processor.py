@@ -24,30 +24,29 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, debug):
-        super(HDABProcessor, self).__init__(fname, frame)
+    def __init__(self, fname, frame, debug=False):
+        super(HDABProcessor, self).__init__(fname, frame, debug)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
-        self.debug = debug
-
-        # ds = 20
-        # img = self.frame.img
-        # img = img[::ds, ::ds].astype(float) / 255
-        # odimg = np.clip(-np.log10(img), 0, None)
-        # odimg[odimg==np.inf] = 0
-        # r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
-        # odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
-        # colors = [(r[i], g[i], b[i]) for i in range(len(r))]
-        # fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
-        # ax.scatter(odr, odg, odb, color=colors)
-        # x, y, z = self.ss.stain_vector.orig_v[0]
-        # ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-        # x, y, z = self.ss.stain_vector.orig_v[1]
-        # ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-        # plt.show()
-        # exit()
+        if self.debug:
+            ds = 20
+            img = self.frame.img
+            img = img[::ds, ::ds].astype(float) / 255
+            odimg = np.clip(-np.log10(img), 0, None)
+            odimg[odimg==np.inf] = 0
+            r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
+            odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
+            colors = [(r[i], g[i], b[i]) for i in range(len(r))]
+            fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
+            ax.scatter(odr, odg, odb, color=colors)
+            x, y, z = self.ss.stain_vector.orig_v[0]
+            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+            x, y, z = self.ss.stain_vector.orig_v[1]
+            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+            plt.show()
+            # exit()
 
         # separate out the HEM and DAB stains
         self.stains = self.ss.run(self.frame.img)
@@ -96,33 +95,115 @@ class HDABProcessor(Processor):
     #
     # end of run_manual_ao
 
+    # TODO: rename scale/max
+    # function takes in a DAB Frame object, extracting a DAB thresholded image
+    def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
+        if debug and run_normalize:
+            fig, axs = plt.subplots(2,2, sharex=True,sharey=True)
+            axs = axs.ravel()
+        elif debug and not run_normalize:
+            fig, axs = plt.subplots(1,3, sharex=True,sharey=True)
+
+        
+        dab = frame.copy()
+        if debug:
+            axs[0].imshow(self.frame.img)
+            axs[0].set_title('Orig. Img')
+
+        if run_normalize:
+            # normalize the image
+            # TODO: rename mean_normalize --> bckgrnd subtraction (denoising)
+            dab = mean_normalize(dab)
+
+            # plot #1
+            # if debug:
+            #     axs[1].imshow(dab.img)
+            #     axs[1].set_title('Normalized DAB Img')
+
+            # TODO: run anisodiff
+            # smooth the image
+            dab.anisodiff()
+
+            # plot #2
+            if debug:
+                axs[1].imshow(dab.img)
+                axs[1].set_title('Normalized/Smoothed DAB Img')
+
+        
+        # get the histograms
+        dab_hist = dab.histogram()
+
+        # get the stain threshold
+        dab_threshold = max_dev(dab_hist, scale=scale, mx=mx, debug=debug, show_debug=False)
+
+        # apply the thresholding
+        dab.img = np.where(dab.img < dab_threshold, 0, 1).astype(np.uint8)
+
+        if not mask is None:
+            dab.mask(mask)
+            
+
+        if debug:
+            axs[-2].imshow(dab.img)
+            axs[-2].set_title('Thresholded Img')
+
+        if close_r > 0:
+            close_kern = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (close_r, close_r))
+            dab.img = cv2.morphologyEx(dab.img, cv2.MORPH_CLOSE, close_kern)
+        if open_r > 0:
+            open_kern = cv2.getStructuringElement(
+                cv2.MORPH_ELLIPSE, (open_r, open_r))
+            dab.img = cv2.morphologyEx(dab.img, cv2.MORPH_OPEN, open_kern)
+
+        if debug:
+            axs[-1].imshow(dab.img)
+            axs[-1].set_title('Morph. Filter of Thresholded Img')
+            fig.suptitle('Debugging Plots for DAB Processing\n'+
+                        'DAB Threshold: %d' %dab_threshold)
+            plt.show()
+
+        img_final = ((dab.img != 0) & (dab_threshold != 0)).astype(np.uint8)
+
+        return Frame(img_final, lvl=dab.lvl, converter=dab.converter), dab_threshold
+
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
     def run_auto_ao(self, odir, params, scale=1.0, mx=255, debug=False):
-
-        # normalize the image
+        # Old DAB Processing code
+        # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
+        #
+        # # smooth the image
+        # self.dab_norm.anisodiff()
+        #
+        # # get the histograms
+        # self.dab_hist = self.dab.histogram()
+        # self.dab_norm_hist = self.dab_norm.histogram()
+        #
+        # # get the stain threshold
+        # self.auto_dab_threshold = max_dev(
+        #     self.dab_hist, scale=scale, mx=mx)
+        # self.auto_dab_norm_threshold = max_dev(
+        #     self.dab_norm_hist, scale=scale, mx=mx, debug=debug)
+        #
+        # # apply the thresholding
+        # self.auto_dab_norm_thresh = self.dab_norm.copy()
+        # self.auto_dab_norm_thresh.threshold(self.auto_dab_norm_threshold, 0, 255)
+        # self.auto_dab_norm_thresh = self.process_dab
 
-        # smooth the image
-        self.dab_norm.anisodiff()
-
-        # get the histograms
-        self.dab_hist = self.dab.histogram()
-        self.dab_norm_hist = self.dab_norm.histogram()
-
-        # get the stain threshold
-        self.auto_dab_threshold = max_dev(
-            self.dab_hist, scale=scale, mx=mx)
-        self.auto_dab_norm_threshold = max_dev(
-            self.dab_norm_hist, scale=scale, mx=mx, debug=debug)
-
-        # apply the thresholding
-        self.auto_dab_norm_thresh = self.dab_norm.copy()
-        self.auto_dab_norm_thresh.threshold(self.auto_dab_norm_threshold, 0, 255)
+        self.auto_dab_thresh, self.auto_dab_threshold = self.process_dab(self.dab,
+            run_normalize = True,
+            scale = 1.0,
+            mx = 90,
+            close_r = 0,
+            open_r = 11,
+            debug = False
+            )
 
         # run the AO process
-        results = self.run_ao(self.auto_dab_norm_thresh)
+        results = self.run_ao(self.auto_dab_thresh)
 
         # store the results of the algorithm
         params.data['area'] = results['area']
@@ -136,9 +217,9 @@ class HDABProcessor(Processor):
 
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
-            self.frame, self.auto_dab_norm_thresh)
+            self.frame, self.auto_dab_thresh)
         self.save_frame(odir, self.dab_norm, 'PROB')
-        self.save_frame(odir, self.auto_dab_norm_thresh, 'THRESH')
+        self.save_frame(odir, self.auto_dab_thresh, 'THRESH')
         self.save_frame(odir, self.auto_overlay, 'QC')
     #
     # end of run_auto_ao
@@ -217,20 +298,20 @@ class HDABProcessor(Processor):
         # gm_wm, feat_ind = self.fit_boundary_on_feat(feats, landmarks[3,1], landmarks[4,1])
         gm_wm = self.fit_boundary(feats, landmarks[3,1], landmarks[4,1])
 
-
-        # fig, axs = plt.subplots(1, feats.shape[0])
-        # if feats.shape[0] == 1:
-        #     axs = [axs]
-        # for i in range(feats.shape[0]):
-        #     axs[i].imshow(feats[i])
-        #     axs[i].set_title(feats_labels[i])
-        #     axs[i].plot(l12, color='red')
-        #     axs[i].plot(l23, color='orange')
-        #     axs[i].plot(l34, color='yellow')
-        #     axs[i].plot(l45, color='green')
-        #     # axs[i].plot(l56, color='blue')
-        #     axs[i].plot(gm_wm, color='purple')
-        # plt.show()
+        # if self.debug:
+        #     fig, axs = plt.subplots(1, feats.shape[0])
+        #     if feats.shape[0] == 1:
+        #         axs = [axs]
+        #     for i in range(feats.shape[0]):
+        #         axs[i].imshow(feats[i])
+        #         axs[i].set_title(feats_labels[i])
+        #         axs[i].plot(l12, color='red')
+        #         axs[i].plot(l23, color='orange')
+        #         axs[i].plot(l34, color='yellow')
+        #         axs[i].plot(l45, color='green')
+        #         axs[i].plot(l56, color='blue')
+        #         axs[i].plot(gm_wm, color='purple')
+        #     plt.show()
         # TODO: need to clip the boundaries to the padding
 
         # smooth the boundaries with a moving average filter

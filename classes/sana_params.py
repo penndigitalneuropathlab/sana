@@ -81,7 +81,7 @@ class Params:
 
     # parses the value from string to a specific datatype based on the key
     def parse_val(self, key, val):
-        if len(val) == 0:
+        if (len(val) == 0) or (val is None) or (val == 'None'):
             return None
         elif key in INT_KEYS:
             return self.parse_int(val)

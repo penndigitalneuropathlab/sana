@@ -55,8 +55,8 @@ def get_slide_files(d):
 # end of get_slide_files
 
 # gets all .json annotation files in a given directory
-def get_anno_files(d):
-    f = get_files(d)
+def get_anno_files(d,recurse=False):
+    f = get_files(d,recurse)
     return [file for file in f if is_anno(file)]
 #
 # end of get_anno_files
@@ -296,7 +296,7 @@ def read_annotations(ifile, class_name=None, name=None):
 #  -annos: list of Polygon Annotations
 #  -class_names: list of class names, blank if not given
 #  -anno_names: list of anno names, blank if not given
-def write_annotations(ofile, annos):
+def write_annotations(ofile, annos, class_names=None, anno_names=None):
 
     # convert the Ann objects to json strings
     json_annos = [anno.to_json() for anno in annos]
@@ -319,15 +319,26 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     if anno_names is None:
         anno_names = ['']*len(annos)
 
-    # load the original annotations
-    orig_annos, orig_cnames, orig_anames = read_annotations(ofile)
-
-    # append the new annotations to the old annotations
-    annos = orig_annos + annos
-    class_names = orig_cnames + class_names
-    anno_names = orig_anames + anno_names
-
+    # checks if annotation file exists
+    if os.path.exists(ofile):
+        orig_annos = read_annotations(ofile)
+        
+        # if file is not empty, add new annos to old annos
+        if orig_annos:
+            annos = orig_annos + annos
+        # # get original annotations if file is not empty
+        # if len(orig_results) > 0:
+        #     orig_annos, orig_cnames, orig_anames = orig_results
+        #     # append the new annotations to the old annotations
+        #     annos = orig_annos + annos
+        #     class_names = orig_cnames + class_names
+        #     anno_names = orig_anames + anno_names
+        # else:
+        #     print(len(orig_results))
+    else:
+        print('Output directory does not exist:',ofile)
     # write the data
     write_annotations(ofile, annos, class_names, anno_names)
+
 #
 # end of append_annotations
