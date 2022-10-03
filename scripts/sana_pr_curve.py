@@ -87,12 +87,8 @@ def get_annos(args):
    
     # get all annotation files in the ref and hyp dirs
     ref_files = sorted(get_anno_files(args.refdir))
-    hyp_files = sorted(get_anno_files(args.hypdir+'detections/'))
-    
-    # debug loading
-    # for hf in hyp_files:
-    #     plot(args,hf)
-    # exit()
+    hyp_files = sorted(get_anno_files(args.hypdir))
+ 
     # loop through annotation files
     ref_annos, hyp_annos = [], []
     for rf in ref_files:
@@ -155,243 +151,168 @@ def get_annos(args):
 #
 # end of get_annos
 
-def plot(args, slide):
-    # print(slide)
-    # find the annotation file based on the slide filename
-  
-    # # access slides
-    slides = sana_io.read_list_file(args.slist)
-
-    img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(slide).replace('.json','.svs')][0]
-
-    # initialize loader, this will allow us to load slide data into memory
-    image = sana_io.create_filepath(img_dir)
-    
-    loader = Loader(image)
-    converter = loader.converter
-
-    # tell the loader which pixel resolution to use
-    loader.set_lvl(args.lvl)
-    thumb_frame = loader.load_thumbnail()
-    # find the annotation file based on the slide filename
-    anno_fname = sana_io.create_filepath(slide, ext='.json', fpath=args.refdir)
-    # print('slide:',slide)
-    # print('anno_fname:',anno_fname)
-  
-    # load all ROIs with matching class name
-    ROIS = []
-    for roi_class in args.roiclass:
-        ROIS += read_annotations(anno_fname, name=roi_class)
-    # rescale the ROI annotations to the given pixel resolution
-    for ROI in ROIS:
-        if ROI.lvl != thumb_frame.lvl:
-            converter.rescale(ROI, thumb_frame.lvl)
-
-    # load all reference annotations with matching class name
-    REF_ANNOS = []
-    for ref_class in args.refclass:
-        # load the annotations from the annotation file
-        REF_ANNOS += read_annotations(anno_fname, name=ref_class)
-    # rescale the ROI annotations to the given pixel resolution
-    for REF_ANNO in REF_ANNOS:
-        if REF_ANNO.lvl != thumb_frame.lvl:
-            converter.rescale(REF_ANNO, thumb_frame.lvl)
-    
-    # load hypothesis annotations with matching class name
-    HYP_ANNOS = []
-    for hyp_class in args.hypclass:
-        # load the annotations from the annotation file
-        HYP_ANNOS += read_annotations(slide, class_name=hyp_class)
-    # rescale the ROI annotations to the given pixel resolution
-    for HYP_ANNO in HYP_ANNOS:
-        if HYP_ANNO.lvl != thumb_frame.lvl:
-            converter.rescale(HYP_ANNO, thumb_frame.lvl)
-
-    # just use loader.thumbnail as the image you're plotting
-    # plot the annotations
-    for ROI in ROIS:
-        # get the top left coordinate and the size of the bounding centroid
-        loc, size = ROI.bounding_box()
-
-        frame = loader.load_frame(loc, size)
-
-        fig, axs = plt.subplots(1,2, sharex=False, sharey=False)
-
-        # Plotting the processed frame and processed frame with clusters
-        axs[0].imshow(thumb_frame.img, cmap='gray')
-        for REF_ANNO in REF_ANNOS:
-            # REF_ANNO.translate(loc)
-            plot_poly(axs[0], REF_ANNO, color='red')
-
-        axs[1].imshow(thumb_frame.img, cmap='gray')
-        for HYP_ANNO in HYP_ANNOS:
-            # HYP_ANNO.translate(loc)
-            plot_poly(axs[1], HYP_ANNO, color='blue')
-        plt.show()
-
-# #
-# end of pr
-
-
-# TODO; add warning msg (DO NOT RUN ON BLIND DATASET, CONTINUE (Y/N)?)
 def error_analyze(all_ref, all_hyp, iou_threshold, args):
-    img_dir = sana_io.read_list_file(args.slist)
-    all_slides = [os.path.basename(x) for x in img_dir]
- 
-    for slide_name in all_slides:
-        # slide_name = 2012-116-30F_R_MFC_R13_25K_05-23-19_DC.svs
+    warning = input('DO NOT RUN ON BLIND DATASET, ARE YOU SURE YOU WANT TO CONTINUE? (Y/N)')
+    if warning.lower() in ('yes','y'):
+        img_dir = sana_io.read_list_file(args.slist)
+        all_slides = [os.path.basename(x) for x in img_dir]
+    
+        for slide_name in all_slides:
+            # slide_name = 2012-116-30F_R_MFC_R13_25K_05-23-19_DC.svs
 
-        # build path name to get _Tile *'s
-        # TODO: move this to a sana_io.get_output_file(slide_name,odir,suffix='_ORIG',extension='.json')
-        bid = sana_io.get_bid(slide_name)
-        region = sana_io.get_region(slide_name)
-        antibody = sana_io.get_antibody(slide_name)
-        odir = os.path.join(args.hypdir, bid, antibody, region)
-        main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() ]
-        
-
-        anno_fname = args.refdir+slide_name.replace('.svs','.json')
-        # load the ref rois, if given
-        if args.roiclass is None:
-            main_rois = []
-        else:
-            main_rois = []
-            for roi_class in args.roiclass:
-                main_rois += read_annotations(anno_fname, class_name=roi_class, name=args.roiname)
-        #
-        # end of roi reading
-        
-        # grab annos with same slide name
-        slide_refs = [x for x in all_ref if os.path.basename(x.file_name) == slide_name.replace('.svs','.json')]
-        slide_hyps = [x for x in all_hyp if os.path.basename(x.file_name) == slide_name.replace('.svs','.json')]
-        
-        # loop through ROIs in a slide
-        for main_roi_dir in main_roi_dirs:
-            main_roi_name = os.path.split(main_roi_dir)[1]
-            tile_class, tile_name = main_roi_name.split('_',1)
-            # ex. tile_name = Tile 52
+            # build path name to get _Tile *'s
+            # TODO: move this to a sana_io.get_output_file(slide_name,odir,suffix='_ORIG',extension='.json')
+            bid = sana_io.get_bid(slide_name)
+            region = sana_io.get_region(slide_name)
+            antibody = sana_io.get_antibody(slide_name)
+            odir = os.path.join(args.hypdir.replace('detections',''), bid, antibody, region)
+            main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() ]
             
-            # fetch main_roi based on class names and tile names (if exists)
-            main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
-            if len(main_roi)==0:
-                continue
+
+            anno_fname = args.refdir+slide_name.replace('.svs','.json')
+            # load the ref rois, if given
+            if args.roiclass is None:
+                main_rois = []
             else:
-                main_roi = main_roi[0]
+                main_rois = []
+                for roi_class in args.roiclass:
+                    main_rois += read_annotations(anno_fname, class_name=roi_class, name=args.roiname)
+            #
+            # end of roi reading
             
-            # ref, hyp = ...
-            ref = [x for x in slide_refs if x.inside(main_roi)]  
-            hyp = [x for x in slide_hyps if x.inside(main_roi)]  
+            # grab annos with same slide name
+            slide_refs = [x for x in all_ref if os.path.basename(x.file_name) == slide_name.replace('.svs','.json')]
+            slide_hyps = [x for x in all_hyp if os.path.basename(x.file_name) == slide_name.replace('.svs','.json')]
             
-            params_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','.csv'))
-            params = Params(params_fname)
-
-            
-            # TODO: rename new_score to score
-            # TODO: rename results/seen 
-            results, seen, ref, hyp = score(ref, hyp, iou_threshold)
-            
-            # only do the following if there are errors!
-            if (False in results) or (False in seen):
-                conv = Converter()
-                orig_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_ORIG.png'))
-                orig_frame = Frame(orig_fname, lvl=0, converter=conv)
-                padding = params.data['padding']
-
-                # use sana_io.create_filepath function instead of this os.path.join
-                wc_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_R13.npy'))
-                wc_activation = np.load(wc_fname)
-                wc_softmax = softmax(wc_activation,axis=0)
-
-                lb_softmax = np.rint(255*wc_softmax[2,:,:]).astype(np.uint8)
-                lb_softmax = cv2.resize(lb_softmax, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
-                lb_softmax = lb_softmax[:,:,None]
+            # loop through ROIs in a slide
+            for main_roi_dir in main_roi_dirs:
+                main_roi_name = os.path.split(main_roi_dir)[1]
+                tile_class, tile_name = main_roi_name.split('_',1)
+                # ex. tile_name = Tile 52
                 
-                # removing padding from original image and wildcat greyscale
-                # orig_frame.img = orig_frame.img[padding//2:-padding//2,padding//2:-padding//2]
-                # lb_softmax = lb_softmax[padding//2:-padding//2,padding//2:-padding//2]
-                # [x.translate(padding//2+params.data['loc']) for x in ref]
-                # [x.translate(padding//2+params.data['loc']) for x in hyp]
-
-                [x.translate(params.data['loc']) for x in ref]
-                [x.translate(params.data['loc']) for x in hyp]
-
-                alpha = np.full_like(lb_softmax, 60)
-                alpha[lb_softmax<np.floor(255*0.8)] = 0
-                z = np.zeros_like(lb_softmax)
-
-                rgba_wc = np.concatenate([z,lb_softmax,z,alpha],axis=2)
-
-                                                   
-                # print(len(results)==len(hyp))
-                # print(len(seen)==len(ref))
-                # print()
-
-                fig, ax = plt.subplots(1,1)
-                fig.suptitle('WildCat Probability of LB Detection >80%% \n %s | %s | IoU: %0.1f' %(slide_name.replace('.svs',''),tile_name,iou_threshold))
+                # fetch main_roi based on class names and tile names (if exists)
+                main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
+                if len(main_roi)==0:
+                    continue
+                else:
+                    main_roi = main_roi[0]
                 
-                ax.imshow(orig_frame.img)
-                ax.imshow(rgba_wc)
-                 
-                # True in results is green, label=TP
-                # False in results is red, label=FP
-                plot_tp = True
-                plot_fp = True
-                for i, poly in enumerate(hyp):
-                    if results[i] == True:
-                        plot_poly(ax,poly,label='Hyp. TP' if plot_tp else '', color='green', linewidth=1.5)
-                        plot_tp = False
-                    if results[i] == False:
-                        plot_poly(ax,poly,label='Hyp. FP' if plot_fp else '', color='red', linewidth=1.5)
-                        plot_fp = False
+                # ref, hyp = ...
+                ref = [x for x in slide_refs if x.inside(main_roi)]  
+                hyp = [x for x in slide_hyps if x.inside(main_roi)]  
                 
-                # True in seen is blue, label=hit
-                # False in seen in orange, label=miss                     
-                plot_hit = True
-                plot_miss = True
-                for i, poly in enumerate(ref):
-                    if seen[i] == True:
-                        plot_poly(ax,poly,label='Ref. Hit' if plot_hit else '', color='blue', linewidth=1.5)
-                        plot_hit = False
-                    if seen[i] == False:
-                        plot_poly(ax,poly,label='Ref. Miss' if plot_miss else '', color='orange', linewidth=1.5)
-                        plot_miss = False
-                  
-                # Shrink current axis by 20%
-                box = ax.get_position()
-                ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+                params_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','.csv'))
+                params = Params(params_fname)
 
-                # Put a legend to the right of the current axis
-                ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
-
-                fig.tight_layout()
-                plt.tick_params(
-                    axis='both',       # changes apply to both axes
-                    which='both',      # both major and minor ticks are affected
-                    bottom=False,      # ticks along the bottom edge are off
-                    top=False,         # ticks along the top edge are off
-                    left=False,        # ticks along the left edge are off
-                    labelbottom=False, # labels along the bottom edge are off
-                    labelleft=False    # labels along the left edge are off
-                )
-                # don't show the plot, save to some directory (args.odir)
-                fig_fname = os.path.join(args.odir,'error_analysis',slide_name.replace('.svs','_IOU_%0.1f_ERRORS.png' %iou_threshold))
-                plt.savefig(fig_fname)
-                plt.close()
-                # plt.show()
                 
-                # # debug WC activations for each of the classes
-                # class_dict = {
-                #     0: 'Artifact',
-                #     1: 'Background',
-                #     2: 'Lewy-Body',
-                #     3: 'Lewy-Neurite'
-                # }
-                # fig, axs1 = plt.subplots(2,2)
-                # axs1 = axs1.ravel()
-                # for i in range(wc_softmax.shape[0]):
-                #     axs1[i].imshow(wc_softmax[i,:,:],vmin=0,vmax=1)
-                #     axs1[i].set_title(class_dict[i])
-                # plt.show()
+                # TODO: rename new_score to score
+                # TODO: rename results/seen 
+                results, seen, ref, hyp = score(ref, hyp, iou_threshold)
+                
+                # only do the following if there are errors!
+                if (False in results) or (False in seen):
+                    conv = Converter()
+                    orig_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_ORIG.png'))
+                    orig_frame = Frame(orig_fname, lvl=0, converter=conv)
+                    padding = params.data['padding']
+
+                    # use sana_io.create_filepath function instead of this os.path.join
+                    wc_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_R13.npy'))
+                    wc_activation = np.load(wc_fname)
+                    wc_softmax = softmax(wc_activation,axis=0)
+
+                    lb_softmax = np.rint(255*wc_softmax[2,:,:]).astype(np.uint8)
+                    lb_softmax = cv2.resize(lb_softmax, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
+                    lb_softmax = lb_softmax[:,:,None]
+                    
+                    # removing padding from original image and wildcat greyscale
+                    # orig_frame.img = orig_frame.img[padding//2:-padding//2,padding//2:-padding//2]
+                    # lb_softmax = lb_softmax[padding//2:-padding//2,padding//2:-padding//2]
+                    # [x.translate(padding//2+params.data['loc']) for x in ref]
+                    # [x.translate(padding//2+params.data['loc']) for x in hyp]
+
+                    [x.translate(params.data['loc']) for x in ref]
+                    [x.translate(params.data['loc']) for x in hyp]
+
+                    alpha = np.full_like(lb_softmax, 60)
+                    alpha[lb_softmax<np.floor(255*0.8)] = 0
+                    z = np.zeros_like(lb_softmax)
+
+                    rgba_wc = np.concatenate([z,lb_softmax,z,alpha],axis=2)
+
+                                                    
+                    # print(len(results)==len(hyp))
+                    # print(len(seen)==len(ref))
+                    # print()
+
+                    fig, ax = plt.subplots(1,1)
+                    fig.suptitle('WildCat Probability of LB Detection >80%% \n %s | %s | IoU: %0.1f' %(slide_name.replace('.svs',''),tile_name,iou_threshold))
+                    
+                    ax.imshow(orig_frame.img)
+                    ax.imshow(rgba_wc)
+                    
+                    # True in results is green, label=TP
+                    # False in results is red, label=FP
+                    plot_tp = True
+                    plot_fp = True
+                    for i, poly in enumerate(hyp):
+                        if results[i] == True:
+                            plot_poly(ax,poly,label='Hyp. TP' if plot_tp else '', color='green', linewidth=1.5)
+                            plot_tp = False
+                        if results[i] == False:
+                            plot_poly(ax,poly,label='Hyp. FP' if plot_fp else '', color='red', linewidth=1.5)
+                            plot_fp = False
+                    
+                    # True in seen is blue, label=hit
+                    # False in seen in orange, label=miss                     
+                    plot_hit = True
+                    plot_miss = True
+                    for i, poly in enumerate(ref):
+                        if seen[i] == True:
+                            plot_poly(ax,poly,label='Ref. Hit' if plot_hit else '', color='blue', linewidth=1.5)
+                            plot_hit = False
+                        if seen[i] == False:
+                            plot_poly(ax,poly,label='Ref. Miss' if plot_miss else '', color='orange', linewidth=1.5)
+                            plot_miss = False
+                    
+                    # Shrink current axis by 20%
+                    box = ax.get_position()
+                    ax.set_position([box.x0, box.y0, box.width * 0.8, box.height])
+
+                    # Put a legend to the right of the current axis
+                    ax.legend(loc='center left', bbox_to_anchor=(1, 0.5))
+
+                    fig.tight_layout()
+                    plt.tick_params(
+                        axis='both',       # changes apply to both axes
+                        which='both',      # both major and minor ticks are affected
+                        bottom=False,      # ticks along the bottom edge are off
+                        top=False,         # ticks along the top edge are off
+                        left=False,        # ticks along the left edge are off
+                        labelbottom=False, # labels along the bottom edge are off
+                        labelleft=False    # labels along the left edge are off
+                    )
+                    # don't show the plot, save to some directory (args.odir)
+                    fig_fname = os.path.join(args.odir,'error_analysis',slide_name.replace('.svs','_IOU_%0.1f_ERRORS.png' %iou_threshold))
+                    plt.savefig(fig_fname)
+                    plt.close()
+    else:
+        print('...error analysis NOT performed')
+                    # plt.show()
+                    
+                    # # debug WC activations for each of the classes
+                    # class_dict = {
+                    #     0: 'Artifact',
+                    #     1: 'Background',
+                    #     2: 'Lewy-Body',
+                    #     3: 'Lewy-Neurite'
+                    # }
+                    # fig, axs1 = plt.subplots(2,2)
+                    # axs1 = axs1.ravel()
+                    # for i in range(wc_softmax.shape[0]):
+                    #     axs1[i].imshow(wc_softmax[i,:,:],vmin=0,vmax=1)
+                    #     axs1[i].set_title(class_dict[i])
+                    # plt.show()
 
             
             
@@ -523,8 +444,8 @@ def main(argv):
     # loop through all provided iou thresholds
     for iou_threshold in args.iouthresh:
         error_analyze(ref_annos,hyp_annos,iou_threshold,args)
+        
         # generate precision/recall curve, calculate the average precision
-        # precision, recall, auc = pr(ref_annos, hyp_annos, iou_threshold, args)
         precision, recall, auc = pr(ref_annos, hyp_annos, iou_threshold, args)
         
         # print('Precision:',precision)

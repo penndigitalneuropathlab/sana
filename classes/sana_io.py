@@ -294,9 +294,7 @@ def read_annotations(ifile, class_name=None, name=None):
 # writes a list of Polygon annotations to a JSON annotation file
 #  -ofile: location to write the annotations to
 #  -annos: list of Polygon Annotations
-#  -class_names: list of class names, blank if not given
-#  -anno_names: list of anno names, blank if not given
-def write_annotations(ofile, annos, class_names=None, anno_names=None):
+def write_annotations(ofile, annos):
 
     # convert the Ann objects to json strings
     json_annos = [anno.to_json() for anno in annos]
@@ -309,9 +307,7 @@ def write_annotations(ofile, annos, class_names=None, anno_names=None):
 # appends a list of Polygon annotations to an existing JSON annotation file
 #  -ofile: location of existing file to write to
 #  -annos: list of Polygon annotations
-#  -class_names: list of class names, blank if not given
-#  -anno_names: list of anno names, blank if not given
-def append_annotations(ofile, annos, class_names=None, anno_names=None):
+def append_annotations(ofile, annos):
 
     # provide blank names if not given
     if class_names is None:
@@ -322,23 +318,14 @@ def append_annotations(ofile, annos, class_names=None, anno_names=None):
     # checks if annotation file exists
     if os.path.exists(ofile):
         orig_annos = read_annotations(ofile)
-        
+
         # if file is not empty, add new annos to old annos
         if orig_annos:
             annos = orig_annos + annos
-        # # get original annotations if file is not empty
-        # if len(orig_results) > 0:
-        #     orig_annos, orig_cnames, orig_anames = orig_results
-        #     # append the new annotations to the old annotations
-        #     annos = orig_annos + annos
-        #     class_names = orig_cnames + class_names
-        #     anno_names = orig_anames + anno_names
-        # else:
-        #     print(len(orig_results))
     else:
         print('Output directory does not exist:',ofile)
     # write the data
-    write_annotations(ofile, annos, class_names, anno_names)
+    write_annotations(ofile, annos)
 
 #
 # end of append_annotations

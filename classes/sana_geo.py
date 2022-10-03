@@ -158,7 +158,7 @@ def get_ortho_angle(seg):
 
 # performs a series a translations and rotations to transform a polygon
 #  to the coordinate system of a processed Frame
-def transform_poly(x, loc, padding, crop_loc, M1, M2):
+def transform_poly(x, loc, crop_loc, M1, M2):
     if not loc is None:
         x.translate(loc)
     if not M1 is None:
@@ -173,7 +173,7 @@ def transform_poly(x, loc, padding, crop_loc, M1, M2):
 
 # performs the inverse translations and rotations to return a polygon
 #  to the original coordinate system
-def transform_inv_poly(x, loc, padding, crop_loc, M1, M2):
+def transform_inv_poly(x, loc, crop_loc, M1, M2):
     if not M2 is None:
         x = x.transform_inv(M2)
     if not crop_loc is None:
@@ -306,8 +306,6 @@ class Array(np.ndarray):
     # NOTE: this is often used to move to the origin
     #        e.g. loc, size = x.bounding_box(); x.translate(loc)
     def translate(self, p):
-        # print(self.lvl)
-        # print(p.lvl)
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p

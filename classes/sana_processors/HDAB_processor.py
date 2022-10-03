@@ -174,26 +174,8 @@ class HDABProcessor(Processor):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
-        #
-        # # smooth the image
-        # self.dab_norm.anisodiff()
-        #
-        # # get the histograms
-        # self.dab_hist = self.dab.histogram()
-        # self.dab_norm_hist = self.dab_norm.histogram()
-        #
-        # # get the stain threshold
-        # self.auto_dab_threshold = max_dev(
-        #     self.dab_hist, scale=scale, mx=mx)
-        # self.auto_dab_norm_threshold = max_dev(
-        #     self.dab_norm_hist, scale=scale, mx=mx, debug=debug)
-        #
-        # # apply the thresholding
-        # self.auto_dab_norm_thresh = self.dab_norm.copy()
-        # self.auto_dab_norm_thresh.threshold(self.auto_dab_norm_threshold, 0, 255)
-        # self.auto_dab_norm_thresh = self.process_dab
-
-        self.auto_dab_thresh, self.auto_dab_threshold = self.process_dab(self.dab,
+        
+        self.auto_dab_thresh_img, self.auto_dab_threshold = self.process_dab(self.dab,
             run_normalize = True,
             scale = 1.0,
             mx = 90,
@@ -203,7 +185,7 @@ class HDABProcessor(Processor):
             )
 
         # run the AO process
-        results = self.run_ao(self.auto_dab_thresh)
+        results = self.run_ao(self.auto_dab_thresh_img)
 
         # store the results of the algorithm
         params.data['area'] = results['area']
@@ -213,14 +195,14 @@ class HDABProcessor(Processor):
         params.data['auto_stain_threshold'] = self.auto_dab_threshold
 
         # create the output directory
-        odir = sana_io.create_odir(odir, 'auto_ao')
+        odir = sana_io.create_odir(odir)
 
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
-            self.frame, self.auto_dab_thresh)
-        self.save_frame(odir, self.dab_norm, 'PROB')
-        self.save_frame(odir, self.auto_dab_thresh, 'THRESH')
-        self.save_frame(odir, self.auto_overlay, 'QC')
+            self.frame, self.auto_dab_thresh_img)
+        self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
+        self.save_frame(odir, self.auto_dab_thresh, 'AUTO_THRESH')
+        self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
     #
     # end of run_auto_ao
 

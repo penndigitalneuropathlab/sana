@@ -86,7 +86,7 @@ class Loader(openslide.OpenSlide):
     #  -size: size of Frame to load (in any unit or resolution)
     #  -lvl: resolution to use, overrides the lvl attribute stored in Loader
     #  -pad_color: color to use to pad the Frame, can use slide_color or white
-    def load_frame(self, loc, size, lvl=None, pad_color=None, padding=0):
+    def load_frame(self, loc, size, lvl=None, pad_color=None, frame_padding=0):
         if lvl is None:
             lvl = self.lvl
         if pad_color is None:
@@ -140,7 +140,7 @@ class Loader(openslide.OpenSlide):
 
         return Frame(img, lvl=lvl, converter=self.converter,
                      csf_threshold=self.csf_threshold,
-                     padding=padding,
+                     padding=frame_padding,
                      slide_color=self.slide_color)
     #
     # end of load_frame

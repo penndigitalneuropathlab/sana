@@ -11,7 +11,6 @@ from tqdm import tqdm
 from PIL import Image
 import json
 from scipy.special import softmax
-from scipy.special import expit as sigmoid
 
 # custom modules
 import sana_io
@@ -21,68 +20,27 @@ from sana_geo import Point, plot_poly, transform_inv_poly
 from sana_frame import Frame, create_mask, overlay_thresh
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
-from wildcat.saved_models import R13Model
+from wildcat.pixel_classifiers import R13Classifier
 from sana_loader import Loader
 
 # debugging modules
 from matplotlib import pyplot as plt
 
-class R13Processor(HDABProcessor):
+class R13Classifier(HDABProcessor):
     def __init__(self, fname, frame, debug=False):
-        super(R13Processor, self).__init__(fname, frame, debug)
+        super(R13Classifier, self).__init__(fname, frame, debug)
     #
     # end of constructor
 
-    def run(self, odir, roi_odir, first_run, last_run, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
         # generate the neuronal and glial severity results
 
-        self.mask_frame(main_roi, sub_rois)
+        self.generate_masks(main_roi, sub_rois)
 
-        self.run_lb_detection(odir, roi_odir, first_run, last_run, params)
-
-
-        # pre-selected threshold value selected by Dan using
-        # multiple images in QuPath
-        # NOTE: original value was DAB_OD = 0.3 in QuPath, this
-        #       value is calculated from that
-
-        # self.manual_dab_threshold = 94
-
-        # generate processed, thresholded DAB img mask
-        # dab_img, dab_thresh = self.process_dab(self.dab,
-        #     run_normalize=True,
-        #     scale = 1.0,
-        #     mx = 90,
-        #     close_r = 0,
-        #     open_r = 0,
-        #     debug = False
-        #     )
-        # self.save_frame(odir, dab_img, 'processed_DAB')
-
-        # generate the manually curated AO results
-        # self.run_manual_ao(odir, params)
+        self.run_lb_detection(odir, roi_odir, first_run, params)
 
         # generate the auto AO results
         self.run_auto_ao(odir, params, scale=1.0, mx=90)
-        
-        # if self.debug:
-        #     fig, axs = plt.subplots(1,2)
-        #     axs[0].imshow(auto_dab.img)
-        #     axs[0].set_title('Auto AO DAB')
-        #     axs[1].imshow(dab_img.img)
-        #     axs[1].set_title('Processed DAB')
-        #     fig.suptitle('Comparison of Auto AO DAB and Processed DAB')
-        #     plt.show()
-
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
-
-        # save the DAB and HEM images
-        self.save_frame(odir, self.dab, 'DAB')
-        self.save_frame(odir, self.hem, 'HEM')
-
-        # save the params IO to a file
-        self.save_params(odir, params)
     #
     # end of run
 
@@ -93,15 +51,14 @@ class R13Processor(HDABProcessor):
     #
     # end of get_confidence
 
-    def run_lb_detection(self, odir, roi_odir, first_run, last_run, params):
-        debug = False
-        last_run = False
+    def run_lb_detection(self, odir, roi_odir, first_run, debug, params):
+        # debug = False
 
-        # if debug:
-        #     fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
-        #     axs = np.ravel(axs)
+        if debug:
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
+            axs = np.ravel(axs)
 
-        model = R13Model(self.frame)
+        model = R13Classifier(self.frame)
         wc_activation = model.run()
         
         wc_softmax = softmax(wc_activation,axis=0)
@@ -192,7 +149,7 @@ class R13Processor(HDABProcessor):
         for lb in lbs:
             fname = bid+'_'+antibody+'_'+region+'_'+tile
             conf = self.get_confidence(lb, lb_activation)
-            lb_annos.append(lb.to_annotation(fname,class_name='LB detection',anno_name=tile,confidence=conf))
+            lb_annos.append(lb.to_annotation(fname,class_name='LB detection',confidence=conf))
 
 
         if debug and len(lb_annos)>0:
@@ -231,95 +188,7 @@ class R13Processor(HDABProcessor):
         else:
             sana_io.append_annotations(anno_fname, lb_annos)
         
-    # end of run_lb_detection
-
-        # debugging
-        # loads in anno file that was just written
-        if last_run:
-            slides = sana_io.read_list_file('./lists/all.list')
-
-            img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
-
-            # initialize loader, this will allow us to load slide data into memory
-            image = sana_io.create_filepath(img_dir)
-
-            loader = Loader(image)
-            loader.set_lvl(0)
-
-            thumb_frame = loader.load_thumbnail()
-            roiclass = ['Tile *']
-            refclass = ['']
-            hypclass = ['LB detection']
-
-            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='./annotations/')
-        
-            ROIS = []
-            for roi_class in roiclass:
-                ROIS += sana_io.read_annotations(ref_anno, name=roi_class)
-            # rescale the ROI annotations to the given pixel resolution
-            for ROI in ROIS:
-                if ROI.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(ROI, thumb_frame.lvl)
-
-            # load all reference annotations with matching class name
-            REF_ANNOS = []
-            for ref_class in refclass:
-                # load the annotations from the annotation file
-                REF_ANNOS += sana_io.read_annotations(ref_anno, name=ref_class)
-            # rescale the ROI annotations to the given pixel resolution
-            for REF_ANNO in REF_ANNOS:
-                if REF_ANNO.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(REF_ANNO, thumb_frame.lvl)
-            
-            # load hypothesis annotations with matching class name
-            HYP_ANNOS = []
-            for hyp_class in hypclass:
-                # load the annotations from the annotation file
-                HYP_ANNOS += sana_io.read_annotations(anno_fname, class_name=hyp_class)
-            # rescale the ROI annotations to the given pixel resolution
-            for HYP_ANNO in HYP_ANNOS:
-                if HYP_ANNO.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(HYP_ANNO, thumb_frame.lvl)
-            print('HYP_ANNOS:',HYP_ANNOS)
-            
-            # TODO: if you plot the raw annotations that are just rescaled to level 2 then plotting the level 2 thumbnail image should fix the left plot
-            # just use loader.thumbnail as the image you're plotting
-            # plot the annotations
-            for ROI in ROIS:
-                # get the top left coordinate and the size of the bounding centroid
-                loc, size = ROI.bounding_box()
-
-                frame = loader.load_frame(loc, size)
-
-                fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
-
-                # og_img = loader.load_thumbnail()
-
-                # Plotting the processed frame and processed frame with clusters
-                axs[0].imshow(thumb_frame.img, cmap='gray')
-                for REF_ANNO in REF_ANNOS:
-                    # REF_ANNO.translate(loc)
-                    plot_poly(axs[0], REF_ANNO, color='red')
-
-                axs[1].imshow(thumb_frame.img, cmap='gray')
-                for HYP_ANNO in HYP_ANNOS:
-                    # HYP_ANNO.translate(loc)
-                    plot_poly(axs[1], HYP_ANNO, color='blue')
-                plt.show()
-
-
-        # if self.debug:
-        #     fig, axs = plt.subplots(1,len(probs))
-        #     for i in range(len(probs)):
-        #         axs[0,i].imshow(probs[i], cmap='coolwarm')
-        #     gs = axs[0,0].get_gridspec()
-        #     for ax in axs[0:2, 0:2].flatten():
-        #         ax.remove()
-        #     axbig = fig.add_subplot(gs[0:2,0:2])
-        #     axbig.imshow(self.frame.img)
-        #     plt.show()
-
-    #
+    # 
     # end of run_lb_detection
 #
 # end of R13Processor

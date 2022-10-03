@@ -33,7 +33,7 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, debug=20, debug_fibers=False):
+def get_processor(fname, frame, debug=False, debug_fibers=False):
     try:
         antibody = sana_io.get_antibody(fname)
         debug_processor = True if debug < 20 else False
@@ -230,40 +230,6 @@ def main(argv):
                 params.data['M1'], params.data['M2']
             )
 
-            # TODO: plot main_roi and frame, before and after transformations; make sure they're lined up
-            # grab frame thumbnail and run transform_invv_poly, scale to lvl 2
-            # fig, axs = plt.subplots(1,2)
-            # axs[0].imshow(frame.img)
-            # plot_poly(axs[0],main_roi)
-            # axs[0].set_title('Before transform_inv_poly')
-            # plt.show()
-            # print('Before transform_inv_poly:')
-            # print('--loc:',params.data['loc'])
-            # print('--padding:',params.data['padding'])
-            # print('--crop_loc:',params.data['crop_loc'])
-            # print('--M1:',params.data['M1'])
-            # print('--M2:',params.data['M2'])
-
-            # main_roi = transform_inv_poly(
-            #     main_roi,
-            #     params.data['loc'], params.data['padding'], params.data['crop_loc'],
-            #     params.data['M1'], params.data['M2']
-            # )
-
-            # print('After transform_inv_poly:')
-            # print('--loc:',params.data['loc'])
-            # print('--padding:',params.data['padding'])
-            # print('--crop_loc:',params.data['crop_loc'])
-            # print('--M1:',params.data['M1'])
-            # print('--M2:',params.data['M2'])
-            # [frame.converter.rescale(x, 2) for x in main_roi]
-            # axs[1].imshow(loader.load_thumbnail().img)
-            # plot_poly(axs[1],main_roi)
-            # axs[1].set_title('After transform_inv_poly')
-            # plt.suptitle('ROI from'+os.path.basename(slide_f))
-            # plt.show()
-
-            # exit()
             # transform the sub ROIs to the Frame's coord. system
             for sub_roi_i in range(len(sub_rois)):
                 sub_rois[sub_roi_i] = transform_poly(
@@ -290,7 +256,7 @@ def main(argv):
 
 
             # run the processes for the antibody
-            processor.run(odir, roi_odir, first_run, last_run, params, main_roi, sub_rois)
+            processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
             logger.info('Runtime: %0.2f (sec)' % (time.time()-t0))
 
         # end of main_rois loop
