@@ -7,6 +7,7 @@ import os
 # installed modules
 import cv2
 import numpy as np
+from sana_logger import SANALogger
 from tqdm import tqdm
 from PIL import Image
 import json
@@ -26,14 +27,16 @@ from sana_loader import Loader
 # debugging modules
 from matplotlib import pyplot as plt
 
-class R13Classifier(HDABProcessor):
-    def __init__(self, fname, frame, debug=False):
-        super(R13Classifier, self).__init__(fname, frame, debug)
+class R13Processor(HDABProcessor):
+    def __init__(self, fname, frame, debug_level):
+        super(R13Processor, self).__init__(fname, frame, debug_level)
     #
     # end of constructor
 
     def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
         # generate the neuronal and glial severity results
+
+        self.log.info('Running R13 Processor...')
 
         self.generate_masks(main_roi, sub_rois)
 
@@ -51,12 +54,8 @@ class R13Classifier(HDABProcessor):
     #
     # end of get_confidence
 
-    def run_lb_detection(self, odir, roi_odir, first_run, debug, params):
-        # debug = False
-
-        if debug:
-            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
-            axs = np.ravel(axs)
+    def run_lb_detection(self, odir, roi_odir, first_run, params):   
+        self.log.info('Running LB detections...')
 
         model = R13Classifier(self.frame)
         wc_activation = model.run()
@@ -67,21 +66,22 @@ class R13Classifier(HDABProcessor):
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_R13.npy'))
         np.save(ofname, wc_activation)
         
-        # # debug WC activations for each of the classes
-        # class_dict = {
-        #     0: 'Artifact',
-        #     1: 'Background',
-        #     2: 'Lewy-Body',
-        #     3: 'Lewy-Neurite'
-        # }
-        # fig, axs = plt.subplots(2,2)
-        # axs = axs.ravel()
-        # for i in range(wc_softmax.shape[0]):
-        #     axs[i].imshow(wc_softmax[i,:,:],vmin=0,vmax=1)
-        #     axs[i].set_title(class_dict[i])
-        # plt.show()
-        # exit()
-
+        if self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+             # debug WC activations for each of the classes
+            class_dict = {
+                0: 'Artifact',
+                1: 'Background',
+                2: 'Lewy-Body',
+                3: 'Lewy-Neurite'
+            }
+            fig, axs = plt.subplots(2,2)
+            axs = axs.ravel()
+            for i in range(wc_softmax.shape[0]):
+                axs[i].imshow(wc_softmax[i,:,:],vmin=0,vmax=1)
+                axs[i].set_title(class_dict[i])
+            fig.suptitle('WildCat Class Activation Maps')
+            plt.show()
+            
         relevant_dab_msk, dab_thresh = self.process_dab(self.dab,
             run_normalize = True,
             scale = 1.0,
@@ -89,9 +89,9 @@ class R13Classifier(HDABProcessor):
             close_r = 0,
             open_r = 13, #always an odd number (7 < open_r < 13)
             mask = self.main_mask,
-            debug = False
+            debug = self.log.getEffectiveLevel() == SANALogger.get_level_config('full')
             )
-        # print('DAB Thresh:',dab_thresh)
+        self.log.info('DAB Thresh: %d' %dab_thresh)
 
         lb_activation = wc_activation[2,:,:]
         lb_softmax = wc_softmax[2,:,:]
@@ -115,10 +115,7 @@ class R13Classifier(HDABProcessor):
         # exit()        
 
         # threshold probs img at LB prob and store in a Frame
-        # img = np.where(wc.img==1, dab_img.img[:,:,0], np.zeros_like(dab_img.img[:,:,0]))
         lb_msk = np.where(lb_softmax.img >= 0.8, relevant_dab_msk.img[:,:,0], np.zeros_like(relevant_dab_msk.img[:,:,0]))
-        # img = np.where(wc.img < dab_thresh, 0, 1).astype(np.uint8)
-        # img = np.where(wc.img < -15, 0, dab_img.img[:,:,0]).astype(np.uint8)
         
         lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
 
@@ -152,7 +149,7 @@ class R13Classifier(HDABProcessor):
             lb_annos.append(lb.to_annotation(fname,class_name='LB detection',confidence=conf))
 
 
-        if debug and len(lb_annos)>0:
+        if len(lb_annos)>0 and self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
             for lb in lbs:
@@ -175,7 +172,7 @@ class R13Classifier(HDABProcessor):
             plt.show()
 
         # transform detections to the original slide coordinate system
-        lb_annos = [transform_inv_poly(x, params.data['loc'], params.data['padding'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
+        lb_annos = [transform_inv_poly(x, params.data['loc'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
 
         # set pixel lvl to 0
         [self.dab.converter.rescale(lb, 0) for lb in lb_annos]        

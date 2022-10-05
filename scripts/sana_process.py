@@ -16,13 +16,16 @@ from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly, transform_inv_poly
 from sana_frame import Frame
+from sana_logger import SANALogger
+
+# TODO: rename processors to classifiers
 from sana_processors.NeuN_processor import NeuNProcessor
 from sana_processors.SMI32_processor import SMI32Processor
 from sana_processors.calretinin_processor import calretininProcessor
 from sana_processors.MBP_processor import MBPProcessor
 from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
-from sana_processors.meguro_processor import meguroProcessor
+from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
@@ -33,32 +36,31 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, debug=False, debug_fibers=False):
+def get_processor(fname, frame, debug_level, debug_fibers=False):
     try:
         antibody = sana_io.get_antibody(fname)
-        debug_processor = True if debug < 20 else False
     except:
         antibody = ''
     if antibody == 'NeuN':
-        return NeuNProcessor(fname, frame, debug_processor)
+        return NeuNProcessor(fname, frame, debug_level)
     if antibody == 'SMI32':
-        return SMI32Processor(fname, frame, debug_processor)
+        return SMI32Processor(fname, frame, debug_level)
     if antibody == 'CALR6BC':
-        return calretininProcessor(fname, frame, debug_processor)
+        return calretininProcessor(fname, frame, debug_level)
     if antibody == 'parvalbumin':
-        return parvalbuminProcessor(fname, frame, debug_processor)
+        return parvalbuminProcessor(fname, frame, debug_level)
     if antibody == 'SMI94':
-        return MBPProcessor(fname, frame, debug_processor, debug_fibers)
+        return MBPProcessor(fname, frame, debug_level, debug_fibers)
     if antibody == 'SMI35':
-        return SMI35Processor(fname, frame, debug_processor)
+        return SMI35Processor(fname, frame, debug_level)
     if antibody == 'MEGURO':
-        return meguroProcessor(fname, frame, debug_processor)
+        return MeguroProcessor(fname, frame, debug_level)
     if antibody == 'AT8':
-        return AT8Processor(fname, frame, debug_processor)
+        return AT8Processor(fname, frame, debug_level)
     if antibody == 'IBA1':
-        return IBA1Processor(fname, frame, debug_processor)
+        return IBA1Processor(fname, frame, debug_level)
     if antibody == 'R13':
-        return R13Processor(fname, frame, debug_processor)
+        return R13Processor(fname, frame, debug_level)
     return None
 #
 # end of get_processor
@@ -67,49 +69,24 @@ def get_processor(fname, frame, debug=False, debug_fibers=False):
 # it loads and processes the data within ROIs, and calculates the percentage
 # of positive pixels in the ROIs
 def main(argv):
-
     # parse the command line
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
-    # Dictionary of logging levels
-    level_config = {'full': logging.DEBUG,         # value: 10
-                    'normal': logging.INFO,        # value: 20
-                    # 'warning': logging.WARNING,  # value: 30
-                    'quiet': logging.ERROR,        # value: 40
-                    # 'critical': logging.CRITICAL # value: 50
-                    }
-
-    # Configure logger object
-    logger = logging.getLogger(__name__)
-    formatter = logging.Formatter('%(asctime)s :: %(levelname)s :: %(funcName)s :: %(message)s')
-
-    # Setting logging file handler
-    file_handler = logging.FileHandler('log.log',mode='w')
-    file_handler.setFormatter(formatter)
-    logger.addHandler(file_handler)
-
-    # Setting logging output stream handler
-    stream_handler = logging.StreamHandler(sys.stdout)
-    stream_handler.setFormatter(formatter)
-    logger.addHandler(stream_handler)
-
-    # Set logging level from commandline
-    level = level_config.get(args.debug_level.lower())
-    logger.setLevel(level)
+    log = SANALogger.get_sana_logger(args.debug_level)
 
     # get all the slide files to process
     slides = sana_io.get_slides_from_lists(args.lists)
     if len(slides) == 0:
-        logger.error("No Slides Found")
+        log.warning("No Slides Found")
         parser.print_usage()
         exit()
-    logger.debug('Number of slides found: %d' % len(slides))
+    log.warning('Number of slides found: %d' % len(slides))
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
         # progress messaging
-        logger.info('--> Processing Slide: %s (%d/%d)' % \
+        log.warning('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)))
 
         # # get the annotation file containing ROIs
@@ -122,7 +99,7 @@ def main(argv):
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            logger.info('Annotation file %s does not exist\n' % anno_f)
+            log.info('Annotation file %s does not exist\n' % anno_f)
             continue
 
         # initialize the Loader object for loading Frames
@@ -130,7 +107,7 @@ def main(argv):
             loader = Loader(slide_f)
         except Exception as e:
             print(e)
-            logger.info('Could not load .svs file: %s' % e)
+            log.info('Could not load .svs file: %s' % e)
             continue
 
         # set the image resolution level
@@ -138,7 +115,7 @@ def main(argv):
 
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)
-        logger.debug('Number of main_rois found: %d' % len(main_rois))
+        log.info('Number of main_rois found: %d' % len(main_rois))
 
         # Use this to analyze a certain frame from a slide
         # main_rois = main_rois[8:]
@@ -153,7 +130,7 @@ def main(argv):
         for main_roi_i, main_roi in enumerate(main_rois):
             t0 = time.time()
             # progress messaging
-            logger.info('----> Processing Frame (%d/%d)' % \
+            log.warning('----> Processing Frame (%d/%d)' % \
                   (main_roi_i+1, len(main_rois)))
 
             # load the sub roi(s) that are inside this main roi
@@ -167,7 +144,7 @@ def main(argv):
                 # NOTE: None is used for not found sub rois since we still need to measure something
                 else:
                     sub_rois.append(None)
-            logger.debug('Number of sub_rois found: %d' % len(sub_rois))
+            log.info('Number of sub_rois found: %d' % len(sub_rois))
 
             # load the sub roi(s) that are inside this main roi
             # NOTE: None is used for not found sub rois since we still need to measure something
@@ -208,7 +185,7 @@ def main(argv):
             except:
                 odir = sana_io.create_odir(
                     args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
-            logger.debug('Output directory successfully created: %s' % odir)
+            log.info('Output directory successfully created: %s' % odir)
 
             padding = args.padding
 
@@ -218,15 +195,15 @@ def main(argv):
                 # rotate/translate the coord. system to retrieve the frame from
                 # the slide. the frame will be orthogonalized such that CSF is
                 # at the top and WM is at the bottom of the image.
-                frame = loader.load_gm_frame(params, main_roi, padding=padding, debug=level)
+                frame = loader.load_gm_frame(params, main_roi, padding=padding, debug_level=args.debug_level)
             else:
                 # just translates the coord. system, no rotating or cropping
-                frame = loader.load_roi_frame(params, main_roi, padding=padding, debug=level)
+                frame = loader.load_roi_frame(params, main_roi, padding=padding, debug_level=args.debug_level)
 
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
                 main_roi,
-                params.data['loc'], params.data['padding'], params.data['crop_loc'],
+                params.data['loc'], params.data['crop_loc'],
                 params.data['M1'], params.data['M2']
             )
 
@@ -234,30 +211,25 @@ def main(argv):
             for sub_roi_i in range(len(sub_rois)):
                 sub_rois[sub_roi_i] = transform_poly(
                     sub_rois[sub_roi_i],
-                    params.data['loc'], params.data['padding'], params.data['crop_loc'],
+                    params.data['loc'], params.data['crop_loc'],
                     params.data['M1'], params.data['M2']
                 )
 
             # get the processor object
             processor = get_processor(
-                slide_f, frame, debug=level)
+                slide_f, frame, debug_level=args.debug_level)
 
             if processor is None:
-                logger.error('No processor found')
+                log.info('No processor found')
                 continue
             if (main_roi_i == 0):
                 first_run = True
             else:
                 first_run = False
-            if (main_roi_i+1 == len(main_rois)):
-                last_run = True
-            else:
-                last_run = False
-
 
             # run the processes for the antibody
             processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
-            logger.info('Runtime: %0.2f (sec)' % (time.time()-t0))
+            log.info('Runtime: %0.2f (sec)' % (time.time()-t0))
 
         # end of main_rois loop
     #
@@ -296,7 +268,7 @@ def cmdl_parser(argv):
         help="class names of ROIs inside the main ROI to separately process")
     parser.add_argument(
         '-debug_level', type=str, default='normal',
-        help="Logging debug level", choices=['full', 'normal', 'quiet'])
+        help="Logging debug level", choices=['full', 'debug', 'normal', 'quiet'])
     parser.add_argument(
         '-padding', type=int, default=0, help="Frame padding")
 

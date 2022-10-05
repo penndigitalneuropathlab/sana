@@ -15,7 +15,7 @@ from sana_processors.HDAB_processor import HDABProcessor
 from sana_geo import Point
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
-from wildcat.saved_models import MicrogliaModel
+from wildcat.pixel_classifiers import MicrogliaClassifier
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -25,7 +25,6 @@ from matplotlib import pyplot as plt
 class IBA1Processor(HDABProcessor):
     def __init__(self, fname, frame, debug=False):
         super(IBA1Processor, self).__init__(fname, frame, debug)
-        self.debug = debug
     #
     # end of constructor
 
@@ -36,12 +35,6 @@ class IBA1Processor(HDABProcessor):
 
         self.mask_frame(main_roi, sub_rois)
 
-        # fig, axs = plt.subplots(1,2)
-        # axs[0].imshow(probs[0])
-        # axs[1].imshow(self.frame.img)
-        # plt.show()
-
-
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
         # NOTE: original value was DAB_OD = 0.3 in QuPath, this
@@ -49,11 +42,10 @@ class IBA1Processor(HDABProcessor):
         self.manual_dab_threshold = 94
 
         # generate the manually curated AO results
-        # self.run_manual_ao(odir, params)
+        self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        # self.run_auto_ao(odir, params, scale=1.0, mx=90)
-
+        self.run_auto_ao(odir, params, scale=1.0, mx=90)
 
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -68,24 +60,22 @@ class IBA1Processor(HDABProcessor):
     # end of run
 
     def run_microglia(self, odir, params):
-
         model = MicrogliaModel(self.frame)
         probs = model.run()
         # save the output probabilities
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_MICROGLIA.npy'))
         np.save(ofname, probs)
-        # fig, axs = plt.subplots(2,4)
-        # axs[0,2].imshow(density[0], cmap='coolwarm')
-        # axs[0,3].imshow(density[1], cmap='coolwarm')
-        # axs[1,2].imshow(density[2], cmap='coolwarm')
-        # axs[1,3].imshow(density[3], cmap='coolwarm')
 
-        # gs = axs[0,0].get_gridspec()
-        # for ax in axs[0:2, 0:2].flatten():
-        #     ax.remove()
-        # axbig = fig.add_subplot(gs[0:2,0:2])
-        # axbig.imshow(self.frame.img)
-        # plt.show()
+        if self.debug:
+            fig, axs = plt.subplots(1,len(probs))
+            for i in range(len(probs)):
+                axs[0,i].imshow(probs[i], cmap='coolwarm')
+            gs = axs[0,0].get_gridspec()
+            for ax in axs[0:2, 0:2].flatten():
+                ax.remove()
+            axbig = fig.add_subplot(gs[0:2,0:2])
+            axbig.imshow(self.frame.img)
+            plt.show()
 
         # # get the prob. maps as a pos. class minus the bckg class
         # neuronal = x_cpool[0] - x_cpool[3]

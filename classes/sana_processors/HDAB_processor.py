@@ -2,6 +2,7 @@
 # installed modules
 import numpy as np
 import cv2
+from sana_logger import SANALogger
 from tqdm import tqdm
 from PIL import Image
 from scipy.ndimage import convolve1d
@@ -24,13 +25,13 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, debug=False):
-        super(HDABProcessor, self).__init__(fname, frame, debug)
+    def __init__(self, fname, frame, debug_level=False):
+        super(HDABProcessor, self).__init__(fname, frame, debug_level)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
-        if self.debug:
+        if self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
             ds = 20
             img = self.frame.img
             img = img[::ds, ::ds].astype(float) / 255
@@ -45,6 +46,7 @@ class HDABProcessor(Processor):
             ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
             x, y, z = self.ss.stain_vector.orig_v[1]
             ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+            fig.suptitle('HDABProcessor | Stains and Stain Vectors')
             plt.show()
             # exit()
 
@@ -98,14 +100,17 @@ class HDABProcessor(Processor):
     # TODO: rename scale/max
     # function takes in a DAB Frame object, extracting a DAB thresholded image
     def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
+        self.log.info('Processing DAB...')
         if debug and run_normalize:
-            fig, axs = plt.subplots(2,2, sharex=True,sharey=True)
+            fig, axs = plt.subplots(2,3, sharex=True,sharey=True)
             axs = axs.ravel()
         elif debug and not run_normalize:
-            fig, axs = plt.subplots(1,3, sharex=True,sharey=True)
+            fig, axs = plt.subplots(2,2, sharex=True,sharey=True)
+            axs = axs.ravel()
 
         
         dab = frame.copy()
+        # plot #1
         if debug:
             axs[0].imshow(self.frame.img)
             axs[0].set_title('Orig. Img')
@@ -115,19 +120,19 @@ class HDABProcessor(Processor):
             # TODO: rename mean_normalize --> bckgrnd subtraction (denoising)
             dab = mean_normalize(dab)
 
-            # plot #1
-            # if debug:
-            #     axs[1].imshow(dab.img)
-            #     axs[1].set_title('Normalized DAB Img')
+            # plot #2
+            if debug:
+                axs[1].imshow(dab.img)
+                axs[1].set_title('Normalized DAB Img')
 
             # TODO: run anisodiff
             # smooth the image
             dab.anisodiff()
 
-            # plot #2
+            # plot #3
             if debug:
-                axs[1].imshow(dab.img)
-                axs[1].set_title('Normalized/Smoothed DAB Img')
+                axs[2].imshow(dab.img)
+                axs[2].set_title('Normalized/Smoothed DAB Img')
 
         
         # get the histograms
@@ -142,10 +147,10 @@ class HDABProcessor(Processor):
         if not mask is None:
             dab.mask(mask)
             
-
+        # plot #2 or #4
         if debug:
-            axs[-2].imshow(dab.img)
-            axs[-2].set_title('Thresholded Img')
+            axs[-3].imshow(dab.img)
+            axs[-3].set_title('Thresholded Img')
 
         if close_r > 0:
             close_kern = cv2.getStructuringElement(
@@ -156,21 +161,28 @@ class HDABProcessor(Processor):
                 cv2.MORPH_ELLIPSE, (open_r, open_r))
             dab.img = cv2.morphologyEx(dab.img, cv2.MORPH_OPEN, open_kern)
 
+        # plot #3 or #5
         if debug:
-            axs[-1].imshow(dab.img)
+            axs[-2].imshow(dab.img)
             axs[-1].set_title('Morph. Filter of Thresholded Img')
+            
+
+        # plot #4 or #6
+        img_final = ((dab.img != 0) & (dab_threshold != 0)).astype(np.uint8)
+
+        if debug:
+            axs[-1].imshow(img_final)
+            axs[-1].set_title('Final Processed Image')
             fig.suptitle('Debugging Plots for DAB Processing\n'+
                         'DAB Threshold: %d' %dab_threshold)
             plt.show()
-
-        img_final = ((dab.img != 0) & (dab_threshold != 0)).astype(np.uint8)
 
         return Frame(img_final, lvl=dab.lvl, converter=dab.converter), dab_threshold
 
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255, debug=False):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
@@ -180,8 +192,8 @@ class HDABProcessor(Processor):
             scale = 1.0,
             mx = 90,
             close_r = 0,
-            open_r = 11,
-            debug = False
+            open_r = 13,
+            debug = self.log.getEffectiveLevel() == SANALogger.get_level_config('full')
             )
 
         # run the AO process
@@ -195,13 +207,13 @@ class HDABProcessor(Processor):
         params.data['auto_stain_threshold'] = self.auto_dab_threshold
 
         # create the output directory
-        odir = sana_io.create_odir(odir)
+        odir = sana_io.create_odir(odir,'')
 
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
             self.frame, self.auto_dab_thresh_img)
         self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
-        self.save_frame(odir, self.auto_dab_thresh, 'AUTO_THRESH')
+        self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
         self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
     #
     # end of run_auto_ao

@@ -308,13 +308,6 @@ def write_annotations(ofile, annos):
 #  -ofile: location of existing file to write to
 #  -annos: list of Polygon annotations
 def append_annotations(ofile, annos):
-
-    # provide blank names if not given
-    if class_names is None:
-        class_names = ['']*len(annos)
-    if anno_names is None:
-        anno_names = ['']*len(annos)
-
     # checks if annotation file exists
     if os.path.exists(ofile):
         orig_annos = read_annotations(ofile)
