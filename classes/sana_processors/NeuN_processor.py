@@ -62,14 +62,35 @@ class NeuNProcessor(HDABProcessor):
     #
     # end of run
 
-    def run_neurons(self, odir, params, main_roi, disk_r=7, sigma=3,
-                    close_r=9, open_r=9, soma_r=15, debug=False):
+    def run_neurons(self, odir, params, main_roi, debug=False):
         
-        # detect the the hematoxylin cells
-        n_iterations = 2
-        neurons = self.detect_neurons(
-            odir, params, disk_r, n_iterations, sigma, close_r, open_r, soma_r, debug=False)
+        # instance segment the neurons
+        disk_r = 7
+        sigma = 3
+        n_iterations = 1
+        close_r = 9
+        open_r = 9
+        clean_r = 29
+        neurons = self.segment_cells(
+            self.dab_norm, self.auto_dab_norm_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False)
 
+        fig, ax = plt.subplots(1,1)
+        ax.imshow(self.frame.img)
+        for x in neurons:
+            plot_poly(ax, x, color='red')
+        plt.show()
+
+        exit()
+        
+        # write the neuron segmentations
+        ofname = sana_io.create_filepath(
+            self.fname, ext='.json', suffix='NEURONS', fpath=odir)
+        neuron_annos = [x.to_annotation(ofname, 'NEURON') for x in neurons]
+        [transform_inv_poly(
+            x, params.data['loc'], params.data['crop_loc'],
+            params.data['M1'], params.data['M2']) for x in neuron_annos]
+        sana_io.write_annotations(ofname, neuron_annos)
+        
         neurons = [n for n in neurons if n.inside(main_roi)]
 
         if len(neurons) < 10:
@@ -158,7 +179,7 @@ class NeuNProcessor(HDABProcessor):
             plt.show()
     #
     # end of run_neurons
-
+    
     def run_segment(self, odir, params, landmarks, padding=0,
                     disk_r=7, sigma=3,
                     close_r=9, open_r=9, soma_r=15, debug=False):
@@ -317,134 +338,14 @@ class NeuNProcessor(HDABProcessor):
             self.save_array(odir, feats[i], feats_labels[i])
     #
     # end of run_segment
-    
-    def detect_neurons(self, odir, params,
-                       disk_r, n_iterations, sigma, close_r, open_r, soma_r, debug=False):
-        
-        # get the image array
-        img = self.dab_norm.img.copy()[:,:,0]
 
-        # get the thresholded images, one for somas only, and one for all neuron parts
-        somas_img = self.get_thresh_img(img, self.auto_dab_norm_threshold, close_r, soma_r)
-        thresh_img = self.get_thresh_img(img, self.auto_dab_norm_threshold, close_r, open_r)
-
-        # mask for only somas, this will be used to find the seeds of the image
-        seed_img = img.copy()
-        seed_img[somas_img == 0] = 0
-
-        # mask for all neuron parts, this will be used for the final segmentation
-        neur_img = img.copy()
-        neur_img[thresh_img == 0] = 0
-
-        # define the sure background, anything 0 and not close in prox. to data
-        # NOTE: this is done on the all nueron parts image
-        dil_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        sure_bg = cv2.dilate(thresh_img, dil_kern, iterations=3)
-        
-        # perform the min-max filtering to maximize centers of cells
-        # NOTE: this finds the so called seeds of the image, in a thresholded image with dendrites
-        # TODO: inverse this filter
-        img_minmax = minmax_filter(255-seed_img, disk_r, sigma, n_iterations, self.debug)
-
-        # define the sure foreground, small circles at minimums of filter output
-        # NOTE: this is done on the somas only image
-        candidates = np.where((img_minmax == -1) & (img != 0))
-        r0 = 3
-        sure_fg = np.zeros_like(img, dtype=np.uint8)
-        for i in range(len(candidates[0])):
-            sure_fg = cv2.circle(sure_fg,
-                                 (candidates[1][i], candidates[0][i]),
-                                 r0, color=255, thickness=-1)
-        
-        # get the unknown areas of the image, not defined by sure bg or fg
-        unknown = cv2.subtract(sure_bg, sure_fg)
-
-        # run the watershed algo
-        ret, markers = cv2.connectedComponents(sure_fg)
-        markers += 1
-        markers[unknown == 255] = 0
-        rgb = np.stack((thresh_img,)*3, axis=-1) # should be dab_norm
-        markers = cv2.watershed(rgb, markers)
-        markers[:,0] = 0
-        markers[:,-1] = 0
-        markers[0,:] = 0
-        markers[-1,:] = 0
-
-        # TODO: this method doesn't separate some touching cells, but its fast        
-        mframe = self.frame.copy()
-        mframe.img = np.where(markers <= 1, 0, 1).astype(np.uint8)
-        mframe.get_contours()
-        mframe.filter_contours()
-
-        neurons = [c.polygon for c in mframe.get_body_contours()]
-        
-        if debug:
-            rgb_markers = np.zeros_like(rgb)
-            colors = [(np.random.randint(10, 255),
-                       np.random.randint(10, 255),
-                       np.random.randint(10, 255)) \
-                      for _ in range(1,np.max(markers))]
-            colors = [(0,0,0),(0,0,0)] + colors + [(80,80,80)]
-            for j in tqdm(range(rgb_markers.shape[0])):
-                for i in range(rgb_markers.shape[1]):
-                    rgb_markers[j,i] = colors[markers[j,i]]
-
-            fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
-            axs[0].imshow(self.frame.img)
-            axs[0].set_title('orig')
-            axs[1].imshow(img, vmin=vmi, vmax=vmx)
-            axs[1].set_title('preprocess')
-            axs[2].imshow(img_minmax)
-            axs[2].plot(candidates[1], candidates[0], '+', color='red', markersize=3)
-            axs[2].set_title('min-max filter')
-            axs[3].imshow(rgb_markers)
-            axs[3].set_title('segmented cells')
-            axs[4].imshow(self.frame.img)
-            axs[4].plot(candidates[1], candidates[0], '+', color='green', markersize=4)
-            axs[4].set_title('candidate locs')
-            plt.show()
-                    
-
-        # tsize = Point(400, 100, True)
-        # tstep = Point(50, 50, True)
-        # heatmap = Heatmap(self.dab_norm, cells, tsize, tstep, debug=True)
-
-        # # TODO: this should be like heatmap.get_density()
-        # # TODO: could do this all in one loop, add a list of functions to call
-        # funcs = [heatmap.density, heatmap.eccentricity, heatmap.circulatiry]
-        # titles = ['density', 'eccentricity', 'perimeter to area ratio']
-        # feats = heatmap.run(funcs)
-
-        # write the cell segmentations
-        ofname = sana_io.create_filepath(
-            self.fname, ext='.json', suffix='NEURONS', fpath=odir)
-        neuron_annos = [x.to_annotation(ofname, 'NEURON') for x in neurons]
-        [transform_inv_poly(
-            x, params.data['loc'], params.data['crop_loc'],
-            params.data['M1'], params.data['M2']) for x in neuron_annos]
-        sana_io.write_annotations(ofname, neuron_annos)
-
-        return neurons
-    #
-    # end of detect_neurons    
-        
-    # do some thresholding and morph filters to
-    # 1) remove faint objects (ambiguous)
-    # 2) close holes in center of faint neurons        
-    # 3) delete tiny objects (too small/fragments)
-    # NOTE: in 3) making the open_r big deletes dendrites
-    def get_thresh_img(self, img, thresh, close_r, open_r):
-        img = np.where(img < thresh, 0, 255).astype(np.uint8)
-        close_kern = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (close_r, close_r))
-        open_kern = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (open_r, open_r))        
-        img = cv2.morphologyEx(img, cv2.MORPH_CLOSE, close_kern)
-        img = cv2.morphologyEx(img, cv2.MORPH_OPEN, open_kern)
-
-        return img
-    #
-    # end of get_thresh_img
+    def get_thresh(self, img, threshold, close_r, open_r):
+        img_thresh = np.where(img < threshold, 0, 255).astype(np.uint8)[:,:,0]
+        close_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_r, close_r))
+        open_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_r, open_r))
+        img_close = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, close_kern)
+        img_open = cv2.morphologyEx(img_close, cv2.MORPH_OPEN, open_kern)
+        img_final = 255 * ((img_open != 0) & (img_thresh != 0)).astype(np.uint8)
 #
 # end of NeuNProcessor
 
