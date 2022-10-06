@@ -86,7 +86,7 @@ class Loader(openslide.OpenSlide):
     #  -size: size of Frame to load (in any unit or resolution)
     #  -lvl: resolution to use, overrides the lvl attribute stored in Loader
     #  -pad_color: color to use to pad the Frame, can use slide_color or white
-    def load_frame(self, loc, size, lvl=None, pad_color=None):
+    def load_frame(self, loc, size, lvl=None, pad_color=None, frame_padding=0):
         if lvl is None:
             lvl = self.lvl
         if pad_color is None:
@@ -140,12 +140,13 @@ class Loader(openslide.OpenSlide):
 
         return Frame(img, lvl=lvl, converter=self.converter,
                      csf_threshold=self.csf_threshold,
+                     padding=frame_padding,
                      slide_color=self.slide_color)
     #
     # end of load_frame
 
     # this function uses the bounding box of an ROI to load a frame of data
-    def load_roi_frame(self, params, orig_roi, copy=True):
+    def load_roi_frame(self, params, orig_roi, padding=None, copy=True, logger=None):
 
         # create a copy to not disturb the original data
         if copy:
@@ -158,7 +159,12 @@ class Loader(openslide.OpenSlide):
 
         # load the frame based on the ROI bounding box
         loc, size = roi.bounding_box()
-        frame = self.load_frame(loc, size)
+
+        if padding is not None:
+            loc -= (padding//2)
+            size += padding
+
+        frame = self.load_frame(loc, size, frame_padding=padding)
 
         # translate the ROI to the new coord. system
         roi.translate(loc)
@@ -168,6 +174,14 @@ class Loader(openslide.OpenSlide):
         params.data['size'] = size
         params.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
         params.data['crop_size'] = np.copy(size)
+        params.data['padding'] = padding
+
+        if logger.plots:
+            fig, axs = plt.subplots(1,1)
+            axs.imshow(frame.img)
+            plot_poly(axs, roi, color='red')
+            fig.suptitle('load_roi_frame')
+            plt.show()
 
         return frame
     #
@@ -177,30 +191,31 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
     # TODO: need to pad the segmentation somehow to provide context for tiling
-    def load_gm_frame(self, params, orig_roi, debug=False):
-
-        if debug:
-            fig, axs = plt.subplots(2,2)
-            axs = axs.ravel()
+    def load_gm_frame(self, params, orig_roi, padding=None, logger=None):
 
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
         # load the frame from the ROI
-        frame = self.load_roi_frame(params, roi, copy=False)
+        frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
 
-        if debug:
+        
+        if logger.plots:
+            fig, axs = plt.subplots(2,2)
+            axs = axs.ravel()
             axs[0].imshow(frame.img)
             plot_poly(axs[0], roi, color='red')
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
+        logger.info('Best Orthog. Angle found:',angle)
 
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
         roi = roi.transform(M1)
-        if debug:
+
+        if logger.plots:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
 
@@ -210,13 +225,14 @@ class Loader(openslide.OpenSlide):
         crop_loc, crop_size = roi.bounding_box()
         roi.translate(crop_loc)
         frame.crop(crop_loc, crop_size)
-        if debug:
+
+        if logger.plots:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
 
         # figure out if the image is oriented with CSF on top
         # TODO: make sure get_tissue_orientation is good
-        csf_on_top = get_tissue_orientation(frame, roi, angle, debug)
+        csf_on_top = get_tissue_orientation(frame, roi, angle, logger)
         if not csf_on_top:
             rotate_angle = 180
         else:
@@ -225,9 +241,12 @@ class Loader(openslide.OpenSlide):
         # rotate either 180 or 0 degrees to make sure CSF is on top
         M2, nw, nh = frame.get_rotation_mat(rotate_angle)
         frame.warp_affine(M2, nw, nh)
-        if debug:
+
+        if logger.plots:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
+            fig.suptitle('load_gm_frame')
+            plt.show()
 
         # store the values used during loading the frame
         params.data['crop_loc'] = crop_loc
@@ -236,9 +255,6 @@ class Loader(openslide.OpenSlide):
         params.data['angle2'] = rotate_angle
         params.data['M1'] = M1
         params.data['M2'] = M2
-
-        if debug:
-            plt.show()
 
         # finally, return the orthogonalized frame
         return frame

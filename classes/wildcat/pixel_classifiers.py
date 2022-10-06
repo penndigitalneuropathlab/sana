@@ -1,4 +1,3 @@
-
 # system modules
 import os
 import sys
@@ -17,10 +16,11 @@ from wildcat.unet_wildcat import resnet50_wildcat_upsample
 from matplotlib import pyplot as plt
 
 class Model:
-    def __init__(self, model_path, frame, num_classes, kmax=0.02, alpha=0.7, num_maps=4, kmin=0.0):
+    def __init__(self, model_path, frame, num_classes, kmax=0.02, alpha=0.7, num_maps=4, kmin=0.0, debug=None):
         self.model_path = model_path
         self.frame = frame
         self.num_classes = num_classes
+        self.debug = debug
 
         # grab the device to run the model on
         self.device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
@@ -145,8 +145,8 @@ class Model:
                     yout0, yout1 = v * self.window_out, ((v+1)*self.window_out)
                     try:
                         for i in range(self.num_classes):
-                            output[i, xout0:xout1,yout0:yout1] = x_softmax_ctr[0,i,:,:]
-                            # output[i, xout0:xout1,yout0:yout1] = x_cpool_ctr[0,i,:,:].cpu().detach().numpy()
+                            # output[i, xout0:xout1,yout0:yout1] = x_softmax_ctr[0,i,:,:]
+                            output[i, xout0:xout1,yout0:yout1] = x_cpool_ctr[0,i,:,:].cpu().detach().numpy()
                     except ValueError as e:
                         continue
 
@@ -165,10 +165,11 @@ class Model:
         output = output[:, :self.true_out_dim[0], :self.true_out_dim[1]]
 
         # print(output.shape, self.frame.img.shape, flush=True)
-        # fig, axs = plt.subplots(1,2)
-        # axs[0].imshow(self.frame.img, extent=(0,100,0,100))
-        # axs[1].imshow(output[1], extent=(0,100,0,100))
-        # plt.show()
+        if self.debug:
+            fig, axs = plt.subplots(1,2)
+            axs[0].imshow(self.frame.img, extent=(0,100,0,100))
+            axs[1].imshow(output[0], extent=(0,100,0,100))
+            plt.show()
 
         return output
     #
@@ -176,12 +177,22 @@ class Model:
 #
 # end of Model
 
-class MulticlassModel(Model):
+class MulticlassClassifier(Model):
     def __init__(self, frame):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'multiclass.dat')
         super().__init__(model_path, frame, 4)
 
-class TangleModel(Model):
+class TangleClassifier(Model):
     def __init__(self, frame):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tangle.dat')
         super().__init__(model_path, frame, 2, kmax=0.05, kmin=0.02, alpha=0.5, num_maps=4)
+
+class MicrogliaClassifier(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'microglia.dat')
+        super().__init__(model_path, frame, 6, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+
+class R13Classifier(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'R13.dat')
+        super().__init__(model_path, frame, 4, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)

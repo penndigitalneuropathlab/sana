@@ -182,22 +182,14 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
         x = x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
+
     return x
 #
 # end of transform_inv_poly
 
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
-    if last:
-        en = x.shape[0]-1
-    else:
-        en = x.shape[0]-2
-    for i in range(en):
-        if i != 0:
-            label = None
-        ax.plot((x[i][0], x[i+1][0]),
-                (x[i][1], x[i+1][1]),
-                color=color, linestyle=linestyle, label=label)
+def plot_poly(ax, x, **kwargs):
+    ax.plot(x[:,0],x[:,1],**kwargs)
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, xy, lvl=0):
@@ -598,7 +590,7 @@ class Annotation(Polygon):
         obj.confidence = confidence
 
         return obj
-        
+
     def __array_finalize__(self, obj):
         if obj is None: return
         self.file_name = getattr(obj, 'file_name', None)

@@ -33,7 +33,7 @@ class TypeException(Exception):
 #  -converter: Converter object from Loader
 class Frame:
     def __init__(self, img, lvl=-1, converter=None,
-                 csf_threshold=None, slide_color=None):
+                 csf_threshold=None, slide_color=None, padding=0):
         if type(img) is str:
             self.img = np.array(Image.open(img))
         else:
@@ -47,6 +47,8 @@ class Frame:
         self.contours = []
         self.csf_threshold = csf_threshold
         self.slide_color = slide_color
+        self.padding = padding
+
     #
     # end of constructor
 
@@ -619,21 +621,21 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def get_tissue_orientation(frame, roi, angle, debug=False):
-
+def get_tissue_orientation(frame, roi, angle, logger):
+    
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
     if np.mean(s0[:,1]) > np.mean(s1[:,1]):
         top, bot = s1, s0
     else:
         top, bot = s0, s1
-
-    if debug:
+    
+    if logger.plots:
         fig, ax = plt.subplots(1,1)
         ax.imshow(frame.img)
         plot_poly(ax, s0, color='red')
         plot_poly(ax, s1, color='blue')
-        plt.show()
+        fig.show()
 
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
