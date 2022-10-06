@@ -1,5 +1,4 @@
 
-
 # system packages
 import os
 import sys
@@ -33,7 +32,7 @@ class TypeException(Exception):
 #  -converter: Converter object from Loader
 class Frame:
     def __init__(self, img, lvl=-1, converter=None,
-                 csf_threshold=None, slide_color=None):
+                 csf_threshold=None, slide_color=None, padding=0):
         if type(img) is str:
             self.img = np.array(Image.open(img))
         else:
@@ -47,6 +46,8 @@ class Frame:
         self.contours = []
         self.csf_threshold = csf_threshold
         self.slide_color = slide_color
+        self.padding = padding
+
     #
     # end of constructor
 
@@ -164,13 +165,14 @@ class Frame:
     # end of crop
 
     # scales an array to a new size given a scaling factor
-    def scale(self, ds):
-        size = self.size().astype(float) / ds
-        if ds[0] > 1:
-            size = np.ceil(size)
-        size = self.converter.to_int(size)
+    def scale(self, ds, interpolation=cv2.INTER_CUBIC, size=None):
+        if size is None:
+            size = self.size().astype(float) / ds
+            if ds[0] > 1:
+                size = np.ceil(size)
+            size = self.converter.to_int(size)
         self.img = cv2.resize(self.img, dsize=(size[0], size[1]),
-                              interpolation=cv2.INTER_CUBIC)
+                              interpolation=interpolation)
         if len(self.img.shape) == 2:
             self.img = self.img[:, :, None]
     #
@@ -581,7 +583,6 @@ class Frame:
             x1pad = np.full_like(x, -255, shape=(x.shape[0], x1pad))
             x = np.concatenate((x0pad, x, x1pad), axis=1)
             if x.shape != temp.shape:
-                print(x.shape, temp.shape, c)
                 sizes.append(0)
                 continue
             corrs = []
@@ -619,21 +620,21 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def get_tissue_orientation(frame, roi, angle, debug=False):
-
+def get_tissue_orientation(frame, roi, angle, logger):
+    
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
     if np.mean(s0[:,1]) > np.mean(s1[:,1]):
         top, bot = s1, s0
     else:
         top, bot = s0, s1
-
-    if debug:
+    
+    if logger.plots:
         fig, ax = plt.subplots(1,1)
         ax.imshow(frame.img)
         plot_poly(ax, s0, color='red')
         plot_poly(ax, s1, color='blue')
-        plt.show()
+        fig.show()
 
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
@@ -684,7 +685,7 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
 #
 # end of create_mask
 
-# TODO: check if right aligned padding is correct
+# TODO: just subtract gauss blur!!
 # TODO: there are better methods to do this, ask paul in MRI e.g.
 # this function subtracts background from the frame, by finding the local
 # background intensity throughout the frame
@@ -735,7 +736,7 @@ def mean_normalize(orig_frame):
     frame_norm.img = cv2.GaussianBlur(frame.img, ksize=(0,0), sigmaX=tsize[0], sigmaY=tsize[1])[:,:,None]
 
     # finally, subtract the background
-    # NOTE: we are making sure nothing goes below 0 here!
+    # NOTE: we are making sure nothing goes below 0 here! this is okay to do since this should all be background
     frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
     frame.img = frame.img.astype(np.uint8)

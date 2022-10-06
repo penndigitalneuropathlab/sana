@@ -23,7 +23,7 @@ from sana_geo import Point
 INT_KEYS = [
     'lvl', 'padding',
     'csf_threshold',
-    'manual_stain_threshold', 'auto_stain_threshold',
+    'manual_stain_threshold', 'auto_stain_threshold', 'padding',
 ]
 POINT_KEYS = [
     'loc', 'size',
@@ -35,7 +35,7 @@ M_KEYS = [
     'M2',
 ]
 FLOAT_KEYS = [
-    'angle1', 'angle2',    
+    'angle1', 'angle2',
     'area',
     'manual_ao', 'auto_ao',
     'vert_fibers_ao', 'horz_fibers_ao',
@@ -44,7 +44,7 @@ FLOAT_KEYS = [
 LIST_KEYS = [
     'sub_areas',
     'manual_sub_aos', 'auto_sub_aos',
-    'vert_fibers_sub_aos', 'horz_fibers_sub_aos', 
+    'vert_fibers_sub_aos', 'horz_fibers_sub_aos',
     'grn_sub_aos', 'pyr_sub_aos', 'tot_sub_aos',
 ]
 KEYS = INT_KEYS + POINT_KEYS + M_KEYS + FLOAT_KEYS + LIST_KEYS
@@ -101,7 +101,7 @@ class Params:
 
     # parses the value from string to a specific datatype based on the key
     def parse_val(self, key, val):
-        if len(val) == 0 or val is None or val == "None":
+        if (len(val) == 0) or (val is None) or (val == 'None'):
             return None
         elif key in INT_KEYS:
             return self.parse_int(val)

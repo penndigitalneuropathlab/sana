@@ -8,6 +8,9 @@ import numpy as np
 import cv2
 import numba
 
+# debugging modules
+from matplotlib import pyplot as plt
+
 # C optimized internal function to perform the actual filter
 @numba.jit(nopython=True)
 def _minmax(img, D, debug=False):
@@ -41,19 +44,20 @@ def _minmax(img, D, debug=False):
             patch[cy0-y0:n+cy1-y1, cx0-x0:n+cx1-x1] = img[cy0:cy1, cx0:cx1]
 
             # get the number of pixel intensities above and below pixel o
-            mx_o, mi_o = 0, 0
+            above_o = 0
+            below_o = 0
             for Dj in range(D.shape[0]):
                 for Di in range(D.shape[1]):
                     if D[Dj,Di] == 1:
-                        if patch[Dj,Di] <= o:
-                            mx_o += 1
+                        if patch[Dj,Di] < o:
+                            below_o += 1
                         else:
-                            mi_o += 1
+                            above_o += 1
             #
             # end of pixel counting
 
             # calculate result of the filter at pixel o
-            I_e[j, i] = (mx_o - mi_o) / N_D
+            I_e[j, i] = (above_o - below_o) / N_D
     #
     # end of o loop
 
@@ -61,7 +65,7 @@ def _minmax(img, D, debug=False):
 #
 # end of _minmax
 
-# IMPORTANT: This functions expects that the image is negative!!!
+# IMPORTANT: This function expects a distance transform image
 # 
 # this is a wrapper function for _minmax, it prepares the arrays
 #  and performs the general blurring and iterations
@@ -69,16 +73,18 @@ def _minmax(img, D, debug=False):
 # this function calculates the number of pixels in a disk "D" centered on a
 #   pixel "o" that are both above or below the intensity of pixel o
 # namely, it calculates the following equation for each pixel
-#   o' = (mx - mi) / N
-#   where mx is number of pixel intensities less than o
-#         mi is number of pixel intensities greater than o
+#   o' = (above - below) / N
+#   where "above" is number of pixels w/ intensities greater than or equal to o
+#         "below" is number of pixels w/ intensities less than o
 #     and N is number of pixels in the disk
-# NOTE: if all pixels are less than o, we get N-0/N = 1
-#        and all pixels greater than o we get 0-N/N = -1
-def minmax_filter(img, r, sigma, n_iterations=1, debug=False):
+# NOTE: if all pixels are less than o, we get 0-N/N = -1
+#         and all pixels greater than or equal to o we get N-0/N = 1
+#       the background of the image goes to 1, as all surrounding pixels equal 0
+#       the centers of cells go to -1, as all surrounding pixels are less than the center
+def minmax_filter(dist, r, sigma, n_iterations=1, debug=False):
 
     # make sure image is a float
-    img = img.copy().astype(float)
+    img = dist.copy().astype(float)
 
     # define the disk
     n = 2*r+1
@@ -86,17 +92,26 @@ def minmax_filter(img, r, sigma, n_iterations=1, debug=False):
     D[r,r] = 0
 
     # perform the N iterations of the filter
-    for _ in range(n_iterations):
+    for i in range(n_iterations):
 
         # gauss blur the image
-        img = cv2.GaussianBlur(img, (r,r), sigma)
+        img_blur = cv2.GaussianBlur(img, (r,r), sigma)
 
-        # perform an iteration of the min - max algorithm
-        img = _minmax(img, D, debug)
+        # perform an iteration of the min - max algorithm        
+        img = _minmax(img_blur, D, debug)
+
+        centers = np.where(img == -1)
+        if debug:
+            fig, axs = plt.subplots(1,2)
+            axs[0].imshow(img_blur)
+            axs[1].imshow(img)
+            axs[1].plot(centers[1], centers[0], 'x', color='red')
+            axs[0].set_title('iteration=%d' % i)
+            plt.show()
     #
     # end of iterations
 
     return img
 #
-# end of minmax
+# end of minmax_filter
 

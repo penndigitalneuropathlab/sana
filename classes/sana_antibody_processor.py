@@ -1,6 +1,7 @@
 
 # installed modules
 import numpy as np
+import cv2
 
 # custom modules
 import sana_io
@@ -17,16 +18,16 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, roi_type="", debug=False):
+    def __init__(self, fname, frame, logger, roi_type=""):
         self.fname = fname
         self.frame = frame
+        self.logger = logger
         self.roi_type = roi_type
         self.debug = debug
     #
     # end of constructor
 
-    def mask_frame(self, main_roi, sub_rois=[]):
-        
+    def generate_masks(self, main_roi, sub_rois=[]):
         # generate the main mask
         self.main_mask = create_mask(
             [main_roi],
@@ -48,13 +49,6 @@ class Processor:
                 self.sub_masks.append(mask)
         #
         # end of sub_masks loop
-
-        # apply the main mask to the frame
-        # TODO: we need to check if this is needed
-        if self.frame.slide_color is None:
-            self.frame.mask(self.main_mask)
-        else:
-            self.frame.mask(self.main_mask, self.frame.slide_color)
     #
     # end of gen_masks
 
@@ -110,6 +104,65 @@ class Processor:
     #
     # end of run_ao
 
+    def segment_cells(self, frame, threshold,
+                      disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False):
+
+        # threshold the image and filter lots of data out to just get large circular objects
+        img_objs = get_thresh(frame.img, threshold, close_r, clean_r)
+
+        # run the distance transforms to find parts of circular objects far away from background
+        # TODO: this normalize is a little dangerous, think about blank images
+        img_dist = cv2.distanceTransform(img_objs, cv2.DIST_L2, 3)
+        img_dist = cv2.normalize(img_dist, 0, 255, cv2.NORM_MINMAX)
+
+        # run the minmax filter to find the centers of the cells
+        img_minmax = minmax_filter(img_dist, disk_r, sigma, n_iterations, debug)
+
+        # create sure foregournd using the minimas of the minmax image
+        # NOTE: the centers will be -1's, a little unintuitive
+        candiates = np.where(img_minmax == -1)
+        r0 = 3
+        sure_fg = np.zeros_like(frame.img, dtype=np.uint8)[:,:,0]
+        for i in range(len(candidates[0])):
+            sure_fg = cv2.circle(sure_fg, (candidates[1][i], candidates[0][i]),
+                                 r0, color=255, thickness=-1)
+
+        # threshold the frame for all cell parts using smaller kernel for segmentation
+        img_thresh = self.get_thresh(frame.img, threshold, close_r, open_r)
+
+        # create sure background using multiple dilations
+        dil_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9,9))
+        sure_bg = cv2.dilate(img_thresh, dil_kern, iterations=3)
+
+        # create unknown pixel regions, whatever is left from sure_fg and sure_bg
+        unknown = cv2.subtract(sure_bg, sure_fg)
+
+        # run the watershed algorithm to perform instance segmentation using the cell centers
+        # TODO: try gauss blur before watershed?
+        ret, markers = cv2.connectedComponents(sure_fg)
+        markers += 1
+        markers[unknown == 255] = 0
+        img_thresh_rgb = np.stack((img_thresh,)*3, axis=-1)
+        markers = cv2.watershed(img_thresh_rgb, markers)
+        markers[markers <= 1] = 0
+
+        # generate Polygons from the instance segmented markers image
+        cells = []
+        z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
+        o = z.copy() + 1
+        for val in range(1, np.max(markers)+1):
+            x = np.where(markers == val, o, z)
+            f = Frame(x, frame.lvl, frame.converter)
+            f.get_contours()
+            f.filter_contours()
+            bodies = f.get_body_contours()
+            if len(bodies) != 0:
+                cells.append(bodies[0].polygon.connect())
+
+        return cells
+    #
+    # end of segment_cells
+
     def get_signals(self, frame, detections=[], tsize=None, tstep=None):
 
         # these are the size and step length of the convolution process
@@ -143,7 +196,7 @@ class Processor:
         # axs[1][0].imshow(sub_deformed_feats[0][0])
         # axs[1][1].imshow(sub_deformed_feats[1][0])
         # axs[1][2].imshow(sub_deformed_feats[2][0])
-        # axs[1][3].imshow(sub_deformed_feats[3][0])        
+        # axs[1][3].imshow(sub_deformed_feats[3][0])
 
         # fig, axs = plt.subplots(1,3)
         # axs[0].plot(signals['normal'][0][0])
@@ -152,9 +205,9 @@ class Processor:
         #     n = signals['sub_deform'].shape[2]
         #     x = np.arange(n) + i*n
         #     axs[2].plot(x, signals['sub_deform'][i][0])
-        
+
         # plt.show()
-        
+
         return signals
     #
     # end of get_signals
