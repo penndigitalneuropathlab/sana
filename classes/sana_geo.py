@@ -193,7 +193,7 @@ def plot_poly(ax, x, plot_connected=None, plot_disconnected=False, **kwargs):
         x = x.connect()
     elif plot_disconnected == True:
         x = x.disconnect()
-    ax.plot(x[:,en],x[:,en],**kwargs)
+    ax.plot(x[:,0],x[:,1],**kwargs)
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, points, is_micron=False, lvl=0):
