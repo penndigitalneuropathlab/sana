@@ -2,7 +2,6 @@
 # installed modules
 import numpy as np
 import cv2
-from sana_logger import SANALogger
 from tqdm import tqdm
 from PIL import Image
 from scipy.ndimage import convolve1d
@@ -25,13 +24,13 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, debug_level=False):
-        super(HDABProcessor, self).__init__(fname, frame, debug_level)
+    def __init__(self, fname, frame, logger):
+        super(HDABProcessor, self).__init__(fname, frame, logger)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
-        if self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if self.logger.plots:
             ds = 20
             img = self.frame.img
             img = img[::ds, ::ds].astype(float) / 255
@@ -193,7 +192,7 @@ class HDABProcessor(Processor):
             mx = 90,
             close_r = 0,
             open_r = 13,
-            debug = self.log.getEffectiveLevel() == SANALogger.get_level_config('full')
+            debug = self.logger.plots
             )
 
         # run the AO process

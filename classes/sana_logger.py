@@ -12,9 +12,9 @@ class SANALogger():
         # debug  --> outputs method checks and info (frame size, angle found, etc.)
         # normal --> just Processing Slide/Processing Frame; standard info
         # quiet  --> outputs nothing
-        level_config = {'full': logging.DEBUG,         # value: 10
-                        'debug': logging.INFO,         # value: 20
-                        'normal': logging.WARNING,     # value: 30
+        level_config = {'debug': logging.DEBUG,         # value: 10
+                        'normal': logging.INFO,         # value: 20
+                        # 'normal': logging.WARNING,     # value: 30
                         'quiet': logging.ERROR,        # value: 40
                         # 'critical': logging.CRITICAL # value: 50
                         }
@@ -42,6 +42,11 @@ class SANALogger():
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
+
+        if level == logging.DEBUG:
+            logger.plots = True
+        else:
+            logger.plots = False
         
         return logger
 

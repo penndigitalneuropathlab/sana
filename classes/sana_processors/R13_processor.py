@@ -28,15 +28,15 @@ from sana_loader import Loader
 from matplotlib import pyplot as plt
 
 class R13Processor(HDABProcessor):
-    def __init__(self, fname, frame, debug_level):
-        super(R13Processor, self).__init__(fname, frame, debug_level)
+    def __init__(self, fname, frame, logger):
+        super(R13Processor, self).__init__(fname, frame, logger)
     #
     # end of constructor
 
     def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
         # generate the neuronal and glial severity results
 
-        self.log.info('Running R13 Processor...')
+        self.logger.info('Running R13 Processor...')
 
         self.generate_masks(main_roi, sub_rois)
 
@@ -55,7 +55,7 @@ class R13Processor(HDABProcessor):
     # end of get_confidence
 
     def run_lb_detection(self, odir, roi_odir, first_run, params):   
-        self.log.info('Running LB detections...')
+        self.logger.info('Running LB detections...')
 
         model = R13Classifier(self.frame)
         wc_activation = model.run()
@@ -66,7 +66,7 @@ class R13Processor(HDABProcessor):
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_R13.npy'))
         np.save(ofname, wc_activation)
         
-        if self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if self.logger.plots:
              # debug WC activations for each of the classes
             class_dict = {
                 0: 'Artifact',
@@ -89,9 +89,9 @@ class R13Processor(HDABProcessor):
             close_r = 0,
             open_r = 13, #always an odd number (7 < open_r < 13)
             mask = self.main_mask,
-            debug = self.log.getEffectiveLevel() == SANALogger.get_level_config('full')
+            debug = self.logger.plots
             )
-        self.log.info('DAB Thresh: %d' %dab_thresh)
+        self.logger.info('DAB Thresh: %d' %dab_thresh)
 
         lb_activation = wc_activation[2,:,:]
         lb_softmax = wc_softmax[2,:,:]
@@ -102,41 +102,16 @@ class R13Processor(HDABProcessor):
         lb_activation.img = cv2.resize(lb_activation.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
         
         lb_softmax = Frame(lb_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
-
-        # fig, axs = plt.subplots(1,3)
-        # axs[0].imshow(self.dab.img)
-        # axs[0].set_title('DAB Img')
-        # axs[1].imshow(wc.img)
-        # axs[1].set_title('Nonsoftmax')
-        # axs[2].imshow(wc_soft.img)
-        # axs[2].set_title('Softmax')
-        # plt.show()
-        # exit()        
+        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
 
         # threshold probs img at LB prob and store in a Frame
         lb_msk = np.where(lb_softmax.img >= 0.8, relevant_dab_msk.img[:,:,0], np.zeros_like(relevant_dab_msk.img[:,:,0]))
-        
         lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
 
         lb_msk.get_contours()
         lb_msk.filter_contours(min_body_area=0/self.dab.converter.mpp) #default: 20/mpp
         lb_contours = lb_msk.get_body_contours()
         lbs = [contour.polygon for contour in lb_contours]
-
-        # # write out hyp annos with lb detections
-        # fig, axs = plt.subplots(2,2)
-        # axs = np.ravel(axs)
-        # axs[0].imshow(self.dab.img)
-        # axs[0].set_title('Orig DAB Img')
-        # axs[1].imshow(wc.img)
-        # axs[1].set_title('WC Img')
-        # axs[2].imshow(dab_img.img)
-        # axs[2].set_title('Processed DAB Img')
-        # axs[3].imshow(lb_msk.img)
-        # axs[3].set_title('LB Msk Img')
-        # plt.show()
-        # exit()
 
         # convert polygons to annotations and calculate confidence
         bid, antibody, region, roi_name = odir.split('/')[-4:]
@@ -149,7 +124,7 @@ class R13Processor(HDABProcessor):
             lb_annos.append(lb.to_annotation(fname,class_name='LB detection',confidence=conf))
 
 
-        if len(lb_annos)>0 and self.log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if len(lb_annos)>0 and self.logger.plots:
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
             for lb in lbs:

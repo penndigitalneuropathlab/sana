@@ -36,31 +36,31 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, debug_level, debug_fibers=False):
+def get_processor(fname, frame, logger, debug_fibers=False):
     try:
         antibody = sana_io.get_antibody(fname)
     except:
         antibody = ''
     if antibody == 'NeuN':
-        return NeuNProcessor(fname, frame, debug_level)
+        return NeuNProcessor(fname, frame, logger)
     if antibody == 'SMI32':
-        return SMI32Processor(fname, frame, debug_level)
+        return SMI32Processor(fname, frame, logger)
     if antibody == 'CALR6BC':
-        return calretininProcessor(fname, frame, debug_level)
+        return calretininProcessor(fname, frame, logger)
     if antibody == 'parvalbumin':
-        return parvalbuminProcessor(fname, frame, debug_level)
+        return parvalbuminProcessor(fname, frame, logger)
     if antibody == 'SMI94':
-        return MBPProcessor(fname, frame, debug_level, debug_fibers)
+        return MBPProcessor(fname, frame, logger, debug_fibers)
     if antibody == 'SMI35':
-        return SMI35Processor(fname, frame, debug_level)
+        return SMI35Processor(fname, frame, logger)
     if antibody == 'MEGURO':
-        return MeguroProcessor(fname, frame, debug_level)
+        return MeguroProcessor(fname, frame, logger)
     if antibody == 'AT8':
-        return AT8Processor(fname, frame, debug_level)
+        return AT8Processor(fname, frame, logger)
     if antibody == 'IBA1':
-        return IBA1Processor(fname, frame, debug_level)
+        return IBA1Processor(fname, frame, logger)
     if antibody == 'R13':
-        return R13Processor(fname, frame, debug_level)
+        return R13Processor(fname, frame, logger)
     return None
 #
 # end of get_processor
@@ -73,20 +73,20 @@ def main(argv):
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
-    log = SANALogger.get_sana_logger(args.debug_level)
+    logger = SANALogger.get_sana_logger(args.debug_level)
 
     # get all the slide files to process
     slides = sana_io.get_slides_from_lists(args.lists)
     if len(slides) == 0:
-        log.warning("No Slides Found")
+        logger.debug("No Slides Found")
         parser.print_usage()
         exit()
-    log.warning('Number of slides found: %d' % len(slides))
+    logger.debug('Number of slides found: %d' % len(slides))
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
         # progress messaging
-        log.warning('--> Processing Slide: %s (%d/%d)' % \
+        logger.info('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)))
 
         # # get the annotation file containing ROIs
@@ -99,7 +99,7 @@ def main(argv):
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            log.info('Annotation file %s does not exist\n' % anno_f)
+            logger.info('Annotation file %s does not exist\n' % anno_f)
             continue
 
         # initialize the Loader object for loading Frames
@@ -107,7 +107,7 @@ def main(argv):
             loader = Loader(slide_f)
         except Exception as e:
             print(e)
-            log.info('Could not load .svs file: %s' % e)
+            logger.info('Could not load .svs file: %s' % e)
             continue
 
         # set the image resolution level
@@ -115,22 +115,18 @@ def main(argv):
 
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)
-        log.info('Number of main_rois found: %d' % len(main_rois))
+        logger.debug('Number of main_rois found: %d' % len(main_rois))
+        if len(main_rois) == 0:
+            logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)])))
 
         # Use this to analyze a certain frame from a slide
         # main_rois = main_rois[8:]
-
-
-        # load the sub roi(s) from the json file
-        # sub_rois = []
-        # for sub_class in args.sub_classes:
-        #     sub_rois += sana_io.read_annotations(anno_f, sub_class)
 
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
             t0 = time.time()
             # progress messaging
-            log.warning('----> Processing Frame (%d/%d)' % \
+            logger.warning('----> Processing Frame (%d/%d)' % \
                   (main_roi_i+1, len(main_rois)))
 
             # load the sub roi(s) that are inside this main roi
@@ -144,7 +140,7 @@ def main(argv):
                 # NOTE: None is used for not found sub rois since we still need to measure something
                 else:
                     sub_rois.append(None)
-            log.info('Number of sub_rois found: %d' % len(sub_rois))
+            logger.debug('Number of sub_rois found: %d' % len(sub_rois))
 
             # load the sub roi(s) that are inside this main roi
             # NOTE: None is used for not found sub rois since we still need to measure something
@@ -185,7 +181,7 @@ def main(argv):
             except:
                 odir = sana_io.create_odir(
                     args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
-            log.info('Output directory successfully created: %s' % odir)
+            logger.debug('Output directory successfully created: %s' % odir)
 
             padding = args.padding
 
@@ -195,10 +191,10 @@ def main(argv):
                 # rotate/translate the coord. system to retrieve the frame from
                 # the slide. the frame will be orthogonalized such that CSF is
                 # at the top and WM is at the bottom of the image.
-                frame = loader.load_gm_frame(params, main_roi, padding=padding, debug_level=args.debug_level)
+                frame = loader.load_gm_frame(params, main_roi, padding=padding, logger=logger)
             else:
                 # just translates the coord. system, no rotating or cropping
-                frame = loader.load_roi_frame(params, main_roi, padding=padding, debug_level=args.debug_level)
+                frame = loader.load_roi_frame(params, main_roi, padding=padding, logger=logger)
 
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
@@ -217,10 +213,10 @@ def main(argv):
 
             # get the processor object
             processor = get_processor(
-                slide_f, frame, debug_level=args.debug_level)
+                slide_f, frame, logger=logger)
 
             if processor is None:
-                log.info('No processor found')
+                logger.info('No processor found')
                 continue
             if (main_roi_i == 0):
                 first_run = True
@@ -229,7 +225,6 @@ def main(argv):
 
             # run the processes for the antibody
             processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
-            log.info('Runtime: %0.2f (sec)' % (time.time()-t0))
 
         # end of main_rois loop
     #

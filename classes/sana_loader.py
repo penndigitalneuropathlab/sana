@@ -7,7 +7,6 @@ from copy import copy
 # installed packages
 import openslide
 import numpy as np
-from sana_logger import SANALogger
 
 # custom packages
 from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly
@@ -147,11 +146,7 @@ class Loader(openslide.OpenSlide):
     # end of load_frame
 
     # this function uses the bounding box of an ROI to load a frame of data
-    def load_roi_frame(self, params, orig_roi, padding=None, copy=True, debug_level=None):
-        if debug_level is None:
-            debug_level = 'quiet'
-
-        log = SANALogger.get_sana_logger(debug_level)
+    def load_roi_frame(self, params, orig_roi, padding=None, copy=True, logger=None):
 
         # create a copy to not disturb the original data
         if copy:
@@ -181,7 +176,7 @@ class Loader(openslide.OpenSlide):
         params.data['crop_size'] = np.copy(size)
         params.data['padding'] = padding
 
-        if log.getEffectiveLevel == SANALogger.get_level_config('full'):
+        if logger.plots:
             fig, axs = plt.subplots(1,1)
             axs.imshow(frame.img)
             plot_poly(axs, roi, color='red')
@@ -196,18 +191,16 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
     # TODO: need to pad the segmentation somehow to provide context for tiling
-    def load_gm_frame(self, params, orig_roi, padding=None, debug_level=None):
+    def load_gm_frame(self, params, orig_roi, padding=None, logger=None):
 
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
         # load the frame from the ROI
-        frame = self.load_roi_frame(params, roi, padding, copy=False, debug_level=debug_level)
+        frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
 
-        # load logger
-        log = SANALogger.get_sana_logger(debug_level)
         
-        if log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if logger.plots:
             fig, axs = plt.subplots(2,2)
             axs = axs.ravel()
             axs[0].imshow(frame.img)
@@ -215,14 +208,14 @@ class Loader(openslide.OpenSlide):
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
-        log.info('Best Orthog. Angle found:',angle)
+        logger.info('Best Orthog. Angle found:',angle)
 
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
         roi = roi.transform(M1)
 
-        if log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if logger.plots:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
 
@@ -233,13 +226,13 @@ class Loader(openslide.OpenSlide):
         roi.translate(crop_loc)
         frame.crop(crop_loc, crop_size)
 
-        if log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if logger.plots:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
 
         # figure out if the image is oriented with CSF on top
         # TODO: make sure get_tissue_orientation is good
-        csf_on_top = get_tissue_orientation(frame, roi, angle, debug_level)
+        csf_on_top = get_tissue_orientation(frame, roi, angle, logger)
         if not csf_on_top:
             rotate_angle = 180
         else:
@@ -249,7 +242,7 @@ class Loader(openslide.OpenSlide):
         M2, nw, nh = frame.get_rotation_mat(rotate_angle)
         frame.warp_affine(M2, nw, nh)
 
-        if log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+        if logger.plots:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
             fig.suptitle('load_gm_frame')

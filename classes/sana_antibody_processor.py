@@ -7,7 +7,6 @@ import sana_io
 from sana_frame import Frame, mean_normalize, create_mask, overlay_thresh
 from sana_heatmap import Heatmap
 from sana_geo import Point
-from sana_logger import SANALogger
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -18,13 +17,11 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, debug_level, roi_type=""):
+    def __init__(self, fname, frame, logger, roi_type=""):
         self.fname = fname
         self.frame = frame
-        self.debug_level = debug_level
+        self.logger = logger
         self.roi_type = roi_type
-
-        self.log = SANALogger.get_sana_logger(debug_level=self.debug_level)
     #
     # end of constructor
 

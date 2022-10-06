@@ -8,7 +8,6 @@ from copy import copy
 # installed packages
 import cv2
 import numpy as np
-from sana_logger import SANALogger
 from scipy import ndimage
 from PIL import Image, ImageDraw
 Image.MAX_IMAGE_PIXELS = None
@@ -622,21 +621,16 @@ class Contour:
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
-def get_tissue_orientation(frame, roi, angle, debug_level=None):
-    if debug_level is None:
-        debug_level = 'quiet'
-
-
+def get_tissue_orientation(frame, roi, angle, logger):
+    
     # get the segmentation boundaries at top and bottom of frame
     s0, s1 = separate_seg(roi)
     if np.mean(s0[:,1]) > np.mean(s1[:,1]):
         top, bot = s1, s0
     else:
         top, bot = s0, s1
-
-    log = SANALogger.get_sana_logger(debug_level)
     
-    if log.getEffectiveLevel() == SANALogger.get_level_config('full'):
+    if logger.plots:
         fig, ax = plt.subplots(1,1)
         ax.imshow(frame.img)
         plot_poly(ax, s0, color='red')
