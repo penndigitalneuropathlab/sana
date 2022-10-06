@@ -182,19 +182,18 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
         x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
+
     return x
 #
 # end of transform_inv_poly
 
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, color='black', last=True, linestyle='-', label=None):
-    if last:
-        en = x.shape[0]-1
-    else:
-        en = x.shape[0]-2
-    ax.plot(x[:en+1,0], x[:en+1,1], color=color, linestyle=linestyle, label=label)
-#
-# end of plot_poly
+def plot_poly(ax, x, plot_connected=None, plot_disconnected=False, **kwargs):
+    if plot_connected == True:
+        x = x.connect()
+    elif plot_disconnected == True:
+        x = x.disconnect()
+    ax.plot(x[:,en],x[:,en],**kwargs)
 
 # converts a Convexhull into a polygon
 def hull_to_poly(hull, points, is_micron=False, lvl=0):
@@ -504,7 +503,7 @@ class Polygon(Array):
             if ray_tracing(self[i][0], self[i][1], np.array(p)):
                 return True
         return False
-    
+
     def inside(self, p):
         if self.is_micron != p.is_micron or self.lvl != p.lvl:
             raise UnitException(ERR_COMPARE)
@@ -516,7 +515,7 @@ class Polygon(Array):
 
     def connected(self):
         return np.isclose(self[0,0], self[-1,0]) and np.isclose(self[0,1], self[-1,1])
-    
+
     def connect(self):
         if not self.connected():
             x, y = self.get_xy()
@@ -534,7 +533,7 @@ class Polygon(Array):
             return Polygon(x, y, self.is_micron, self.lvl, self.order)
         else:
             return self
-        
+
     # converts the Array to a Shapely object to access certain functions
     def to_shapely(self):
         return geometry.Polygon([[self[i,0], self[i,1]] \
@@ -621,7 +620,7 @@ class Annotation(Polygon):
         obj.confidence = confidence
 
         return obj
-        
+
     def __array_finalize__(self, obj):
         if obj is None: return
         self.file_name = getattr(obj, 'file_name', None)

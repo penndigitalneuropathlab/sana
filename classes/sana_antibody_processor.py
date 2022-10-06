@@ -18,16 +18,16 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, roi_type="", debug=False):
+    def __init__(self, fname, frame, logger, roi_type=""):
         self.fname = fname
         self.frame = frame
+        self.logger = logger
         self.roi_type = roi_type
         self.debug = debug
     #
     # end of constructor
 
-    def mask_frame(self, main_roi, sub_rois=[]):
-        
+    def generate_masks(self, main_roi, sub_rois=[]):
         # generate the main mask
         self.main_mask = create_mask(
             [main_roi],
@@ -49,13 +49,6 @@ class Processor:
                 self.sub_masks.append(mask)
         #
         # end of sub_masks loop
-
-        # apply the main mask to the frame
-        # TODO: we need to check if this is needed
-        if self.frame.slide_color is None:
-            self.frame.mask(self.main_mask)
-        else:
-            self.frame.mask(self.main_mask, self.frame.slide_color)
     #
     # end of gen_masks
 
@@ -113,7 +106,7 @@ class Processor:
 
     def segment_cells(self, frame, threshold,
                       disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False):
-        
+
         # threshold the image and filter lots of data out to just get large circular objects
         img_objs = get_thresh(frame.img, threshold, close_r, clean_r)
 
@@ -169,7 +162,7 @@ class Processor:
         return cells
     #
     # end of segment_cells
-    
+
     def get_signals(self, frame, detections=[], tsize=None, tstep=None):
 
         # these are the size and step length of the convolution process
@@ -203,7 +196,7 @@ class Processor:
         # axs[1][0].imshow(sub_deformed_feats[0][0])
         # axs[1][1].imshow(sub_deformed_feats[1][0])
         # axs[1][2].imshow(sub_deformed_feats[2][0])
-        # axs[1][3].imshow(sub_deformed_feats[3][0])        
+        # axs[1][3].imshow(sub_deformed_feats[3][0])
 
         # fig, axs = plt.subplots(1,3)
         # axs[0].plot(signals['normal'][0][0])
@@ -212,9 +205,9 @@ class Processor:
         #     n = signals['sub_deform'].shape[2]
         #     x = np.arange(n) + i*n
         #     axs[2].plot(x, signals['sub_deform'][i][0])
-        
+
         # plt.show()
-        
+
         return signals
     #
     # end of get_signals
