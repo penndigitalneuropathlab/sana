@@ -84,7 +84,7 @@ class R13Processor(HDABProcessor):
             plt.show()
             
         relevant_dab_msk, dab_thresh = self.process_dab(self.dab,
-            run_normalize = False,
+            run_normalize = True,
             scale = 1.0,
             mx = 90, #default: 90, experiment w/ mx = 100-110
             close_r = 0,
