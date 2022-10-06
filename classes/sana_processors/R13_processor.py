@@ -80,10 +80,11 @@ class R13Processor(HDABProcessor):
                 axs[i].imshow(wc_softmax[i,:,:],vmin=0,vmax=1)
                 axs[i].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
+            plt.tight_layout()
             plt.show()
             
         relevant_dab_msk, dab_thresh = self.process_dab(self.dab,
-            run_normalize = True,
+            run_normalize = False,
             scale = 1.0,
             mx = 90, #default: 90, experiment w/ mx = 100-110
             close_r = 0,

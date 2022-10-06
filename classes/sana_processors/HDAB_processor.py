@@ -99,7 +99,7 @@ class HDABProcessor(Processor):
     # TODO: rename scale/max
     # function takes in a DAB Frame object, extracting a DAB thresholded image
     def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
-        self.log.info('Processing DAB...')
+        self.logger.info('Processing DAB...')
         if debug and run_normalize:
             fig, axs = plt.subplots(2,3, sharex=True,sharey=True)
             axs = axs.ravel()
@@ -163,7 +163,7 @@ class HDABProcessor(Processor):
         # plot #3 or #5
         if debug:
             axs[-2].imshow(dab.img)
-            axs[-1].set_title('Morph. Filter of Thresholded Img')
+            axs[-2].set_title('Morph. Filter of Thresholded Img')
             
 
         # plot #4 or #6
@@ -174,6 +174,7 @@ class HDABProcessor(Processor):
             axs[-1].set_title('Final Processed Image')
             fig.suptitle('Debugging Plots for DAB Processing\n'+
                         'DAB Threshold: %d' %dab_threshold)
+            plt.tight_layout()
             plt.show()
 
         return Frame(img_final, lvl=dab.lvl, converter=dab.converter), dab_threshold
