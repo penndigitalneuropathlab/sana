@@ -34,6 +34,7 @@ for i, x in enumerate(splits):
     fp.write('\n')
     fp.close()
 
+# TODO: figure out how to name the jobs?
 job = open(args.job, 'r').read()
 run_jobs = open(os.path.join(d, 'run_jobs.sh'), 'w')
 for i, f in enumerate(files):

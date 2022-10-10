@@ -24,30 +24,30 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, logger):
-        super(HDABProcessor, self).__init__(fname, frame, logger)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(HDABProcessor, self).__init__(fname, frame, logger, **kwargs)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
-        if self.logger.plots:
-            ds = 20
-            img = self.frame.img
-            img = img[::ds, ::ds].astype(float) / 255
-            odimg = np.clip(-np.log10(img), 0, None)
-            odimg[odimg==np.inf] = 0
-            r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
-            odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
-            colors = [(r[i], g[i], b[i]) for i in range(len(r))]
-            fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
-            ax.scatter(odr, odg, odb, color=colors)
-            x, y, z = self.ss.stain_vector.orig_v[0]
-            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-            x, y, z = self.ss.stain_vector.orig_v[1]
-            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-            fig.suptitle('HDABProcessor | Stains and Stain Vectors')
-            plt.show()
-            # exit()
+        # if self.logger.plots:
+        #     ds = 20
+        #     img = self.frame.img
+        #     img = img[::ds, ::ds].astype(float) / 255
+        #     odimg = np.clip(-np.log10(img), 0, None)
+        #     odimg[odimg==np.inf] = 0
+        #     r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
+        #     odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
+        #     colors = [(r[i], g[i], b[i]) for i in range(len(r))]
+        #     fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
+        #     ax.scatter(odr, odg, odb, color=colors)
+        #     x, y, z = self.ss.stain_vector.orig_v[0]
+        #     ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        #     x, y, z = self.ss.stain_vector.orig_v[1]
+        #     ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        #     fig.suptitle('HDABProcessor | Stains and Stain Vectors')
+        #     plt.show()
+        #     # exit()
 
         # separate out the HEM and DAB stains
         self.stains = self.ss.run(self.frame.img)
@@ -59,6 +59,12 @@ class HDABProcessor(Processor):
         #       on the stain vector used
         self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
+
+        # calculate the manual dab threshold if a qupath threshold was given
+        if self.qupath_threshold:
+            self.manual_dab_threshold = \
+                (self.qupath_threshold - self.ss.min_od[1]) / \
+                (self.ss.max_od[1] - self.min_od[1])
 
         self.gray = self.frame.copy()
         self.gray.to_gray()
@@ -77,6 +83,7 @@ class HDABProcessor(Processor):
         self.manual_dab_thresh = self.dab.copy()
         self.manual_dab_thresh.threshold(self.manual_dab_threshold, 0, 255)
 
+        # TODO: the range of this function does not make sense? getting >100 for %AO
         results = self.run_ao(self.manual_dab_thresh)
 
         # store the results of the algorithm
@@ -92,14 +99,15 @@ class HDABProcessor(Processor):
         # save the images used in processing
         self.manual_overlay = overlay_thresh(
             self.frame, self.manual_dab_thresh)
-        self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
-        self.save_frame(odir, self.manual_overlay, 'QC')
+        self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
+        self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
         # save the feature signals
         signals = results['signals']
-        self.save_signals(odir, signals['normal'], 'NORMAL')
-        self.save_signals(odir, signals['main_deform'], 'MAIN_DEFORM')
-        self.save_signals(odir, signals['sub_deform'], 'SUB_DEFORM')
+        self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
+        if 'sub_deform' in signals:
+            self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -189,18 +197,20 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0,):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
 
-        self.auto_dab_thresh_img, self.auto_dab_threshold = self.process_dab(self.dab,
-            run_normalize = True,
-            scale = 1.0,
-            mx = 90,
-            close_r = 0,
-            open_r = 13,
-            debug = self.logger.plots
+        self.auto_dab_thresh_img, self.auto_dab_threshold = \
+            self.process_dab(
+                self.dab,
+                run_normalize = True,
+                scale=scale,
+                mx=mx,
+                close_r=close_r,
+                open_r=open_r,
+                debug = self.logger.plots,
             )
 
         # run the AO process
@@ -225,9 +235,10 @@ class HDABProcessor(Processor):
 
         # save the feature signals
         signals = results['signals']
-        self.save_signals(odir, signals['normal'], 'NORMAL')
-        self.save_signals(odir, signals['main_deform'], 'MAIN_DEFORM')
-        self.save_signals(odir, signals['sub_deform'], 'SUB_DEFORM')
+        self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
+        if 'sub_deform' in signals:
+            self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
     #
     # end of run_auto_ao
 

@@ -9,8 +9,6 @@ from matplotlib import pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.ndimage.interpolation import rotate
 
-# custom packages
-
 # custom Exceptions
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale data in micron units")
@@ -95,6 +93,69 @@ def get_axes_from_poly(p):
     major = float(np.max(side_lengths)/2)
     minor = float(np.min(side_lengths)/2)
     return major, minor
+
+# this function finds the amount of slide background in a thin rectangle
+#  surrounding the input line. This is used to orthogonalize the GM Zones
+# TODO: move to Frame!!!
+def get_local_slide_area(orig_frame, orig_line):
+
+    frame = orig_frame.copy()
+    line = orig_line.copy()
+    
+    # orthogonalize to the input Line
+    angle = line.get_angle()
+    M, nw, nh = frame.get_rotation_mat(angle)
+    frame.warp_affine(M, nw, nh)
+    line.transform(M)
+
+    # get a small around above and below the Line
+    l, r = int(line[0,0]), int(line[1,0])
+    l, r = sorted([l, r])
+    pad = 50    
+    mid = np.mean(line[:,1])
+    lo, hi = int(mid-pad), int(mid+pad)
+    lo = np.clip(lo, 0, frame.size()[1])
+    hi = np.clip(hi, 0, frame.size()[1])
+
+    # calculate the area of pixels that are slide background
+    local = frame.copy()
+    local.img = local.img[lo:hi,l:r]
+    local.to_gray()
+    area = np.mean(local.img > frame.csf_threshold)
+
+    return area
+#
+# end of get_local_slide_area
+
+def get_gm_zone_angle(orig_frame, orig_roi):
+
+    roi = orig_roi.copy()
+
+    # split the ROI into 4 lines
+    # TODO: this is only possible if its a 5 point ROI, could approximate a rectangle if not?
+    lines = [roi[0:2], roi[1:3], roi[2:4], roi[3:5]]
+    lines = [Line(x[:,0], x[:,1], roi.is_micron, roi.lvl, roi.order) for x in lines]
+
+    # find the line which has the most slide background near it
+    ind, mx = 0, 0
+    for i, line in enumerate(lines):
+        val = get_local_slide_area(orig_frame, line)
+        if val > mx:
+            ind = i
+            mx = val
+    best = lines[ind]
+
+    # add an extra 180 to the angle if the CSF ends up on bottom
+    angle = best.get_angle()
+    M, nw, nh = orig_frame.get_rotation_mat(angle)
+    best.transform(M)
+    if np.mean(best[:,1]) > orig_frame.size()[1]//2:
+        angle += 180
+
+    return angle
+    
+#
+# end of get_gm_zone_angle
 
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent

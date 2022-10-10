@@ -25,8 +25,8 @@ from matplotlib.lines import Line2D
 from sana_geo import plot_poly
 
 class NeuNProcessor(HDABProcessor):
-    def __init__(self, fname, frame, roi_type, debug=False):
-        super(NeuNProcessor, self).__init__(fname, frame, roi_type=roi_type, debug=debug)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
         self.debug = debug
     #
     # end of constructor
@@ -70,18 +70,10 @@ class NeuNProcessor(HDABProcessor):
         n_iterations = 1
         close_r = 9
         open_r = 9
-        clean_r = 29
+        clean_r = 15
         neurons = self.segment_cells(
             self.dab_norm, self.auto_dab_norm_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False)
 
-        fig, ax = plt.subplots(1,1)
-        ax.imshow(self.frame.img)
-        for x in neurons:
-            plot_poly(ax, x, color='red')
-        plt.show()
-
-        exit()
-        
         # write the neuron segmentations
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='NEURONS', fpath=odir)
@@ -90,9 +82,12 @@ class NeuNProcessor(HDABProcessor):
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in neuron_annos]
         sana_io.write_annotations(ofname, neuron_annos)
-        
+
+        return
+    
         neurons = [n for n in neurons if n.inside(main_roi)]
 
+        
         if len(neurons) < 10:
             params.data['grn_ao'] = np.nan
             params.data['grn_sub_aos'] = np.nan
@@ -338,14 +333,6 @@ class NeuNProcessor(HDABProcessor):
             self.save_array(odir, feats[i], feats_labels[i])
     #
     # end of run_segment
-
-    def get_thresh(self, img, threshold, close_r, open_r):
-        img_thresh = np.where(img < threshold, 0, 255).astype(np.uint8)[:,:,0]
-        close_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_r, close_r))
-        open_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_r, open_r))
-        img_close = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, close_kern)
-        img_open = cv2.morphologyEx(img_close, cv2.MORPH_OPEN, open_kern)
-        img_final = 255 * ((img_open != 0) & (img_thresh != 0)).astype(np.uint8)
 #
 # end of NeuNProcessor
 

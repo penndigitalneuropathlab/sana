@@ -200,7 +200,11 @@ class Frame:
         return M, nw, nh
 
     def warp_affine(self, M, nw, nh):
-        self.img = cv2.warpAffine(self.img, M, (nw, nh))
+        if self.is_rgb():
+            border_val = (255,255,255)
+        else:
+            border_val = 0
+        self.img = cv2.warpAffine(self.img, M, (nw, nh), borderValue=border_val)
         if self.img.ndim == 2:
             self.img = self.img[:,:,None]
 

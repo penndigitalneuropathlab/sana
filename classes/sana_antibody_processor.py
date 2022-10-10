@@ -2,12 +2,14 @@
 # installed modules
 import numpy as np
 import cv2
+from tqdm import tqdm
 
 # custom modules
 import sana_io
 from sana_frame import Frame, mean_normalize, create_mask, overlay_thresh
 from sana_heatmap import Heatmap
 from sana_geo import Point
+from sana_filters import minmax_filter
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -18,12 +20,12 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, logger, roi_type=""):
+    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None):
         self.fname = fname
         self.frame = frame
         self.logger = logger
         self.roi_type = roi_type
-        self.debug = debug
+        self.qupath_threshold = qupath_threshold
     #
     # end of constructor
 
@@ -65,6 +67,7 @@ class Processor:
         frame.mask(self.main_mask)
 
         # get the total area of the roi
+        # TODO: don't just divide by 255, make sure to check first!!
         area = np.sum(self.main_mask.img / 255)
 
         # get the pos. area in the frame
@@ -89,7 +92,7 @@ class Processor:
                 sub_areas.append(sub_area)
 
         # calculate feature signals as a function of depth
-        if self.roi_type == 'GM':
+        if 'GM' in self.roi_type:
             signals = self.get_signals(frame, detections)
         else:
             signals = None
@@ -108,10 +111,11 @@ class Processor:
                       disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False):
 
         # threshold the image and filter lots of data out to just get large circular objects
-        img_objs = get_thresh(frame.img, threshold, close_r, clean_r)
+        img_objs = self.get_thresh(frame.img, threshold, self.main_mask, close_r, clean_r)
 
         # run the distance transforms to find parts of circular objects far away from background
         # TODO: this normalize is a little dangerous, think about blank images
+        # TODO: don't really need to normalize, minmax handles all that since its relateive to the disk
         img_dist = cv2.distanceTransform(img_objs, cv2.DIST_L2, 3)
         img_dist = cv2.normalize(img_dist, 0, 255, cv2.NORM_MINMAX)
 
@@ -120,7 +124,7 @@ class Processor:
 
         # create sure foregournd using the minimas of the minmax image
         # NOTE: the centers will be -1's, a little unintuitive
-        candiates = np.where(img_minmax == -1)
+        candidates = np.where(img_minmax == -1)
         r0 = 3
         sure_fg = np.zeros_like(frame.img, dtype=np.uint8)[:,:,0]
         for i in range(len(candidates[0])):
@@ -128,7 +132,7 @@ class Processor:
                                  r0, color=255, thickness=-1)
 
         # threshold the frame for all cell parts using smaller kernel for segmentation
-        img_thresh = self.get_thresh(frame.img, threshold, close_r, open_r)
+        img_thresh = self.get_thresh(frame.img, threshold, self.main_mask, close_r, open_r)
 
         # create sure background using multiple dilations
         dil_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9,9))
@@ -150,7 +154,7 @@ class Processor:
         cells = []
         z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
         o = z.copy() + 1
-        for val in range(1, np.max(markers)+1):
+        for val in tqdm(range(1, np.max(markers)+1)):
             x = np.where(markers == val, o, z)
             f = Frame(x, frame.lvl, frame.converter)
             f.get_contours()
@@ -159,10 +163,50 @@ class Processor:
             if len(bodies) != 0:
                 cells.append(bodies[0].polygon.connect())
 
+        if self.debug:
+            # plot all the intermediate images
+            fig, axs = plt.subplots(2,4, sharex=True, sharey=True)
+            axs = axs.ravel()
+            axs[0].imshow(frame.img)
+            axs[0].set_title('Orig DAB')
+            axs[4].matshow(img_objs, cmap='gray')
+            axs[4].set_title('Proc. DAB for Objs only')
+            axs[1].imshow(img_dist, cmap='gray')
+            axs[1].set_title('Distance Transform')
+            axs[5].imshow(img_minmax, cmap='gray')
+            axs[5].set_title('Min-Max Filtered Dist. Transform')
+            axs[5].plot(candidates[1], candidates[0], 'x', color='red')
+            axs[2].matshow(img_thresh, cmap='gray')
+            axs[2].set_title('Proc. DAB for All Cells Parts')
+            axs[6].matshow(255-sure_bg, cmap='gray')
+            axs[6].set_title('Sure Background Data')
+            axs[3].matshow(unknown, cmap='gray')
+            axs[3].set_title('Unknown Pixel Data')
+            axs[7].matshow(markers, cmap='rainbow')
+            axs[7].set_title('Instance Segmented Neurons')
+            
+            fig.tight_layout()
+            
+            plt.show()
+
+                
         return cells
     #
     # end of segment_cells
 
+    def get_thresh(self, img, threshold, mask, close_r, open_r):
+        img = img.copy()
+        img[mask.img == 0] = 0
+        img_thresh = np.where(img < threshold, 0, 255).astype(np.uint8)[:,:,0]
+        close_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_r, close_r))
+        open_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_r, open_r))
+        img_close = cv2.morphologyEx(img_thresh, cv2.MORPH_CLOSE, close_kern)
+        img_open = cv2.morphologyEx(img_close, cv2.MORPH_OPEN, open_kern)
+        img_final = 255 * ((img_open != 0) & (img_thresh != 0)).astype(np.uint8)
+        return img_final
+    #
+    # end of get_thresh
+    
     def get_signals(self, frame, detections=[], tsize=None, tstep=None):
 
         # these are the size and step length of the convolution process
@@ -179,14 +223,17 @@ class Processor:
         # in: 3, H, W
         # out: 4, 3, H, W
         main_deformed_feats = heatmap.deform(feats, [self.main_mask])
-        sub_deformed_feats = heatmap.deform(feats, self.sub_masks)
+        if len(self.sub_masks) != 0:
+            sub_deformed_feats = heatmap.deform(feats, self.sub_masks)
 
         # calculate the signals as the average over the columns
         signals = {
             'normal': np.mean(feats, axis=2)[None,...],
             'main_deform': np.mean(main_deformed_feats, axis=3),
-            'sub_deform': np.mean(sub_deformed_feats, axis=3),
         }
+
+        if len(self.sub_masks) != 0:
+            signals['sub_deform'] = np.mean(sub_deformed_feats, axis=3)
 
         # print(feats.shape, frame.img.shape, main_deformed_feats.shape, sub_deformed_feats.shape)
         # fig, axs = plt.subplots(2,4)
