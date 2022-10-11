@@ -24,30 +24,30 @@ from sana_geo import plot_poly
 # generic Processor for H-DAB stained slides
 # performs stain separation and rescales the data to 8 bit pixels
 class HDABProcessor(Processor):
-    def __init__(self, fname, frame, logger):
-        super(HDABProcessor, self).__init__(fname, frame, logger)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(HDABProcessor, self).__init__(fname, frame, logger, **kwargs)
 
         # prepare the stain separator
         self.ss = StainSeparator('H-DAB')
 
-        if self.logger.plots:
-            ds = 20
-            img = self.frame.img
-            img = img[::ds, ::ds].astype(float) / 255
-            odimg = np.clip(-np.log10(img), 0, None)
-            odimg[odimg==np.inf] = 0
-            r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
-            odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
-            colors = [(r[i], g[i], b[i]) for i in range(len(r))]
-            fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
-            ax.scatter(odr, odg, odb, color=colors)
-            x, y, z = self.ss.stain_vector.orig_v[0]
-            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-            x, y, z = self.ss.stain_vector.orig_v[1]
-            ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
-            fig.suptitle('HDABProcessor | Stains and Stain Vectors')
-            plt.show()
-            # exit()
+        # if self.logger.plots:
+        #     ds = 20
+        #     img = self.frame.img
+        #     img = img[::ds, ::ds].astype(float) / 255
+        #     odimg = np.clip(-np.log10(img), 0, None)
+        #     odimg[odimg==np.inf] = 0
+        #     r, g, b = img[:,:,0].flatten(), img[:,:,1].flatten(), img[:,:,2].flatten()
+        #     odr, odg, odb = odimg[:,:,0].flatten(), odimg[:,:,1].flatten(), odimg[:,:,2].flatten()
+        #     colors = [(r[i], g[i], b[i]) for i in range(len(r))]
+        #     fig, ax = plt.subplots(1,1, subplot_kw=dict(projection='3d'))
+        #     ax.scatter(odr, odg, odb, color=colors)
+        #     x, y, z = self.ss.stain_vector.orig_v[0]
+        #     ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        #     x, y, z = self.ss.stain_vector.orig_v[1]
+        #     ax.quiver(0, 0, 0, x, y, z, color=(x, y, z))
+        #     fig.suptitle('HDABProcessor | Stains and Stain Vectors')
+        #     plt.show()
+        #     # exit()
 
         # separate out the HEM and DAB stains
         self.stains = self.ss.run(self.frame.img)
@@ -60,8 +60,18 @@ class HDABProcessor(Processor):
         self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
+        # calculate the manual dab threshold if a qupath threshold was given
+        if self.qupath_threshold:
+            self.manual_dab_threshold = \
+                (self.qupath_threshold - self.ss.min_od[1]) / \
+                (self.ss.max_od[1] - self.min_od[1])
+
+        self.gray = self.frame.copy()
+        self.gray.to_gray()
         self.hem_gray = self.hem.copy()
         self.hem_gray.to_gray()
+        self.dab_gray = self.dab.copy()
+        self.dab_gray.to_gray()
     #
     # end of constructor
 
@@ -73,6 +83,7 @@ class HDABProcessor(Processor):
         self.manual_dab_thresh = self.dab.copy()
         self.manual_dab_thresh.threshold(self.manual_dab_threshold, 0, 255)
 
+        # TODO: the range of this function does not make sense? getting >100 for %AO
         results = self.run_ao(self.manual_dab_thresh)
 
         # store the results of the algorithm
@@ -88,11 +99,15 @@ class HDABProcessor(Processor):
         # save the images used in processing
         self.manual_overlay = overlay_thresh(
             self.frame, self.manual_dab_thresh)
-        self.save_frame(odir, self.manual_dab_thresh, 'THRESH')
-        self.save_frame(odir, self.manual_overlay, 'QC')
+        self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
+        self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
-        # save the %AO depth curve
-        self.save_curve(odir, results['ao_depth'], 'AO')
+        # save the feature signals
+        signals = results['signals']
+        self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
+        if 'sub_deform' in signals:
+            self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -107,7 +122,7 @@ class HDABProcessor(Processor):
             fig, axs = plt.subplots(2,2, sharex=True,sharey=True)
             axs = axs.ravel()
 
-        
+
         dab = frame.copy()
         # plot #1
         if debug:
@@ -133,7 +148,7 @@ class HDABProcessor(Processor):
                 axs[2].imshow(dab.img)
                 axs[2].set_title('Normalized/Smoothed DAB Img')
 
-        
+
         # get the histograms
         dab_hist = dab.histogram()
 
@@ -145,7 +160,7 @@ class HDABProcessor(Processor):
 
         if not mask is None:
             dab.mask(mask)
-            
+
         # plot #2 or #4
         if debug:
             axs[-3].imshow(dab.img)
@@ -164,7 +179,7 @@ class HDABProcessor(Processor):
         if debug:
             axs[-2].imshow(dab.img)
             axs[-2].set_title('Morph. Filter of Thresholded Img')
-            
+
 
         # plot #4 or #6
         img_final = ((dab.img != 0) & (dab_threshold != 0)).astype(np.uint8)
@@ -182,18 +197,20 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0,):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
-        
-        self.auto_dab_thresh_img, self.auto_dab_threshold = self.process_dab(self.dab,
-            run_normalize = True,
-            scale = 1.0,
-            mx = 90,
-            close_r = 0,
-            open_r = 13,
-            debug = self.logger.plots
+
+        self.auto_dab_thresh_img, self.auto_dab_threshold = \
+            self.process_dab(
+                self.dab,
+                run_normalize = True,
+                scale=scale,
+                mx=mx,
+                close_r=close_r,
+                open_r=open_r,
+                debug = self.logger.plots,
             )
 
         # run the AO process
@@ -215,6 +232,13 @@ class HDABProcessor(Processor):
         self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
         self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
         self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+
+        # save the feature signals
+        signals = results['signals']
+        self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
+        self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
+        if 'sub_deform' in signals:
+            self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
     #
     # end of run_auto_ao
 
@@ -232,7 +256,7 @@ class HDABProcessor(Processor):
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='CELLS', fpath=odir)
         hem_annos = [x.to_annotation(ofname, 'HEMCELL') for x in hem_cells]
-        hem_annos = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in hem_annos]
         sana_io.write_annotations(ofname, hem_annos)
@@ -340,7 +364,7 @@ class HDABProcessor(Processor):
                                  for i in range(len(boundaries_y))]
 
         # inverse transform the annotations
-        boundaries = [transform_inv_poly(
+        [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in boundaries]
 
@@ -355,7 +379,7 @@ class HDABProcessor(Processor):
 
     # this fits a step function to each column in the img
     # TODO: the values of step function are set by the max of the row, is this good?
-    def fit_boundary(self, feats, st, en, debug=False):
+    def fit_boundary(self, feats, st, en, v0=None, v1=None, debug=False):
 
         # calculate the boundary at each column
         boundary = np.zeros(feats.shape[2])
@@ -370,8 +394,10 @@ class HDABProcessor(Processor):
                 continue
 
             # get the 2 extreme values for the step function
-            v0 = np.mean(feats[:, st,:], axis=1)[:, None]
-            v1 = np.mean(feats[:, en,:], axis=1)[:, None]
+            if v0 is None:
+                v0 = np.mean(feats[:, st,:], axis=1)[:, None]
+            if v1 is None:
+                v1 = np.mean(feats[:, en,:], axis=1)[:, None]
 
             # calculate the distance score for each possible index in the signal
             score = np.zeros(sig.shape[1], dtype=float)
@@ -494,16 +520,6 @@ class HDABProcessor(Processor):
 
     def detect_hem_cells(self, params,
                          disk_r, sigma, n_iterations, close_r, open_r, debug=False):
-
-        # get the rescale parameters
-        hist = self.hem.histogram()
-        vmi = np.argmax(hist)
-        vmx = 92
-
-        # # rescale the image
-        # self.hem.img = (self.hem.img.astype(float) - mi) / (mx-mi)
-        # self.hem.img = np.clip(self.hem.img, 0, None)
-        # self.hem.img = (255 * self.hem.img).astype(np.uint8)
 
         # smooth the image
         # self.hem.anisodiff()

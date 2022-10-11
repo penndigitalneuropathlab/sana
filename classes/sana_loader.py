@@ -9,7 +9,7 @@ import openslide
 import numpy as np
 
 # custom packages
-from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly
+from sana_geo import Converter, Point, get_ortho_angle, Polygon, plot_poly, get_gm_zone_angle
 from sana_frame import Frame, get_csf_threshold, get_tissue_orientation
 from matplotlib import pyplot as plt
 
@@ -53,6 +53,7 @@ class Loader(openslide.OpenSlide):
             # calculate the Slide/Tissue threshold
             # TODO: make this much faster!
             self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
+            self.thumbnail.csf_threshold = self.csf_threshold
     #
     # end of constructor
 
@@ -147,7 +148,7 @@ class Loader(openslide.OpenSlide):
 
     # this function uses the bounding box of an ROI to load a frame of data
     def load_roi_frame(self, params, orig_roi, padding=None, copy=True, logger=None):
-
+        
         # create a copy to not disturb the original data
         if copy:
             roi = orig_roi.copy()
@@ -164,8 +165,10 @@ class Loader(openslide.OpenSlide):
             loc -= (padding//2)
             size += padding
 
+        logger.info('Loading Frame from .svs slide file...')            
         frame = self.load_frame(loc, size, frame_padding=padding)
-
+        logger.info('Done Loading Frame!')
+        
         # translate the ROI to the new coord. system
         roi.translate(loc)
 
@@ -199,7 +202,6 @@ class Loader(openslide.OpenSlide):
         # load the frame from the ROI
         frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
 
-        
         if logger.plots:
             fig, axs = plt.subplots(2,2)
             axs = axs.ravel()
@@ -213,7 +215,7 @@ class Loader(openslide.OpenSlide):
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
         frame.warp_affine(M1, nw, nh)
-        roi = roi.transform(M1)
+        roi.transform(M1)
 
         if logger.plots:
             axs[1].imshow(frame.img)
@@ -241,6 +243,7 @@ class Loader(openslide.OpenSlide):
         # rotate either 180 or 0 degrees to make sure CSF is on top
         M2, nw, nh = frame.get_rotation_mat(rotate_angle)
         frame.warp_affine(M2, nw, nh)
+        roi.transform(M2)
 
         if logger.plots:
             axs[3].imshow(frame.img)
@@ -261,7 +264,64 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_gm_frame
 
-    def from_vector(self, paramsd, v, l, padding=0):
+    # this function loads a frame of slide data using a given
+    # GM Greatest samping zone ROI, which is 4 points 
+    def load_gm_zone_frame(self, params, orig_roi, padding=None, logger=None):
+
+        # create a copy to not disturb the original data
+        roi = orig_roi.copy()
+
+        # load the frame from the ROI
+        frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
+
+        if logger.plots:
+            fig, axs = plt.subplots(1,3)
+            axs = axs.ravel()
+            axs[0].imshow(frame.img)
+            plot_poly(axs[0], roi, color='red')
+
+        # split the ROI into 4 lines and find the line closest to slide background
+        angle = get_gm_zone_angle(frame, roi)
+        logger.info('Best Orthog. Angle found: %s' % (str(angle)))
+
+        # rotate the image/ROI to orthogonalize them to the CSF boundary
+        M1, nw, nh = frame.get_rotation_mat(angle)
+        frame.warp_affine(M1, nw, nh)
+        roi.transform(M1)
+
+        if logger.plots:
+            axs[1].imshow(frame.img)
+            plot_poly(axs[1], roi, color='red')
+
+        # crop the frame/ROI to remove borders
+        # TODO: this might affect the amount of slide that is found near boundaries
+        # TODO: do this at the end?
+        crop_loc, crop_size = roi.bounding_box()
+        roi.translate(crop_loc)
+        frame.crop(crop_loc, crop_size)
+
+        if logger.plots:
+            axs[2].imshow(frame.img)
+            plot_poly(axs[2], roi, color='red')
+
+        # no extra rotation needed!
+        rotate_angle = 0
+        M2 = None
+
+        # store the values used during loading the frame
+        params.data['crop_loc'] = crop_loc
+        params.data['crop_size'] = crop_size
+        params.data['angle1'] = angle
+        params.data['angle2'] = rotate_angle
+        params.data['M1'] = M1
+        params.data['M2'] = M2
+
+        # finally, return the orthogonalized frame
+        return frame
+    #
+    # end of load_gm_zone_frame
+    
+    def from_vector(self, params, v, l, padding=0):
 
         # get the angle of the vector
         angle = v.get_angle()
@@ -327,9 +387,9 @@ class Loader(openslide.OpenSlide):
 
         # transform the landmarks to fit on the image
         v.translate(rect_loc)
-        v = v.transform(M)
+        v.transform(M)
         rect.translate(rect_loc)
-        rect = rect.transform(M)
+        rect.transform(M)
         if not l is None:
             for i in range(len(l)):
                 l[i].translate(rect_loc)

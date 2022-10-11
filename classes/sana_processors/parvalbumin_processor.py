@@ -7,8 +7,8 @@ from sana_processors.HDAB_processor import HDABProcessor
 # it not a very specific antibody, therefore the thresholds are
 # more strict than usual to account for that
 class parvalbuminProcessor(HDABProcessor):
-    def __init__(self, fname, frame):
-        super(parvalbuminProcessor, self).__init__(fname, frame)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(parvalbuminProcessor, self).__init__(fname, frame, logger, **kwargs)
     #
     # end of constructor
 

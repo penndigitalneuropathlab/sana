@@ -1,7 +1,8 @@
 
 # installed modules
+import cv2
 import numpy as np
-
+from scipy.interpolate import interp1d
 # custom modules
 from sana_tiler import Tiler
 from sana_geo import Point, Polygon
@@ -34,7 +35,7 @@ class Heatmap:
 
         self.tiles = self.tiler.load_tiles()
         self.tile_area = self.tiles[0][0].size # TODO: this is in pixels, is that right?
-
+        
         # calculate the %AO heatmap
         self.ao = np.sum(self.tiles, axis=(2,3)) / self.tile_area
     #
@@ -51,6 +52,13 @@ class Heatmap:
     def run(self, funcs):
 
         feat = np.zeros((len(funcs), self.tiles.shape[0], self.tiles.shape[1]), dtype=float)
+        for i, func in enumerate(funcs):
+            if not callable(func):
+                feat[i, :, :] = func
+
+        if len(self.centers) == 0:
+            return feat
+                
         for j in range(self.tiles.shape[1]):
             for i in range(self.tiles.shape[0]):
 
@@ -86,7 +94,8 @@ class Heatmap:
 
                 # calculate and store the feature
                 for n, feat_func in enumerate(funcs):
-                    feat[n][i][j] = feat_func(inds)
+                    if callable(feat_func):
+                        feat[n][i][j] = feat_func(inds)
             #
             # end of i
         #
@@ -134,67 +143,74 @@ class Heatmap:
 
     # deforms a heatmap image over the y axis based on the layer annotations
     #  and the number of samples per layer
-    def deform(self, img, layers, Nsamp):
+    # TODO: the transitions are super harsh between layers, might be a bug?
+    def deform(self, feats, masks):
+        Nsamp = 500
+        nh = Nsamp // len(masks)
 
-        # scale the layer annotations to the heatmap resolution
-        layers = [x / self.tiler.ds for x in layers]
-
-        # create the mask for each layer
-        size = Point(img.shape[1], img.shape[0], False, DEF_LVL)
-        layer_masks = [create_mask([l], size, DEF_LVL, DEF_CONVERTER).img for l in layers]
-
-        # new height is the sum of the num samps per layer
-        nh = sum(Nsamp)
+        # scale the masks to the heatmap resolution
+        masks = [cv2.resize(x.img, (0,0), fx=1/self.tiler.ds[0], fy=1/self.tiler.ds[1]) \
+                 if not x is None else None for x in masks]
 
         # width is also resampled
-        ds = int(nh / img.shape[0])
-        nw = ds * img.shape[1]
+        ds = nh / feats.shape[1]
+        nw = int(feats.shape[2] * ds)
+        
+        # prepare the array for the deformed features
+        deform = np.zeros((len(masks), feats.shape[0], nh, nw))
 
-        # prepare the array for the deformed imag
-        deform = np.zeros((nh, nw))
+        # loop through features
+        for feat in range(feats.shape[0]):
+            
+            # loop through the columns
+            for col in range(feats.shape[2]):
 
-        # loop through the columns
-        for j in range(img.shape[1]):
+                # get the indices for a rectangle of data for this column
+                col0, col1 = int(col*ds), int(col*ds+ds)
+                row0, row1 = 0, nh
+                
+                # loop through the layer masks
+                for layer, mask in enumerate(masks):
+                    if mask is None:
+                        continue
 
-            # loop through the layers
-            for i, layer_mask in enumerate(layer_masks):
+                    # get the positive indices in the layer mask
+                    inds = np.where(mask[:,col] != 0)[0]
 
-                # get the indices for a rectangle of data for this column and layer
-                x0, x1 = j*ds, j*ds+ds
-                y0, y1 = sum(N[:i]), sum(N[:i+1])
+                    # if no signal, skip the layer
+                    if len(inds) == 0:
+                        continue
 
-                # get the positive indices in the layer mask
-                inds = np.where(layer_mask[:,j] != 0)[0]
+                    # extract the signal for this column and layer
+                    sig = feats[feat, inds[0]:inds[-1], col]
 
-                # no signal in this case, skip this layer
-                if len(inds) == 0:
-                    deform[y0:y1, x0:x1] = 0
-                    continue
+                    # signal was empty, skip this layer
+                    if len(sig) == 0:
+                        pass
 
-                # extract the signal for this column and layer
-                i0, i1 = inds[0], inds[-1]
-                sig = img[i0:i1, j]
+                    # only had one sample, just fill the array with the sample
+                    elif len(sig) == 1:
+                        deform[layer, feat, row0:row1, col0:col1] = sig[0]
 
-                # signal was empty, skip this layer
-                if len(sig) == 0:
-                    deform[y0:y1, x0:x1] = 0
-
-                # only had one sample, just fill the array with the sample
-                elif len(sig) == 1:
-                    deform[y0:y1, x0:x1] = sig[0]
-
-                # interpolate and place into the deformed heatmap
-                else:
-                    x = np.arange(sig.shape[0])
-                    interp_func = interp1d(x, sig)
-                    deform[y0:y1, x0:x1] = np.tile(
-                        interp_func(np.linspace(0, sig.shape[0]-1, N[i])),
-                        (x1-x0,1)).T
+                    # interpolate and place into the deformed heatmap
+                    else:
+                        x = np.arange(sig.shape[0])
+                        interp_func = interp1d(x, sig)
+                        deform[layer, feat, row0:row1, col0:col1] = np.tile(
+                            interp_func(np.linspace(0, sig.shape[0]-1, nh)),
+                            (col1-col0,1)).T
+                #
+                # end of mask loop
             #
-            # end of layer loop
+            # end of column loop
         #
-        # end of column loop
+        # end of feat loop
 
         return deform
     #
     # end of deform
+#
+# end of Heatmap
+
+#
+# end of file
