@@ -108,7 +108,7 @@ class Processor:
     # end of run_ao
 
     def segment_cells(self, frame, threshold,
-                      disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False):
+                      disk_r, sigma, n_iterations, close_r, open_r, clean_r):
 
         # threshold the image and filter lots of data out to just get large circular objects
         img_objs = self.get_thresh(frame.img, threshold, self.main_mask, close_r, clean_r)
@@ -120,7 +120,7 @@ class Processor:
         img_dist = cv2.normalize(img_dist, 0, 255, cv2.NORM_MINMAX)
 
         # run the minmax filter to find the centers of the cells
-        img_minmax = minmax_filter(img_dist, disk_r, sigma, n_iterations, debug)
+        img_minmax = minmax_filter(img_dist, disk_r, sigma, n_iterations)
 
         # create sure foregournd using the minimas of the minmax image
         # NOTE: the centers will be -1's, a little unintuitive
@@ -163,7 +163,7 @@ class Processor:
             if len(bodies) != 0:
                 cells.append(bodies[0].polygon.connect())
 
-        if self.debug:
+        if self.logger.plots:
             # plot all the intermediate images
             fig, axs = plt.subplots(2,4, sharex=True, sharey=True)
             axs = axs.ravel()

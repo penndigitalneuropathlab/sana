@@ -210,7 +210,7 @@ class Loader(openslide.OpenSlide):
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
-        logger.info('Best Orthog. Angle found:',angle)
+        logger.info('Best Orthog. Angle found: %s' % (str(angle)))
 
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)

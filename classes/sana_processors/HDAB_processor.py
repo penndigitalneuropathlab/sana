@@ -553,7 +553,7 @@ class HDABProcessor(Processor):
 
         # perform the min-max filtering to maximize centers of cells
         # TODO: inverse this filter
-        img_minmax = minmax_filter(255-img, disk_r, sigma, n_iterations, self.debug)
+        img_minmax = minmax_filter(255-img, disk_r, sigma, n_iterations)
 
         # define the sure foreground, small circles at minimums of filter output
         candidates = np.where((img_minmax == -1) & (img != 0))

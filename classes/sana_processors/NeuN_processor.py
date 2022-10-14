@@ -1,6 +1,7 @@
 
 # system modules
 import os
+import pickle
 
 # installed modules
 import cv2
@@ -27,13 +28,12 @@ from sana_geo import plot_poly
 class NeuNProcessor(HDABProcessor):
     def __init__(self, fname, frame, logger, **kwargs):
         super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
-        self.debug = debug
     #
     # end of constructor
 
-    def run(self, odir, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
 
-        self.mask_frame(main_roi, sub_rois)
+        self.generate_masks(main_roi, sub_rois)
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
@@ -46,10 +46,10 @@ class NeuNProcessor(HDABProcessor):
 
         # generate the auto AO results
         # NOTE: this threshold is super lenient, additionally we remove very tiny objects
-        self.run_auto_ao(odir, params, scale=1.0, mx=90, open_r=7)
+        self.run_auto_ao(odir, params, scale=1.0, mx=120, open_r=7)
 
         # detect and analyze the neurons in the ROI
-        self.run_neurons(odir, params, main_roi, debug=False)
+        self.run_neurons(odir, roi_odir, first_run, params, main_roi, debug=False)
         
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -63,28 +63,32 @@ class NeuNProcessor(HDABProcessor):
     #
     # end of run
 
-    def run_neurons(self, odir, params, main_roi, debug=False):
+    def run_neurons(self, odir, roi_odir, first_run, params, main_roi, debug=False):
         
         # instance segment the neurons
+        # TODO: some holes are getting through, is this closing issue or the img_final issue?
         disk_r = 7
         sigma = 3
         n_iterations = 1
         close_r = 9
         open_r = 9
-        clean_r = 15
+        clean_r = 11
         cells = self.segment_cells(
-            self.dab_norm, self.auto_dab_norm_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False)
+            self.dab_norm, self.auto_dab_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r)
 
-        neurons = [Neuron(cell, self.fname, self.main_roi, confidence=1.0) for cell in cells]
+        neurons = [Neuron(cell, self.fname, main_roi, confidence=1.0) for cell in cells]
         
         # write the neuron segmentations
         ofname = sana_io.create_filepath(
-            self.fname, ext='.json', suffix='NEURONS', fpath=odir)
+            self.fname, ext='.json', suffix='NEURONS', fpath=roi_odir)
         neuron_annos = [x.polygon.to_annotation(ofname, 'NEURON') for x in neurons]
         [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in neuron_annos]
-        sana_io.write_annotations(ofname, neuron_annos)
+        if first_run:
+            sana_io.write_annotations(ofname, neuron_annos)
+        else:
+            sana_io.append_annotations(ofname, neuron_annos)
 
         # only include neurons inside the main ROI
         neurons = [n for n in neurons if n.polygon.inside(main_roi)]
@@ -98,7 +102,7 @@ class NeuNProcessor(HDABProcessor):
             return neurons
 
         # grab the features of the neurons
-        feats = np.concatenate([x.feats for x in neurons], axis=0)
+        feats = np.array([x.feats for x in neurons])
         
         # load the pre-trained model
         # NOTE: this isn't a wildcat model but no better place for it right now
@@ -111,15 +115,17 @@ class NeuNProcessor(HDABProcessor):
         probs = np.array(clf.predict_proba(feats))[:,1]
         pyr_inds = probs > thresh
         non_inds = probs <= thresh
-        pyr_neurons = [neurons[i].polygon for i in pyr_inds]
-        non_neurons = [neurons[i].polygon for i in non_inds]
+        pyr_neurons = [neurons[i].polygon for i in range(len(neurons)) if pyr_inds[i]]
+        non_neurons = [neurons[i].polygon for i in range(len(neurons)) if non_inds[i]]
         tot_neurons = [neurons[i].polygon for i in range(len(neurons))]
+        print(len(pyr_neurons), len(non_neurons), len(tot_neurons), flush=True)
         
         # get the thresholded masks of the neurons
         pyr_mask = create_mask(pyr_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
         non_mask = create_mask(non_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
         tot_mask = create_mask(tot_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
-        tot_outline = create_mask(tot_neurons, self.frame.size(), self.frame.lvl, self.frame.converter, outlines_only=True)
+        pyr_outline = create_mask(pyr_neurons, self.frame.size(), self.frame.lvl, self.frame.converter, outlines_only=True)
+        non_outline = create_mask(non_neurons, self.frame.size(), self.frame.lvl, self.frame.converter, outlines_only=True)        
         
         # run the AO process over grn and pyr
         pyr_results = self.run_ao(pyr_mask, pyr_neurons)
@@ -137,9 +143,8 @@ class NeuNProcessor(HDABProcessor):
         # create and store the debugging overlay
         overlay = self.frame.copy()
         colors = ['red', 'blue']
-        overlay = overlay_thresh(overlay, pyr_mask, alpha=0.5, color=colors[0])
-        overlay = overlay_thresh(overlay, non_mask, alpha=0.5, color=colors[1])
-        overlay = overlay_thresh(overlay, tot_outline, alpha=1.0, color='black')
+        overlay = overlay_thresh(overlay, pyr_outline, alpha=1.0, color=colors[0])
+        overlay = overlay_thresh(overlay, non_outline, alpha=1.0, color=colors[1])
 
         # save the original frame
         self.save_frame(odir, overlay, 'PYR')
@@ -159,14 +164,12 @@ class NeuNProcessor(HDABProcessor):
         self.save_signals(odir, tot_signals['sub_deform'], 'TOT_SUB_DEFORM')
 
         if self.logger.plots:
-            custom_lines = [Line2D([0],[0], color=color, lw=4) for color in colorss]
+            custom_lines = [Line2D([0],[0], color=color, lw=4) for color in colors]
             fig, ax = plt.subplots(1,1)
             ax.imshow(overlay.img)
             ax.legend(custom_lines, ['Pyramidal', 'Non-Pyramidal'])
             plt.axis('off')
             plt.show()
-
-            exit()        
     #
     # end of run_neurons
     
@@ -195,7 +198,7 @@ class NeuNProcessor(HDABProcessor):
         # detect the the hematoxylin cells
         n_iterations = 2
         neurons = self.detect_neurons(
-            odir, params, disk_r, n_iterations, sigma, close_r, open_r, soma_r, debug=False)
+            odir, params, disk_r, n_iterations, sigma, close_r, open_r, soma_r)
 
         # tile size and step for the convolution operation to calculate feats
         tsize = Point(300, 200, True)

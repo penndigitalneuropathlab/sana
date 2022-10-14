@@ -78,6 +78,9 @@ def main(argv):
         parser.print_usage()
         exit()
     logger.debug('Number of slides found: %d' % len(slides))
+    
+    slides = slides[args.skip:]
+    logger.info('Skipping %d slides!' % args.skip)
 
     # loop through the slides
     for slide_i, slide_f in enumerate(slides):
@@ -161,8 +164,8 @@ def main(argv):
                 
                 fig, ax = plt.subplots(1,1)
                 ax.imshow(loader.thumbnail.img)
+                [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]                
                 plot_poly(ax, plot_rois[0], color='black')
-                [plot_poly(ax, x, color='red') for x in plot_rois[1:] if x]
                 plt.show()
                     
             # initialize the Params IO object, this will store parameters
@@ -172,6 +175,7 @@ def main(argv):
 
             # create odir for detection jsons
             roi_odir = sana_io.create_odir(args.odir, 'detections')
+            
             # create the output directory path
             # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
             try:
@@ -196,7 +200,7 @@ def main(argv):
 
             # rescale the ROIs to the proper level
             loader.converter.rescale(main_roi, loader.lvl)
-            [loader.converter.rescale(x, loader.lvl) for x in sub_rois if x]
+            [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
             
             # load the frame into memory using the main roi
             if args.roi_type == 'GM':
@@ -295,6 +299,7 @@ def cmdl_parser(argv):
         '-qupath_threshold', type=float, default=None,
         help="Pre-defined threshold in QuPath to use in Manual %AO"
     )
+    parser.add_argument('-skip', type=int, default=0)
 
     return parser
 #

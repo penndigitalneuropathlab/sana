@@ -8,6 +8,7 @@ from shapely import geometry
 from matplotlib import pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.ndimage.interpolation import rotate
+from pyefd import elliptic_fourier_descriptors as efd
 
 # custom Exceptions
 ERR = "---> %s <---"
@@ -781,12 +782,11 @@ class Annotation(Polygon):
 class Neuron:
     def __init__(self, polygon, fname, main_roi=None, sub_roi=None, confidence=1.0):
         self.polygon = polygon
-        self.bid = bid
         self.fname = fname
         self.main_roi = main_roi
         self.sub_roi = sub_roi
         self.confidence = confidence
-        self.feats = self.get_feats(self.polygon)
+        self.feats = self.to_feats(self.polygon)
 
     # TODO: include intensity, std intesnity,  and area etc.!
     def to_feats(self, p, efd_order=10):

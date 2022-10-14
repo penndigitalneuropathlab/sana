@@ -1,5 +1,3 @@
-# TODO: 
-
 
 # system modules
 import os
