@@ -24,7 +24,9 @@ class SMI32Processor(HDABProcessor):
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=0.4)
+        # NOTE: this value is a little strict to remove some background
+        # TODO: do we want to run some opening filter?
+        self.run_auto_ao(odir, params, scale=0.7)
 
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -37,22 +39,8 @@ class SMI32Processor(HDABProcessor):
         self.save_params(odir, params)
     #
     # end of run    
-
-    # TODO: this should prolly be in HDABProcessor?
-    #         there might be some stains that need specific processing, but
-    #         most will be generic
-    def run_hem(self):
-        self.hem_norm = mean_normalize(self.hem)        
-        self.hem_norm.anisodiff()        
-        self.hem_hist = self.hem.histogram()
-        self.hem_norm_hist = self.hem_norm.histogram()        
-        self.hem_threshold = kittler(self.hem_hist)
-        # TODO: anywayto make this less strict?
-        self.hem_norm_threshold = max_dev(self.hem_norm_hist) 
-    #
-    # end of run_hem
 #
-# end of parvalbuminProcessor
+# end of SMI32Processor
 
 #
 # end of file

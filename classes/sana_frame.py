@@ -661,7 +661,7 @@ def get_tissue_orientation(frame, roi, angle, logger):
 #  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: vals defining the negative and positive values in the mask
-def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
+def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_only=False):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
@@ -682,7 +682,10 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
     size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
     for poly in polys:
-        ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+        if outlines_only:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=0)
+        else:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)            
     for h in hs:
         ImageDraw.Draw(mask).polygon(h, outline=x, fill=x)
     return Frame(np.array(mask)[:, :, None], lvl, converter)

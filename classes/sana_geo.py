@@ -778,5 +778,22 @@ class Annotation(Polygon):
 #
 # end of Annotation
 
+class Neuron:
+    def __init__(self, polygon, fname, main_roi=None, sub_roi=None, confidence=1.0):
+        self.polygon = polygon
+        self.bid = bid
+        self.fname = fname
+        self.main_roi = main_roi
+        self.sub_roi = sub_roi
+        self.confidence = confidence
+        self.feats = self.get_feats(self.polygon)
+
+    # TODO: include intensity, std intesnity,  and area etc.!
+    def to_feats(self, p, efd_order=10):
+        coeffs = efd(self.polygon, order=efd_order, normalize=True)
+        feats = coeffs.flatten()[3:]
+        return feats
+#
+# end of Neuron
 #
 # end of file
