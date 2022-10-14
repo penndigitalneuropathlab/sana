@@ -28,12 +28,13 @@ LAYER_NAMES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6',
                'L23', 'L56', 'L123', 'L456', 'L123456']
 LAYERS_HEADER = ''.join(['%s,' % x for x in LAYER_NAMES])
 ZLAYERS_HEADER = ''.join(['z_%s,' % x for x in LAYER_NAMES])
-FIELDS_HEADER = 'AutopsyID,BlockID,Region,Subregion,ROI,Antibody,Measurement,'
+FIELDS_HEADER = 'AutopsyID,BlockID,Hemisphere,Region,Subregion,ROI,Antibody,Measurement,'
 LONG_HEADER = FIELDS_HEADER+'Layer,AO,z_AO,'
 WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
-LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%0.6f,%0.6f\n'
-WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,'+'%0.6f,'*22+'\n'
+LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.6f,%0.6f\n'
+WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.6f,'*22+'\n'
 
+# TODO: rename grn to non
 ANTIBODY_MEASUREMENTS = {
     'NeuN': ['manual', 'auto', 'grn', 'pyr'],
     'SMI32': ['manual', 'auto'],
@@ -58,7 +59,7 @@ class Patient:
     def __init__(self, aid, is_hc):
         self.aid = aid
         self.is_hc = is_hc
-        self.regions = {}
+        self.hemispheres = {}
     #
     # end of constructor
     
@@ -80,6 +81,37 @@ class Patient:
 
     def add_data(self, entry):
         
+        # create a new Hemisphere, if needed
+        if entry.hemisphere_name not in self.hemispheres:
+            self.hemispheres[entry.hemisphere_name] = Hemisphere(entry.hemisphere_name)
+
+        # add the data to the Hemisphere
+        self.hemispheres[entry.hemisphere_name].add_data(entry)
+    #
+    # end of add_data
+
+    # gets the average ROI data over this patient
+    def collapse_ao(self, antibody_name, measurement):
+
+        data = []
+        for hemisphere_name in self.hemispheres:
+            data.append(self.hemispheres[hemisphere_name].collapse_ao(antibody_name, measurement))
+        if len(data) != 0:
+            return calc(np.mean, data)
+        else:
+            return np.full((11,), np.nan)
+    #
+    # end of collapse_ao
+#
+# end of Patient
+
+class Hemisphere:
+    def __init__(self, name):
+        self.name = name
+        self.regions = {}
+        
+    def add_data(self, entry):
+
         # create a new Region, if needed
         if entry.region_name not in self.regions:
             self.regions[entry.region_name] = Region(entry.region_name, entry.bid)
@@ -89,9 +121,9 @@ class Patient:
     #
     # end of add_data
 
-    # gets the average ROI data over this patient
+    # gets the average ROI data over this hemisphere
     def collapse_ao(self, antibody_name, measurement):
-
+        
         data = []
         for region_name in self.regions:
             data.append(self.regions[region_name].collapse_ao(antibody_name, measurement))
@@ -100,9 +132,9 @@ class Patient:
         else:
             return np.full((11,), np.nan)
     #
-    # end of collapse
+    # end of collapse_ao
 #
-# end of Patient
+# end of Hemisphere
 
 # stores Subregions that were annotated and analyzed within the .svs slides
 class Region:
@@ -330,6 +362,7 @@ class Entry:
 #
 # end of Entry
 
+# TODO: why not make the output directory structure: aid/hemi/region/roi/
 def collect_patients(idir, hc):
 
     # load the list of HC patients
@@ -359,7 +392,7 @@ def collect_patients(idir, hc):
                 if not os.path.isdir(region_d):
                     continue
                 
-                # loop and store the ROIs
+                # loop through the ROIs in this region
                 for roi in os.listdir(region_d):
                     roi_d = os.path.join(region_d, roi)
                     if not os.path.isdir(roi_d):
@@ -386,37 +419,44 @@ def collect_patients(idir, hc):
 #
 # end of collect_patients
 
-def get_HC_model(patients, antibody_name, measurement, region_name=None, subregion_name=None):
+def get_HC_model(patients, antibody_name, measurement, hemisphere_name=None, region_name=None, subregion_name=None):
+
+    # loop through the HC patients
     hc = []
-    for aid in patients:
+    for aid in [patient for patient in patients if patient.is_hc]:
 
-        # get only HC patients
-        patient = patients[aid]
-        if not patient.is_hc:
-            continue
-
-        # no region specified, calculate model over entire patient
-        if region_name is None:
+        # no hemisphere specified, calculate model over entire patient
+        if hemisphere_name is None:
             hc.append(patient.collapse_ao(antibody_name, measurement))
         else:
 
-            # region not available for this patient
-            if not region_name in patient.regions:
+            # hemisphere not available for this patient, skip!
+            if not hemisphere_name in patient.hemispheres:
                 continue
-
-            # no subregion specified, calculate model over region
-            region = patient.regions[region_name]
-            if subregion_name is None:
-                hc.append(region.collapse_ao(antibody_name, measurement))
+            
+            # no region specified, calculate model over hemisphere
+            hemisphere = patient.hemispheres[hemisphere_name]
+            if region_name is None:
+                hc.append(hemisphere.collapse_ao(antibody_name, measurement))
             else:
 
-                # subregion not available for this patient
-                if not subregion_name in region.subregions:
+                # region not available for this patient, skip!
+                if not region_name in patient.regions:
                     continue
 
-                # calculate model over the subregion
-                subregion = region.subregions[subregion_name]
-                hc.append(subregion.collapse_ao(antibody_name, measurement))
+                # no subregion specified, calculate model over region
+                region = patient.regions[region_name]
+                if subregion_name is None:
+                    hc.append(region.collapse_ao(antibody_name, measurement))
+                else:
+
+                    # subregion not available for this patient, skip!
+                    if not subregion_name in region.subregions:
+                        continue
+
+                    # calculate model over the subregion
+                    subregion = region.subregions[subregion_name]
+                    hc.append(subregion.collapse_ao(antibody_name, measurement))
     #
     # end of patients loop
     
@@ -428,6 +468,9 @@ def get_HC_model(patients, antibody_name, measurement, region_name=None, subregi
 #
 # end of get_HC_model
 
+# this function applies a input function over a (N,M) input array over the N axis
+#  it makes sure to only aggregate data in each column that is not nan, this ensure
+#  that our HC model will never be nan for example (unless entire cohort is empty)
 def calc(func, x, debug=False):
     if type(x) is list:
         x = np.array(x)
@@ -451,115 +494,165 @@ def z_score(x, model):
 #
 # end of z_score
 
+# this function collapses our hierarchical patient dataset into a table
 def generate_spreadsheets(odir, patients):
 
+    # long and wide formatted tables for dan
     long_fp = open(os.path.join(odir, 'long_results.csv'), 'w')
     long_fp.write('%s\n' % LONG_HEADER)
     wide_fp = open(os.path.join(odir, 'wide_results.csv'), 'w')
     wide_fp.write('%s\n' % WIDE_HEADER)
 
+    # these dictionaries store the individual HC models for each combination
+    #  of hemisphere, region, and subregion
+    hemisphere_models = {}
     region_models = {}
     subregion_models = {}
+
+    # loop through antibodies to aggregate
     for antibody_name in ANTIBODY_MEASUREMENTS:
+
+        # loop through measurements in each antibody
         for measurement in ANTIBODY_MEASUREMENTS[antibody_name]:
+
+            # get HC model for entire cohort
             patient_model = get_HC_model(
                 patients, antibody_name, measurement)
+
+            # loop through patients
             for aid in sorted(patients.keys()):
+
+                # loop through hemispheres in this patient
                 patient = patients[aid]
-                for region_name in sorted(patient.regions.keys()):
-                    region = patient.regions[region_name]
-                    bid = region.bid
-                    
-                    # calcualte the HC model for this region
-                    if region_name not in region_models:
-                        region_models[region_name] = get_HC_model(
+                for hemisphere_name in sorted(patient.hemispheres.keys()):
+                    hemisphere = patient.regions[hemisphere_name]
+
+                    # calculate the HC model for this hemisphere, if not already generated
+                    if hemisphere_name not in hemisphere_models:
+                        hemisphere_models[hemisphere_name] = get_HC_model(
                             patients, antibody_name, measurement,
-                            region_name)
-                    for subregion_name in sorted(region.subregions.keys()):
-                        subregion = region.subregions[subregion_name]
-                        if not antibody_name in subregion.antibodies:
-                            continue
-                        antibody = subregion.antibodies[antibody_name]
+                            hemisphere_name,
+                        )
+                
+                    # loop through regions in this hemisphere
+                    for region_name in sorted(hemisphere.regions.keys()):
+                        region = patient.regions[region_name]
+                        bid = region.bid
+                    
+                        # calculate the HC model for this region, if not already generated
+                        if region_name not in region_models:
+                            region_models[region_name] = get_HC_model(
+                                patients, antibody_name, measurement,
+                                hemisphere_name, region_name,
+                            )
+
+                        # loop through subregions in this region
+                        for subregion_name in sorted(region.subregions.keys()):
+                            subregion = region.subregions[subregion_name]
+
+                            # antibody not found in this subregion, we skip
+                            if not antibody_name in subregion.antibodies:
+                                continue
+
+                            # grab the antibody, ready to write some data
+                            antibody = subregion.antibodies[antibody_name]
                         
-                        # calculate the HC model for this subregion
-                        if region_name not in subregion_models:
-                            subregion_models[region_name] = {}
-                        if subregion_name not in subregion_models[region_name]:
-                            subregion_models[region_name][subregion_name] = \
-                                get_HC_model(patients, antibody_name, measurement,
-                                             region_name, subregion_name)
+                            # calculate the HC model for this subregionm, if needed
+                            if region_name not in subregion_models:
+                                subregion_models[region_name] = {}
+                            if subregion_name not in subregion_models[region_name]:
+                                subregion_models[region_name][subregion_name] = \
+                                    get_HC_model(
+                                        patients, antibody_name, measurement,
+                                        hemisphere_name, region_name, subregion_name,
+                                    )
                         
-                        # write each individual ROI data row
-                        for roi_name in sorted(antibody.rois.keys()):
-                            x = antibody.rois[roi_name].get_ao_data(measurement)
+                            # write the ROI data, this is the most specific data
+                            for roi_name in sorted(antibody.rois.keys()):
+                                x = antibody.rois[roi_name].get_ao_data(measurement)
+                                z = z_score(
+                                    x, subregion_models[region_name][subregion_name])
+                                write_row(
+                                    long_fp, wide_fp, aid, bid,
+                                    hemisphere_name, region_name, subregion_name, roi_name,
+                                    antibody_name, measurement, x, z,
+                                )
+                            #
+                            # end of ROIs loop
+
+                            # write a row for the average over the ROIs in the subregion
+                            x = subregion.collapse_ao(antibody_name, measurement)
                             z = z_score(
                                 x, subregion_models[region_name][subregion_name])
-                            write_row(long_fp, wide_fp, aid, bid,
-                                      region_name, subregion_name, roi_name,
-                                      antibody_name, measurement, x, z)
+                            write_row(
+                                long_fp, wide_fp, aid, bid,
+                                hemisphere_name, region_name, subregion_name, 'AVG',
+                                antibody_name, measurement, x, z,
+                            )
                         #
-                        # end of ROIs loop
+                        # end of subregions loop
 
-                        # write a row for the average over the ROIs in the subregion
-                        x = subregion.collapse_ao(antibody_name, measurement)
-                        z = z_score(
-                            x, subregion_models[region_name][subregion_name])
-                        write_row(long_fp, wide_fp, aid, bid,
-                                  region_name, subregion_name, 'AVG',
-                                  antibody_name, measurement, x, z)
-                    #
-                    # end of subregions loop
-
-                    # write a row for the average over the subregions in the region
-                    x = region.collapse_ao(antibody_name, measurement)
-                    z = z_score(x, region_models[region_name])
-                    write_row(long_fp, wide_fp, aid, bid,
-                              region_name, 'AVG', 'AVG',
-                              antibody_name, measurement, x, z)
-
-                    # special case: combines a24(a-c) subregions as a24 for aCING
-                    if region.name == 'aCING':
-                        x = region.collapse_ao(antibody_name, measurement,
-                                               subregions=['a24a', 'a24b', 'a24c'])
+                        # write a row for the average over the subregions in the region
+                        x = region.collapse_ao(antibody_name, measurement)
                         z = z_score(x, region_models[region_name])
-                        write_row(long_fp, wide_fp, aid, bid,
-                                  region_name, 'a24abc', 'AVG',
-                                  antibody_name, measurement, x, z)
-                #
-                # end of regions loop
+                        write_row(
+                            long_fp, wide_fp, aid, bid,
+                            hemisphere_name, region_name, 'AVG', 'AVG',
+                            antibody_name, measurement, x, z,
+                        )
 
-                # write a row for the average over all regions
+                        # special case: combines a24(a-c) subregions as a24 for aCING
+                        if region.name == 'aCING':
+                            x = region.collapse_ao(antibody_name, measurement,
+                                                   subregions=['a24a', 'a24b', 'a24c'])
+                            z = z_score(x, region_models[region_name])
+                            write_row(
+                                long_fp, wide_fp, aid, bid,
+                                hemisphere_name, region_name, 'a24abc', 'AVG',
+                                antibody_name, measurement, x, z,
+                            )
+                    #
+                    # end of regions loop
+
+                    # write a row for the average over all regions in this hemisphere
+                    x = hemisphere.collapse_ao(antibody_name, measurement)
+                    z = z_score(x, hemisphere_model[hemisphere_name])
+                    write_row(
+                        long_fp, wide_fp, aid, bid,
+                        hemisphere_name, 'AVG', 'AVG', 'AVG',
+                        antibody_name, measurement, x, z,
+                    )
+                #
+                # end of hemispheres_loop
+
+                # write a row for the average over all data in the patient
                 x = patient.collapse_ao(antibody_name, measurement)
                 z = z_score(x, patient_model)
-                write_row(long_fp, wide_fp, aid, bid,
-                          'AVG', 'AVG', 'AVG',
-                          antibody_name, measurement, x, z)
+                write_row(
+                    long_fp, wide_fp, aid, bid,
+                    'AVG', 'AVG', 'AVG', 'AVG',
+                    antibody_name, measurement, x, z,
+                )
             #
             # end of aids loop
         #
         # end of measurements loop
     #
     # end of antibodies loop
-
-    # print('PATIENT:\n',patient_model)
-    # for region in region_models:
-    #     print('%s\n' % region, region_models[region])
-    # for region in subregion_models:
-    #     for subregion in subregion_models[region]:
-    #         print('%s\n' % subregion, subregion_models[region][subregion])
 #
 # end of generate_spreadsheets
 
-def write_row(long_fp, wide_fp, aid, bid, region_name, subregion_name, roi_name,
+def write_row(long_fp, wide_fp, aid, bid,
+              hemisphere_name, region_name, subregion_name, roi_name,
               antibody_name, measurement, x, z):
     for i in range(len(x)):
         long_fp.write(
             LONG_LINE % \
-            (aid, bid, region_name, subregion_name, roi_name,
+            (aid, bid, hemisphere_name, region_name, subregion_name, roi_name,
              antibody_name, measurement, LAYER_NAMES[i], x[i], z[i]))
     wide_fp.write(
         WIDE_LINE % \
-        (aid, bid, region_name, subregion_name, roi_name, antibody_name, measurement,
+        (aid, bid, hemisphere_name, region_name, subregion_name, roi_name, antibody_name, measurement,
          *tuple(x), *tuple(z)))
 #
 # end of write_row
@@ -570,9 +663,10 @@ def main(argv):
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
-    # set of Patients that will be populated with the data in args.idir
+    # dataset of Patients containing hierarchical data
     patients = collect_patients(args.idir, args.hc)
 
+    # flatten the hierarchical data into a table
     generate_spreadsheets(args.odir, patients)
     
     # TODO: call function to generate curve plots
