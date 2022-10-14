@@ -88,13 +88,13 @@ def main(argv):
         logger.info('--> Processing Slide: %s (%d/%d)' % \
               (os.path.basename(slide_f), slide_i+1, len(slides)))
 
-        # # get the annotation file containing ROIs
-        # anno_f = sana_io.create_filepath(
-        #     slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
-
-        # Temporary fix for reading annotations (microglia)
+        # get the annotation file containing ROIs
         anno_f = sana_io.create_filepath(
-            slide_f.replace('-21_EX', '-2021_EX'), ext='.json', fpath=args.adir, rpath=args.rdir)
+            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+
+        # # Temporary fix for reading annotations (microglia)
+        # anno_f = sana_io.create_filepath(
+        #     slide_f.replace('-21_EX', '-2021_EX'), ext='.json', fpath=args.adir, rpath=args.rdir)
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):

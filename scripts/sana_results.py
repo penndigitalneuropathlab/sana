@@ -288,7 +288,8 @@ class Entry:
         if len(self.params_f) == 0:
             raise DirectoryIncompleteError
         self.params_f = os.path.join(self.directory, self.params_f[0])
-        self.slide_name = os.path.splitext(self.params_f)[0]
+        self.slide_name = os.path.basename(self.params_f).replace('.csv', '.svs')
+        self.hemisphere_name = sana_io.get_hemi(self.slide_name)
     #
     # end of get_directory_parts
 
@@ -423,8 +424,10 @@ def get_HC_model(patients, antibody_name, measurement, hemisphere_name=None, reg
 
     # loop through the HC patients
     hc = []
-    for aid in [patient for patient in patients if patient.is_hc]:
-
+    hc_aids = [aid for aid in patients if patients[aid].is_hc]
+    for aid in hc_aids:
+        patient = patients[aid]
+        
         # no hemisphere specified, calculate model over entire patient
         if hemisphere_name is None:
             hc.append(patient.collapse_ao(antibody_name, measurement))
@@ -441,11 +444,11 @@ def get_HC_model(patients, antibody_name, measurement, hemisphere_name=None, reg
             else:
 
                 # region not available for this patient, skip!
-                if not region_name in patient.regions:
+                if not region_name in hemisphere.regions:
                     continue
 
                 # no subregion specified, calculate model over region
-                region = patient.regions[region_name]
+                region = hemisphere.regions[region_name]
                 if subregion_name is None:
                     hc.append(region.collapse_ao(antibody_name, measurement))
                 else:
@@ -494,15 +497,24 @@ def z_score(x, model):
 #
 # end of z_score
 
+def generate_files(odir, prefix):
+    long_fp = open(os.path.join(odir, '%s_long_results.csv' % prefix), 'w')
+    long_fp.write('%s\n' % LONG_HEADER)
+    wide_fp = open(os.path.join(odir, '%s_wide_results.csv' % prefix), 'w')
+    wide_fp.write('%s\n' % WIDE_HEADER)
+    
+    return long_fp, wide_fp
+
 # this function collapses our hierarchical patient dataset into a table
 def generate_spreadsheets(odir, patients):
 
-    # long and wide formatted tables for dan
-    long_fp = open(os.path.join(odir, 'long_results.csv'), 'w')
-    long_fp.write('%s\n' % LONG_HEADER)
-    wide_fp = open(os.path.join(odir, 'wide_results.csv'), 'w')
-    wide_fp.write('%s\n' % WIDE_HEADER)
-
+    # generate the file pointers for the raw and aggregated data
+    roi_fps = generate_files(odir, 'full')
+    subregion_fps = generate_files(odir, 'agg_roi')
+    region_fps = generate_files(odir, 'agg_subregion')
+    hemisphere_fps = generate_files(odir, 'agg_region')
+    patient_fps = generate_files(odir, 'agg_hemisphere')
+    
     # these dictionaries store the individual HC models for each combination
     #  of hemisphere, region, and subregion
     hemisphere_models = {}
@@ -525,7 +537,7 @@ def generate_spreadsheets(odir, patients):
                 # loop through hemispheres in this patient
                 patient = patients[aid]
                 for hemisphere_name in sorted(patient.hemispheres.keys()):
-                    hemisphere = patient.regions[hemisphere_name]
+                    hemisphere = patient.hemispheres[hemisphere_name]
 
                     # calculate the HC model for this hemisphere, if not already generated
                     if hemisphere_name not in hemisphere_models:
@@ -536,7 +548,7 @@ def generate_spreadsheets(odir, patients):
                 
                     # loop through regions in this hemisphere
                     for region_name in sorted(hemisphere.regions.keys()):
-                        region = patient.regions[region_name]
+                        region = hemisphere.regions[region_name]
                         bid = region.bid
                     
                         # calculate the HC model for this region, if not already generated
@@ -573,7 +585,7 @@ def generate_spreadsheets(odir, patients):
                                 z = z_score(
                                     x, subregion_models[region_name][subregion_name])
                                 write_row(
-                                    long_fp, wide_fp, aid, bid,
+                                    roi_fps, aid, bid,
                                     hemisphere_name, region_name, subregion_name, roi_name,
                                     antibody_name, measurement, x, z,
                                 )
@@ -585,7 +597,7 @@ def generate_spreadsheets(odir, patients):
                             z = z_score(
                                 x, subregion_models[region_name][subregion_name])
                             write_row(
-                                long_fp, wide_fp, aid, bid,
+                                subregion_fps, aid, bid,
                                 hemisphere_name, region_name, subregion_name, 'AVG',
                                 antibody_name, measurement, x, z,
                             )
@@ -596,7 +608,7 @@ def generate_spreadsheets(odir, patients):
                         x = region.collapse_ao(antibody_name, measurement)
                         z = z_score(x, region_models[region_name])
                         write_row(
-                            long_fp, wide_fp, aid, bid,
+                            region_fps, aid, bid,
                             hemisphere_name, region_name, 'AVG', 'AVG',
                             antibody_name, measurement, x, z,
                         )
@@ -607,7 +619,7 @@ def generate_spreadsheets(odir, patients):
                                                    subregions=['a24a', 'a24b', 'a24c'])
                             z = z_score(x, region_models[region_name])
                             write_row(
-                                long_fp, wide_fp, aid, bid,
+                                region_fps, aid, bid,
                                 hemisphere_name, region_name, 'a24abc', 'AVG',
                                 antibody_name, measurement, x, z,
                             )
@@ -616,9 +628,9 @@ def generate_spreadsheets(odir, patients):
 
                     # write a row for the average over all regions in this hemisphere
                     x = hemisphere.collapse_ao(antibody_name, measurement)
-                    z = z_score(x, hemisphere_model[hemisphere_name])
+                    z = z_score(x, hemisphere_models[hemisphere_name])
                     write_row(
-                        long_fp, wide_fp, aid, bid,
+                        hemisphere_fps, aid, bid,
                         hemisphere_name, 'AVG', 'AVG', 'AVG',
                         antibody_name, measurement, x, z,
                     )
@@ -629,7 +641,7 @@ def generate_spreadsheets(odir, patients):
                 x = patient.collapse_ao(antibody_name, measurement)
                 z = z_score(x, patient_model)
                 write_row(
-                    long_fp, wide_fp, aid, bid,
+                    patient_fps, aid, bid,
                     'AVG', 'AVG', 'AVG', 'AVG',
                     antibody_name, measurement, x, z,
                 )
@@ -642,9 +654,10 @@ def generate_spreadsheets(odir, patients):
 #
 # end of generate_spreadsheets
 
-def write_row(long_fp, wide_fp, aid, bid,
+def write_row(fps, aid, bid,
               hemisphere_name, region_name, subregion_name, roi_name,
               antibody_name, measurement, x, z):
+    long_fp, wide_fp = fps
     for i in range(len(x)):
         long_fp.write(
             LONG_LINE % \

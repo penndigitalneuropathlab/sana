@@ -10,9 +10,9 @@ class SMI32Processor(HDABProcessor):
     # end of constructor
 
     # TODO: might not even need run?
-    def run(self, odir, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
 
-        self.mask_frame(main_roi, sub_rois)
+        self.generate_masks(main_roi, sub_rois)
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
