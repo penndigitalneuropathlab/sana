@@ -140,8 +140,8 @@ class StainVector:
         if self.stain_type == 'H-DAB':
             if stain_vector is None:
                 self.v = stain_v = np.array([
-                    [0.65, 0.70, 0.29],
-                    [0.27, 0.57, 0.78],
+                    [0.65, 0.70, 0.29], # hem
+                    [0.27, 0.57, 0.78], # dab
                     [0.00, 0.00, 0.00],
                 ])
             else:

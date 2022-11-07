@@ -28,7 +28,7 @@ class Model:
         # load the model
         self.model = resnet50_wildcat_upsample(self.num_classes, pretrained=False,
             kmax=kmax, kmin=kmin, alpha=alpha, num_maps=num_maps)
-        self.model.load_state_dict(torch.load(self.model_path))
+        self.model.load_state_dict(torch.load(self.model_path, map_location=self.device))
         self.model.eval()
         self.model = self.model.to(self.device)
 

@@ -6,6 +6,7 @@ import sys
 import argparse
 import logging
 import time
+from multiprocessing import Process
 
 # installed modules
 import numpy as np
@@ -16,6 +17,7 @@ from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly, transform_inv_poly
 from sana_frame import Frame
+from sana_framer import Framer
 from sana_logger import SANALogger
 
 # TODO: rename processors to classifiers
@@ -30,6 +32,7 @@ from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
 from sana_processors.HDAB_processor import HDABProcessor
+from sana_processors.LFB_processor import LFBProcessor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -53,6 +56,7 @@ def get_processor(fname, frame, logger, **kwargs):
         'AT8': AT8Processor,
         'IBA1': IBA1Processor,
         'R13': R13Processor,
+        'LFB': LFBProcess,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
@@ -61,56 +65,93 @@ def get_processor(fname, frame, logger, **kwargs):
 #
 # end of get_processor
 
-# this script loads a series of slides and ROIs within the given slides
-# it loads and processes the data within ROIs, and calculates the percentage
-# of positive pixels in the ROIs
-def main(argv):
-    # parse the command line
-    parser = cmdl_parser(argv)
-    args = parser.parse_args()
+def process_slides(args, slides, logger):
 
-    logger = SANALogger.get_sana_logger(args.debug_level)
-
-    # get all the slide files to process
-    slides = sana_io.get_slides_from_lists(args.lists)
-    if len(slides) == 0:
-        logger.debug("No Slides Found")
-        parser.print_usage()
-        exit()
-    logger.debug('Number of slides found: %d' % len(slides))
-    
-    slides = slides[args.skip:]
-    logger.info('Skipping %d slides!' % args.skip)
-
-    # loop through the slides
+    # loop through slides to load in all frames to process
+    rois_to_process = []
     for slide_i, slide_f in enumerate(slides):
-        # progress messaging
-        logger.info('--> Processing Slide: %s (%d/%d)' % \
-              (os.path.basename(slide_f), slide_i+1, len(slides)))
-
-        # get the annotation file containing ROIs
-        anno_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
-
-        # # Temporary fix for reading annotations (microglia)
-        # anno_f = sana_io.create_filepath(
-        #     slide_f.replace('-21_EX', '-2021_EX'), ext='.json', fpath=args.adir, rpath=args.rdir)
-
-        # make sure the file exists, else we skip this slide
-        if not os.path.exists(anno_f):
-            logger.info('Annotation file %s does not exist\n' % anno_f)
-            continue
 
         # initialize the Loader object for loading Frames
         try:
             loader = Loader(slide_f)
+            loader.set_lvl(args.lvl)
         except Exception as e:
             print(e)
             logger.info('Could not load .svs file: %s' % e)
             continue
 
-        # set the image resolution level
-        loader.set_lvl(args.lvl)
+        # find the locations of all the frames to process
+        size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
+        framer = Framer(loader, size)
+
+        # load the slide mask, if given
+        if args.slide_mask:
+            mask = Frame(args.slide_mask, loader.thumbnail_lvl, loader.converter)
+        else:
+            mask = Frame(np.ones_like(loader.thumbnail[:,:,0][:,:,None]), loader.thumbnail_lvl, loader.converter)
+
+        # loop through the frame locations
+        for i, j in framer.inds:
+            loc = framer.locs[i][j]
+
+            # check if we want to actually process this frame
+            loader.converter.rescale(loc, loader.thumbnail_lvl)
+            loader.converter.rescale(size, loader.thumbnail_lvl)
+            frame_mask = mask.get_tile(loc, size)
+            if np.sum(frame_mask) != 0:
+                loader.converter.rescale(loc, args.lvl)
+                loader.converter.rescale(size, args.lvl)
+
+                # build the ROI to process
+                x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
+                y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
+                main_roi = Polygon(x, y, is_micron=False, lvl=args.lvl)
+                main_roi = main_roi.to_annotation(slide_f, 'ROI')
+                sub_rois = []
+                roi_id = '%s_%d_%d' % (main_roi.class_name, i, j)
+
+                rois_to_process.append({
+                    'args': args,
+                    'logger': logger,
+                    'loader': loader,
+                    'main_roi': main_roi,
+                    'sub_rois': sub_rois,
+                    'roi_id': roi_id,
+                })
+            #
+            # end of mask checking
+        #
+        # end of loc checking
+    #
+    # end of slides loop
+
+    return rois_to_process
+#
+# end of process_slides
+
+def process_rois(args, slides, logger):
+    
+    # loop through the slides
+    rois_to_process
+    for slide_i, slide_f in enumerate(slides):
+
+        # get the annotation file containing ROIs
+        anno_f = sana_io.create_filepath(
+            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
+
+        # make sure the file exists, else we skip this slide
+        if not os.path.exists(anno_f):
+            logger.info('Annotation file %s does not exist\n' % anno_f)
+            continue
+        
+        # initialize the Loader object for loading Frames
+        try:
+            loader = Loader(slide_f)
+            loader.set_lvl(args.lvl)            
+        except Exception as e:
+            print(e)
+            logger.info('Could not load .svs file: %s' % e)
+            continue
 
         # load the main roi(s) from the json file
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)
@@ -120,10 +161,6 @@ def main(argv):
 
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
-            t0 = time.time()
-            # progress messaging
-            logger.info('----> Processing Frame (%d/%d)' % \
-                  (main_roi_i+1, len(main_rois)))
 
             # make sure the roi is properly formed
             if main_roi.shape[0] < 3:
@@ -167,96 +204,175 @@ def main(argv):
                 [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]                
                 plot_poly(ax, plot_rois[0], color='black')
                 plt.show()
-                    
-            # initialize the Params IO object, this will store parameters
-            # relating to the loading/processing of the Frame, as well as
-            # the various AO results
-            params = Params()
 
-            # create odir for detection jsons
-            roi_odir = sana_io.create_odir(args.odir, 'detections')
-            
-            # create the output directory path
-            # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-            try:
-                bid = sana_io.get_bid(slide_f)
-                antibody = sana_io.get_antibody(slide_f)
-                region = sana_io.get_region(slide_f)
-
-                if not main_roi.name:
-                    roi_name = str(main_roi_i)
-                else:
-                    roi_name = main_roi.name
-
-                roi_id = '%s_%s' % (main_roi.class_name, roi_name)
-                odir = sana_io.create_odir(args.odir, bid)
-                odir = sana_io.create_odir(odir, antibody)
-                odir = sana_io.create_odir(odir, region)
-                odir = sana_io.create_odir(odir, roi_id)
-            except:
-                odir = sana_io.create_odir(
-                    args.odir, os.path.splitext(os.path.basename(slide_f))[0]+'_%d' % main_roi_i)
-            logger.debug('Output directory successfully created: %s' % odir)
-
-            # rescale the ROIs to the proper level
-            loader.converter.rescale(main_roi, loader.lvl)
-            [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
-            
-            # load the frame into memory using the main roi
-            if args.roi_type == 'GM':
-
-                # rotate/translate the coord. system to retrieve the frame from
-                # the slide. the frame will be orthogonalized such that CSF is
-                # at the top and WM is at the bottom of the image.
-                frame = loader.load_gm_frame(params, main_roi, padding=args.padding, logger=logger)
-            elif args.roi_type == 'GMZONE':
-
-                # same rotation goal as above, except we have to test all
-                #  4 sides of the input ROI to find the CSF
-                frame = loader.load_gm_zone_frame(params, main_roi, padding=args.padding, logger=logger)
+            if not main_roi.name:
+                roi_name = str(main_roi_i)
             else:
-                # just translates the coord. system, no rotating or cropping
-                frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
+                roi_name = main_roi.name
+            roi_id = '%s_%s' % (main_roi.class_name, roi_name)
 
-            print(main_roi.lvl, params.data['loc'].lvl)
-            
-            # transform the main ROI to the Frame's coord. system
-            transform_poly(
-                main_roi,
-                params.data['loc'], params.data['crop_loc'],
-                params.data['M1'], params.data['M2']
-            )
-
-            # transform the sub ROIs to the Frame's coord. system
-            for sub_roi_i in range(len(sub_rois)):
-                if sub_rois[sub_roi_i] is None:
-                    continue
-                transform_poly(
-                    sub_rois[sub_roi_i],
-                    params.data['loc'], params.data['crop_loc'],
-                    params.data['M1'], params.data['M2']
-                )
-
-            # get the processor object
-            kwargs = {
-                'qupath_threshold': args.qupath_threshold,
-                'roi_type': args.roi_type,                
-            }
-            processor = get_processor(slide_f, frame, logger, **kwargs)
-            if processor is None:
-                logger.info('No processor found')
-                continue
-            if (main_roi_i == 0):
-                first_run = True
-            else:
-                first_run = False
-
-            # run the processes for the antibody
-            processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
-
+            rois_to_process.append({
+                'args': args,
+                'logger': logger,
+                'loader': loader,
+                'main_roi': main_roi,
+                'sub_rois': sub_rois,
+                'roi_id': roi_id,
+            })
+        #
         # end of main_rois loop
     #
     # end of slides loop
+
+    return rois_to_process
+#
+# end of process_roi
+
+def process(args, logger, loader, roi_i, nrois, main_roi, sub_rois=[], roi_id=None):
+    logger.info('Processing Frame (%d/%d)' % (roi_i, nrois))
+    
+    # initialize the Params IO object, this will store parameters
+    # relating to the loading/processing of the Frame, as well as
+    # the various AO results
+    params = Params()
+
+    # create odir for detection jsons
+    roi_odir = sana_io.create_odir(args.odir, 'detections')
+    
+    # create the output directory path
+    # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
+    slide_f = loader.fname    
+    try:
+        bid = sana_io.get_bid(slide_f)
+        antibody = sana_io.get_antibody(slide_f)
+        region = sana_io.get_region(slide_f)
+        odir = sana_io.create_odir(args.odir, bid)
+        odir = sana_io.create_odir(odir, antibody)
+        odir = sana_io.create_odir(odir, region)
+        odir = sana_io.create_odir(odir, roi_id)
+    except:
+        odir = sana_io.create_odir(args.odir, roi_id)
+    logger.debug('Output directory successfully created: %s' % odir)
+
+    # rescale the ROIs to the proper level
+    loader.converter.rescale(main_roi, loader.lvl)
+    [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
+            
+    # load the frame into memory using the main roi
+    
+    if args.mode == 'GM':
+
+        # rotate/translate the coord. system to retrieve the frame from
+        # the slide. the frame will be orthogonalized such that CSF is
+        # at the top and WM is at the bottom of the image.
+        frame = loader.load_gm_frame(params, main_roi, padding=args.padding, logger=logger)
+        
+    elif args.mode == 'GMZONE':
+
+        # same rotation goal as above, except we have to test all
+        #  4 sides of the input ROI to find the CSF
+        frame = loader.load_gm_zone_frame(params, main_roi, padding=args.padding, logger=logger)
+        
+    else:
+        # just translates the coord. system, no rotating or cropping
+        frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
+
+    # transform the main ROI to the Frame's coord. system
+    transform_poly(
+        main_roi,
+        params.data['loc'], params.data['crop_loc'],
+        params.data['M1'], params.data['M2']
+    )
+
+    # transform the sub ROIs to the Frame's coord. system
+    for sub_roi_i in range(len(sub_rois)):
+        if sub_rois[sub_roi_i] is None:
+            continue
+        transform_poly(
+            sub_rois[sub_roi_i],
+            params.data['loc'], params.data['crop_loc'],
+            params.data['M1'], params.data['M2']
+        )
+
+    # get the processor object
+    kwargs = {
+        'qupath_threshold': args.qupath_threshold,
+        'roi_type': args.mode,
+    }
+    processor = get_processor(slide_f, frame, logger, **kwargs)
+    if processor is None:
+        logger.info('No processor found')
+        continue
+    if (main_roi_i == 0):
+        first_run = True
+    else:
+        first_run = False
+
+    # finally, analyze the frame based on the antibody it was stained with
+    processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
+#
+# end of process
+
+def process_job(pid, rois_to_process):
+    n = len(rois_to_process)
+    for i in range(n):
+        rois_to_process[i]['nrois'] = n
+        rois_to_process[i]['roi_i'] = i
+        process(**args)
+    
+def dispatch(rois_to_process, njobs):
+
+    nrois = math.ceil(len(rois_to_process) / njobs)
+
+    jobs = []
+    for pid in range(njobs):
+        st = pid * nrois
+        en = (pid+1) * nrois
+
+        # create, store, start the job
+        p = Process(target=process_job, args=(pid, rois_to_process[st:en]))
+        jobs.append(p)
+        p.start()
+    #
+    # end of job dispatching
+
+    return jobs
+#
+# end of dispatch
+
+def main(argv):
+    logger = SANALogger.get_sana_logger(args.debug_level)
+    
+    # parse the command line
+    parser = cmdl_parser(argv)
+    args = parser.parse_args()
+
+    # get all the slide files to process
+    slides = sana_io.get_slides_from_lists(args.lists)
+    if len(slides) == 0:
+        logger.debug("No Slides Found")
+        parser.print_usage()
+        exit()
+    logger.debug('Number of slides found: %d' % len(slides))
+    
+    slides = slides[args.skip:]
+    logger.info('Skipping %d slides!' % args.skip)
+
+    if args.mode == 'SLIDESCAN':
+        rois_to_process = process_slides(args, slides, logger)
+    else:
+        rois_to_process = process_rois(args, slides, logger)
+
+    if args.reprocess:
+        
+        # create and start the jobs
+        jobs = dispatch(rois_to_process, args.njobs)
+
+        # join and wait until all jobs are finished        
+        [job.join() for job in jobs]        
+
+    # TODO: write code to combine outputs in SLIDESCAN
+    # TODO: can probably just include sana_results here right???????
 #
 # end of main
 
@@ -265,6 +381,15 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-lists', type=str, nargs='*', required=True,
         help="filelists containing .svs files")
+    parser.add_argument(
+        '-mode', type=str, required=True, choices=['SLIDESCAN', 'ROI', 'GM', 'GMZONE'],
+        help="method of how to process the slide, SLIDESCAN is WSI analysis, GM/GMZONE orthogonalize the ROI")
+    parser.add_argument(
+        '-njobs', type=int, default=1,
+        help="number of jobs to deploy, NOTE: be careful with memory usage")
+    parser.add_argument(
+        '-reprocess', action=store_true, default=False,
+        help="whether or not to actually run the processor.run() code")
     parser.add_argument(
         '-adir', type=str, default="",
         help="directory path containing .json files")
@@ -277,9 +402,9 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-lvl', type=int, default=0,
         help="resolution level to use during processing")
-    parser.add_argument(
-        '-roi_type', type=str, required=True, choices=['GM', 'ROI', 'GMZONE'],
-        help="type of ROI, GM will be rotated, ROI is only translated")
+    parser.add_argument(        
+        '-slide_mask', type=str, default="",
+        help="path to a thumbnail resolution slide mask")
     parser.add_argument(
         '-main_class', type=str, default=None,
         help="ROI class used to load and process the Frame")

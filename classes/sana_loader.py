@@ -74,11 +74,11 @@ class Loader(openslide.OpenSlide):
 
     # loads the entire image at the lowest resolution
     def load_thumbnail(self):
-        lvl = self.lc - 1
-        h, w = self.get_dim(lvl)
-        loc = Point(0, 0, False, lvl)
-        size = Point(h, w, False, lvl)
-        return self.load_frame(loc, size, lvl)
+        self.thumbnail_lvl = self.lc - 1
+        h, w = self.get_dim(self.thumbnail_lvl)
+        loc = Point(0, 0, False, self.thumbnail_lvl)
+        size = Point(h, w, False, self.thumbnail_lvl)
+        return self.load_frame(loc, size, self.thumbnail_lvl)
 
     # loads a Frame into memory, uses a location and size coordinate
     #  image is automatically padded if loc or size exceeds the dimensions
