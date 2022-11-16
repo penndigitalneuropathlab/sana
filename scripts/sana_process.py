@@ -3,6 +3,7 @@
 # system modules
 import os
 import sys
+import math
 import argparse
 import logging
 import time
@@ -15,7 +16,7 @@ import numpy as np
 import sana_io
 from sana_params import Params
 from sana_loader import Loader
-from sana_geo import transform_poly, transform_inv_poly
+from sana_geo import transform_poly, transform_inv_poly, Point, Polygon
 from sana_frame import Frame
 from sana_framer import Framer
 from sana_logger import SANALogger
@@ -32,7 +33,7 @@ from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
 from sana_processors.HDAB_processor import HDABProcessor
-from sana_processors.LFB_processor import LFBProcessor
+from sana_processors.HE_processor import HEProcessor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -56,7 +57,8 @@ def get_processor(fname, frame, logger, **kwargs):
         'AT8': AT8Processor,
         'IBA1': IBA1Processor,
         'R13': R13Processor,
-        'LFB': LFBProcess,
+        'MJFR13': R13Processor,
+        'HE': HEProcessor,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
@@ -91,14 +93,14 @@ def process_slides(args, slides, logger):
             mask = Frame(np.ones_like(loader.thumbnail[:,:,0][:,:,None]), loader.thumbnail_lvl, loader.converter)
 
         # loop through the frame locations
-        for i, j in framer.inds:
+        for i, j in framer.inds():
             loc = framer.locs[i][j]
 
             # check if we want to actually process this frame
             loader.converter.rescale(loc, loader.thumbnail_lvl)
             loader.converter.rescale(size, loader.thumbnail_lvl)
             frame_mask = mask.get_tile(loc, size)
-            if np.sum(frame_mask) != 0:
+            if np.sum(frame_mask) > 0.05*args.frame_size**2:
                 loader.converter.rescale(loc, args.lvl)
                 loader.converter.rescale(size, args.lvl)
 
@@ -112,9 +114,9 @@ def process_slides(args, slides, logger):
 
                 rois_to_process.append({
                     'args': args,
-                    'logger': logger,
-                    'loader': loader,
+                    'slide': slide_f,
                     'main_roi': main_roi,
+                    'main_roi_dict': main_roi.__dict__,
                     'sub_rois': sub_rois,
                     'roi_id': roi_id,
                 })
@@ -213,8 +215,7 @@ def process_rois(args, slides, logger):
 
             rois_to_process.append({
                 'args': args,
-                'logger': logger,
-                'loader': loader,
+                'slide': slide,
                 'main_roi': main_roi,
                 'sub_rois': sub_rois,
                 'roi_id': roi_id,
@@ -228,8 +229,22 @@ def process_rois(args, slides, logger):
 #
 # end of process_roi
 
-def process(args, logger, loader, roi_i, nrois, main_roi, sub_rois=[], roi_id=None):
+def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_rois=[], roi_id=None):
+    logger = SANALogger.get_sana_logger(args.debug_level)    
     logger.info('Processing Frame (%d/%d)' % (roi_i, nrois))
+
+    for x in main_roi_dict:
+        main_roi.__setattr__(x, main_roi_dict[x])
+    
+    # initialize the Loader object for loading Frames
+    try:
+        loader = Loader(slide)
+        loader.set_lvl(args.lvl)
+    except Exception as e:
+        print(e)
+        logger.info('Could not load .svs file: %s' % e)
+        return
+
     
     # initialize the Params IO object, this will store parameters
     # relating to the loading/processing of the Frame, as well as
@@ -302,11 +317,7 @@ def process(args, logger, loader, roi_i, nrois, main_roi, sub_rois=[], roi_id=No
     processor = get_processor(slide_f, frame, logger, **kwargs)
     if processor is None:
         logger.info('No processor found')
-        continue
-    if (main_roi_i == 0):
-        first_run = True
-    else:
-        first_run = False
+        return
 
     # finally, analyze the frame based on the antibody it was stained with
     processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
@@ -318,7 +329,8 @@ def process_job(pid, rois_to_process):
     for i in range(n):
         rois_to_process[i]['nrois'] = n
         rois_to_process[i]['roi_i'] = i
-        process(**args)
+        rois_to_process[i]['first_run'] = i == 0
+        process(**rois_to_process[i])
     
 def dispatch(rois_to_process, njobs):
 
@@ -341,12 +353,13 @@ def dispatch(rois_to_process, njobs):
 # end of dispatch
 
 def main(argv):
-    logger = SANALogger.get_sana_logger(args.debug_level)
     
     # parse the command line
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
+    logger = SANALogger.get_sana_logger(args.debug_level)
+    
     # get all the slide files to process
     slides = sana_io.get_slides_from_lists(args.lists)
     if len(slides) == 0:
@@ -362,7 +375,6 @@ def main(argv):
         rois_to_process = process_slides(args, slides, logger)
     else:
         rois_to_process = process_rois(args, slides, logger)
-
     if args.reprocess:
         
         # create and start the jobs
@@ -388,7 +400,7 @@ def cmdl_parser(argv):
         '-njobs', type=int, default=1,
         help="number of jobs to deploy, NOTE: be careful with memory usage")
     parser.add_argument(
-        '-reprocess', action=store_true, default=False,
+        '-reprocess', action='store_true', default=False,
         help="whether or not to actually run the processor.run() code")
     parser.add_argument(
         '-adir', type=str, default="",
@@ -402,6 +414,9 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-lvl', type=int, default=0,
         help="resolution level to use during processing")
+    parser.add_argument(
+        '-frame_size', type=int, default=1024,
+        help="size of frame to load during SLIDESCAN")
     parser.add_argument(        
         '-slide_mask', type=str, default="",
         help="path to a thumbnail resolution slide mask")
@@ -423,6 +438,10 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-qupath_threshold', type=float, default=None,
         help="Pre-defined threshold in QuPath to use in Manual %AO"
+    )
+    parser.add_argument(
+        '-stain_vector', type=float, nargs=6, default=None,
+        help="Pre-defined stain vector in QuPath to use in Manual %AO"
     )
     parser.add_argument('-skip', type=int, default=0)
 

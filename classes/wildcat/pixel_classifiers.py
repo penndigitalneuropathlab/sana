@@ -33,13 +33,13 @@ class Model:
         self.model = self.model.to(self.device)
 
         # size of patch to be inputted to the model
-        self.patch_raw = 105
+        self.patch_raw = 112
 
         # size of window to load in
-        self.window_raw = 512
+        self.window_raw = 1120
 
         # padding, relative to patch_size to add to the window
-        self.padding_rel = 1.5
+        self.padding_rel = 1.0
         self.padding_raw = int(self.padding_rel * self.patch_raw)
 
         # amount wildcat shrinks input images when mapping to segmentations
@@ -47,10 +47,11 @@ class Model:
 
         # don't want to store large output images
         # TODO: do we need this?
-        self.extra_shrinkage = 4
+        self.extra_shrinkage = 1
 
         # size of output pixel (in input pixels)
         self.out_pix_size = self.wildcat_shrinkage * self.extra_shrinkage
+        #self.out_pix_size = self.extra_shrinkage
 
         # output size for each window
         self.window_out = int(self.window_raw / self.out_pix_size)
@@ -67,16 +68,16 @@ class Model:
         # output image size
         self.out_dim = (self.n_win * self.window_out).astype(int)
 
-        self.extra_scaled = (self.window_raw*self.n_win) / self.frame.img.shape[:-1]
+        self.extra_scaled = (self.window_raw * self.n_win) / self.frame.img.shape[:-1]
         self.true_out_dim = (self.out_dim / self.extra_scaled).astype(int)
     #
     # end of constructor
 
-    def run(self):
+    def run(self, debug=False):
 
         # initialize the output array
         output = np.zeros((self.num_classes, self.out_dim[0], self.out_dim[1]))
-
+        
         # range of pix to scan
         u_range, v_range = (0, self.n_win[0]), (0, self.n_win[1])
 
@@ -116,7 +117,7 @@ class Model:
                 tran = transforms.Compose([
                     transforms.Resize((wwc, wwc)),
                     transforms.ToTensor(),
-                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
                 ])
 
                 # convert the read chunk to tensor format
@@ -132,12 +133,8 @@ class Model:
                     # scale the image to desired size
                     x_cpool_up = torch.nn.functional.interpolate(x_cpool, scale_factor=1.0/self.extra_shrinkage)
 
-                    # perform the softmax to get 0->1 probs
-                    x_softmax_up = scipy.special.softmax(x_cpool_up.cpu().detach().numpy(), axis=1)
-
                     # extract the central portion of the output
                     p0, p1 = self.padding_out, self.padding_out + self.window_out
-                    x_softmax_ctr = x_softmax_up[:,:,p0:p1,p0:p1]
                     x_cpool_ctr = x_cpool_up[:,:,p0:p1,p0:p1]
 
                     # place in the output
@@ -145,16 +142,18 @@ class Model:
                     yout0, yout1 = v * self.window_out, ((v+1)*self.window_out)
                     try:
                         for i in range(self.num_classes):
-                            # output[i, xout0:xout1,yout0:yout1] = x_softmax_ctr[0,i,:,:]
                             output[i, xout0:xout1,yout0:yout1] = x_cpool_ctr[0,i,:,:].cpu().detach().numpy()
                     except ValueError as e:
                         continue
 
-                    # fig, axs = plt.subplots(1,3)
-                    # axs[0].imshow(chunk, extent=(0,100,0,100))
-                    # axs[1].imshow(x_softmax_up[0,1], extent=(0,100,0,100))
-                    # axs[2].imshow(output[1])
-                    # plt.show()
+                    if debug:
+                        fig, axs = plt.subplots(2,2)
+                        axs = axs.ravel()
+                        axs[0].imshow(chunk, extent=(0,100,0,100))
+                        axs[1].imshow(x_cpool_up[0,1].cpu().detach().numpy(), extent=(0,100,0,100))
+                        axs[2].imshow(x_cpool_ctr[0,1].cpu().detach().numpy(), extent=(p0,p1,p0,p1))
+                        axs[3].imshow(output[1])
+                        plt.show()
 
                 #
                 # end of model evaluation
@@ -163,6 +162,10 @@ class Model:
 
         # cutoff the extra padded data from the windowing
         output = output[:, :self.true_out_dim[0], :self.true_out_dim[1]]
+
+        # # add the frame padding border
+        # pad = self.frame.padding
+        # output = np.pad(output, ((pad,pad),(pad,pad),(0,0)), mode='constant', constant_values=0)
 
         # print(output.shape, self.frame.img.shape, flush=True)
         if self.debug:
@@ -195,4 +198,4 @@ class MicrogliaClassifier(Model):
 class R13Classifier(Model):
     def __init__(self, frame):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'R13.dat')
-        super().__init__(model_path, frame, 4, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+        super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
