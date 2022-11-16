@@ -28,7 +28,7 @@ class HDABProcessor(Processor):
         super(HDABProcessor, self).__init__(fname, frame, logger, **kwargs)
 
         # prepare the stain separator
-        self.ss = StainSeparator('H-DAB')
+        self.ss = StainSeparator('H-DAB', self.stain_vector)
 
         # if self.logger.plots:
         #     ds = 20
@@ -57,6 +57,7 @@ class HDABProcessor(Processor):
         # rescale the OD stains to 8 bit pixel values
         # NOTE: this uses the physical min/max of the stains based
         #       on the stain vector used
+        # TODO: this compresses teh digital space, need to scale it back to 0 and 255!
         self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
@@ -64,7 +65,7 @@ class HDABProcessor(Processor):
         if self.qupath_threshold:
             self.manual_dab_threshold = \
                 (self.qupath_threshold - self.ss.min_od[1]) / \
-                (self.ss.max_od[1] - self.min_od[1])
+                (self.ss.max_od[1] - self.ss.min_od[1])
 
         self.gray = self.frame.copy()
         self.gray.to_gray()
@@ -229,9 +230,9 @@ class HDABProcessor(Processor):
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
             self.frame, self.auto_dab_thresh_img)
-        self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
+        #self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
         self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
-        self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+        #self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
         # save the feature signals
         signals = results['signals']

@@ -43,7 +43,7 @@ class AT8Processor(HDABProcessor):
         self.run_auto_ao(odir, params, scale=1.0, mx=90, open_r=0, close_r=0)
 
         # generate the neuronal and glial severity results
-        # self.run_multiclass(odir, params)
+        self.run_multiclass(odir, params)
 
         # generate the tangle severity results
         # self.run_tangle(odir, params)
@@ -52,8 +52,8 @@ class AT8Processor(HDABProcessor):
         self.save_frame(odir, self.frame, 'ORIG')
 
         # save the DAB and HEM images
-        self.save_frame(odir, self.dab, 'DAB')
-        self.save_frame(odir, self.hem, 'HEM')
+        #self.save_frame(odir, self.dab, 'DAB')
+        #self.save_frame(odir, self.hem, 'HEM')
 
         # save the params IO to a file
         self.save_params(odir, params)
@@ -78,36 +78,8 @@ class AT8Processor(HDABProcessor):
         probs = model.run()
 
         # save the output probabilities
-        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_MULTICLASS.npy'))
+        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_WILDCAT.npy'))
         np.save(ofname, probs)
-
-        # fig, axs = plt.subplots(2,4)
-        # axs[0,2].imshow(density[0], cmap='coolwarm')
-        # axs[0,3].imshow(density[1], cmap='coolwarm')
-        # axs[1,2].imshow(density[2], cmap='coolwarm')
-        # axs[1,3].imshow(density[3], cmap='coolwarm')
-
-        # gs = axs[0,0].get_gridspec()
-        # for ax in axs[0:2, 0:2].flatten():
-        #     ax.remove()
-        # axbig = fig.add_subplot(gs[0:2,0:2])
-        # axbig.imshow(self.frame.img)
-        # plt.show()
-
-        # # get the prob. maps as a pos. class minus the bckg class
-        # neuronal = x_cpool[0] - x_cpool[3]
-        # glial = x_cpool[1] - x_cpool[3]
-        # projections = x_cpool[2] - x_cpool[3]
-
-        # # threshold the data
-
-        # # run the %AO algo on the thresholded images
-        # neuronal_results = self.run_ao(neuronal)
-        # glial_results = self.run_ao(glial)
-        # projections_results = self.run_ao(projections)
-
-        # # store the results
-        # # parmas.data[''] = results['']
     #
     # end of run_wildcat
 

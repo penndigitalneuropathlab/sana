@@ -115,7 +115,11 @@ def get_region(fname):
     return get_slide_parts(fname)[2]
 # e.g. SMI32
 def get_antibody(fname):
-    return get_slide_parts(fname)[3]
+    # NOTE: this assumes that we have the file name: *-ANTIBODY.tif
+    if fname.endswith('.tif'):
+        return os.path.splitext(fname)[0].split('-')[-1]
+    else:
+        return get_slide_parts(fname)[3]
 
 def get_fpath(ifpath, fpath="", rpath=""):
 

@@ -144,13 +144,14 @@ class Heatmap:
     # deforms a heatmap image over the y axis based on the layer annotations
     #  and the number of samples per layer
     # TODO: the transitions are super harsh between layers, might be a bug?
-    def deform(self, feats, masks):
+    def deform(self, feats, masks, resize=True):
         Nsamp = 500
         nh = Nsamp // len(masks)
 
         # scale the masks to the heatmap resolution
-        masks = [cv2.resize(x.img, (0,0), fx=1/self.tiler.ds[0], fy=1/self.tiler.ds[1]) \
-                 if not x is None else None for x in masks]
+        if resize:
+            masks = [cv2.resize(x.img, (0,0), fx=1/self.tiler.ds[0], fy=1/self.tiler.ds[1]) \
+                     if not x is None else None for x in masks]
 
         # width is also resampled
         ds = nh / feats.shape[1]
