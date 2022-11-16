@@ -20,12 +20,13 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None):
+    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None, stain_vector=None):
         self.fname = fname
         self.frame = frame
         self.logger = logger
         self.roi_type = roi_type
         self.qupath_threshold = qupath_threshold
+        self.stain_vector = stain_vector
     #
     # end of constructor
 
@@ -186,10 +187,9 @@ class Processor:
             axs[7].set_title('Instance Segmented Neurons')
             
             fig.tight_layout()
-            
-            plt.show()
-
-                
+        #
+        # end of debugging plots
+        
         return cells
     #
     # end of segment_cells

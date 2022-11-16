@@ -10,28 +10,29 @@ from matplotlib import pyplot as plt
 # [0] code from skimage.color
 # [1] A Model based Survey of Colour Deconvolution in Diagnostic Brightfield Microscopy: Error Estimation and Spectral Consideration
 class StainSeparator:
-    def __init__(self, stain_type, stain_vector=None):
-        
+    def __init__(self, stain, stain_vector=None):
+        self.stain_map = {
+            'HE': ['HE',],
+            'LFB': ['LFB',],
+            'H-DAB': ['AT8', 'MJFR13',], # TODO: add the others!
+        }
+        for stain_type in self.stain_map:
+            if stain in self.stain_map[stain_type]:
+                self.stain_type = stain_type
+                break
+            
         # define the stain vector
-        self.stain_type = stain_type
         self.stain_vector = StainVector(self.stain_type, stain_vector)
         self.stain_to_rgb = self.stain_vector.v
         self.rgb_to_stain = self.stain_vector.v_inv
 
-        # get the min and max possible values for each output stain
+        # get the physical range of the stained image
         img = np.array([
             [1,1,1],[1,1,255],[1,255,1],[1,255,255],
             [255,1,1],[255,1,255],[255,255,1],[255,255,255]], dtype=np.uint8)[None,:,:]
         stains = self.run(img)
         self.min_od = [np.min(stains[:,:,i]) for i in range(3)]
         self.max_od = [np.max(stains[:,:,i]) for i in range(3)]
-
-        # tst_dab = 1.0
-        # print('parvalbumin DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
-        # tst_dab = 0.3
-        # print('SMI94 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
-        # tst_dab = 0.4
-        # print('SMI32 DAB:',255 * (tst_dab - self.min_od[1]) / (self.max_od[1]-self.min_od[1]))
     #
     # end of constructor
     
@@ -140,14 +141,32 @@ class StainVector:
         if self.stain_type == 'H-DAB':
             if stain_vector is None:
                 self.v = stain_v = np.array([
-                    [0.65, 0.70, 0.29], # hem
-                    [0.27, 0.57, 0.78], # dab
+                    [0.65, 0.70, 0.29],
+                    [0.27, 0.57, 0.78],
                     [0.00, 0.00, 0.00],
                 ])
             else:
-                self.v = np.array(stain_vector)
+                self.v = np.array([
+                    stain_vector[:3],
+                    stain_vector[3:],
+                    [0.0, 0.0, 0.0],
+                ])
             self.stains = ['HEM', 'DAB', 'RES']
-            
+
+        elif self.stain_type == 'HE':
+            if stain_vector is None:
+                self.v = np.array([
+                    [0.65, 0.70, 0.29],
+                    [0.07, 0.99, 0.11],
+                    [0.0, 0.0, 0.0],
+                ])
+            else:
+                self.v = np.array([
+                    stain_vector[:3],
+                    stain_vector[3:],
+                    [0.0, 0.0, 0.0],
+                ])
+            self.stains = ['HEM', 'EOS', 'RES']
         elif self.stain_type == 'HED':
             if stain_vector is None:
                 self.v = np.array([
@@ -155,14 +174,20 @@ class StainVector:
                     [0.07, 0.99, 0.11],
                     [0.27, 0.57, 0.78]
                 ])
-            else:
+            else:                
                 self.v = np.array(stain_vector)
             self.stains = ['HEM', 'EOS', 'DAB']
             
         elif self.stain_type == 'LFB':
-            self.v = np.array(stain_vector)
+            if stain_vector is None:
+                self.v = np.array([
+                    [0.67, 0.73, 0.13],
+                    [0.92, 0.38, 0.06],
+                    [0.00, 0.00, 0.00],
+                ])
+            else:
+                self.v = np.array(stain_vector)
             self.stains = ['HEM', 'MYE', 'RES']
-            
         else:
             pass
         
@@ -174,13 +199,12 @@ class StainVector:
             self.orig_v = self.v.copy()
             
         # normalize the vector
-        self.v[0, :] = self.norm(self.v[0, :])
-        self.v[1, :] = self.norm(self.v[1, :])
-        self.v[2, :] = self.norm(self.v[2, :])
+        self.v[0,:] = self.norm(self.v[0,:])
+        self.v[1,:] = self.norm(self.v[1,:])
+        self.v[2,:] = self.norm(self.v[2,:])
 
         # store the inverse of the vector
         self.v_inv = inv(self.v)
-        self.orig_v_inv = inv(self.orig_v)
     
     def norm(self, v):
         k = (np.sqrt(np.sum(v**2)))
@@ -188,6 +212,7 @@ class StainVector:
             return v / k
         else:
             return v
+        
     def length(self, v):
         return np.sqrt(np.dot(v, v))
 

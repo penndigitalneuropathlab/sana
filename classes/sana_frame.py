@@ -7,6 +7,7 @@ from copy import copy
 # installed packages
 import cv2
 import numpy as np
+import nibabel as nib
 from scipy import ndimage
 from PIL import Image, ImageDraw
 Image.MAX_IMAGE_PIXELS = None
@@ -53,7 +54,10 @@ class Frame:
 
     # checks if the image array has 3 channels
     def is_rgb(self):
-        return self.img.shape[2] == 3
+        if len(self.img.shape) == 2:
+            return False
+        else:
+            return self.img.shape[2] == 3
     #
     # end of is_rgb
 
@@ -199,11 +203,13 @@ class Frame:
 
         return M, nw, nh
 
-    def warp_affine(self, M, nw, nh):
+    def warp_affine(self, M, nw, nh, inverse=False):
         if self.is_rgb():
             border_val = (255,255,255)
         else:
             border_val = 0
+            if inverse:
+                M = cv2.invertAffineTransform(M)
         self.img = cv2.warpAffine(self.img, M, (nw, nh), borderValue=border_val)
         if self.img.ndim == 2:
             self.img = self.img[:,:,None]
@@ -240,19 +246,44 @@ class Frame:
     # writes the image array to a file
     # NOTE: if the array is floating point, the image will be written as a
     #        numpy data file, else as whatever datatype is given
-    def save(self, fname):
+    def save(self, fname, invert_sform=False):
         if self.is_float():
+            print(fname, 'asdjklfjklasdfjkl')
             np.save(fname.split('.')[0]+'.npy', self.img)
         else:
-            im = self.img
-            if not self.is_rgb():
-                im = im[:, :, 0]
-            if self.is_binary():
-                im = 255 * im
-            im = Image.fromarray(im)
-            im.save(fname)
+            if fname.endswith('.nii.gz'):
+                print(fname)
+                self.save_nifti(fname, invert_sform)
+            else:
+                im = self.img
+                if not self.is_rgb():
+                    im = im[:, :, 0]
+                if self.is_binary():
+                    im = 255 * im
+                im = Image.fromarray(im)
+                im.save(fname)
     #
     # end of save
+
+    def save_nifti(self, fname, invert_sform=False):
+        pix = self.img.astype(np.uint8)
+        pix = np.expand_dims(pix, (2))
+        spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
+        if pix.shape[-1] == 3:
+            rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
+            pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
+        else:
+            pix = pix[:,:,:,0]
+        nii = nib.Nifti1Image(pix, np.diag([spacing[0], spacing[1], 1.0, 1.0]))
+        if invert_sform:
+            nii.set_sform([
+                [-spacing[0], 0, 0, 0],
+                [0, -spacing[1], 0, 0],
+                [0, 0, 1, 0],
+            ])
+        nib.save(nii, fname)
+    #
+    # end of save_nifti
 
     # calculates the background color as the most common color
     #  in the grayscale space
@@ -265,8 +296,8 @@ class Frame:
 
     # apply a binary mask to the image
     def mask(self, mask, value=0):
-        if self.is_float():
-            raise TypeException('Cannot apply mask to floating point image')
+        # if self.is_float():
+        #     raise TypeException('Cannot apply mask to floating point image')
         if self.is_rgb() and value is int:
             value = (value, value, value)
         self.img[mask.img[:,:,0] == 0] = value
@@ -621,6 +652,12 @@ class Contour:
         return polygon
 #
 # end of Detection
+
+def frame_like(frame, img):
+    return Frame(img, frame.lvl, frame.converter,
+                 frame.csf_threshold, frame.slide_color, frame.padding)
+#
+# end of frame_like
 
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
