@@ -11,6 +11,7 @@ from multiprocessing import Process
 
 # installed modules
 import numpy as np
+from tqdm import tqdm
 
 # custom modules
 import sana_io
@@ -118,6 +119,7 @@ def process_slides(args, slides, logger):
                     'main_roi': main_roi,
                     'main_roi_dict': main_roi.__dict__,
                     'sub_rois': sub_rois,
+                    'sub_roi_dicts': [sub_roi.__dict__ for sub_roi in sub_rois],
                     'roi_id': roi_id,
                 })
             #
@@ -134,8 +136,9 @@ def process_slides(args, slides, logger):
 def process_rois(args, slides, logger):
     
     # loop through the slides
-    rois_to_process
-    for slide_i, slide_f in enumerate(slides):
+    rois_to_process = []
+    logger.info('Loading ROI Annotations')
+    for slide_i, slide_f in tqdm(list(enumerate(slides))):
 
         # get the annotation file containing ROIs
         anno_f = sana_io.create_filepath(
@@ -143,7 +146,7 @@ def process_rois(args, slides, logger):
 
         # make sure the file exists, else we skip this slide
         if not os.path.exists(anno_f):
-            logger.info('Annotation file %s does not exist\n' % anno_f)
+            logger.warning('Annotation file %s does not exist\n' % anno_f)
             continue
         
         # initialize the Loader object for loading Frames
@@ -152,7 +155,7 @@ def process_rois(args, slides, logger):
             loader.set_lvl(args.lvl)            
         except Exception as e:
             print(e)
-            logger.info('Could not load .svs file: %s' % e)
+            logger.warning('Could not load .svs file: %s' % e)
             continue
 
         # load the main roi(s) from the json file
@@ -215,9 +218,11 @@ def process_rois(args, slides, logger):
 
             rois_to_process.append({
                 'args': args,
-                'slide': slide,
+                'slide': slide_f,
                 'main_roi': main_roi,
+                'main_roi_dict': main_roi.__dict__,
                 'sub_rois': sub_rois,
+                'sub_roi_dicts': [sub_roi.__dict__ for sub_roi in sub_rois],
                 'roi_id': roi_id,
             })
         #
@@ -229,12 +234,17 @@ def process_rois(args, slides, logger):
 #
 # end of process_roi
 
-def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_rois=[], roi_id=None):
+def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_rois=[], sub_roi_dicts=[], roi_id=None):
     logger = SANALogger.get_sana_logger(args.debug_level)    
     logger.info('Processing Frame (%d/%d)' % (roi_i, nrois))
 
+    # reset the attributes on the annotations
+    # NOTE: this is because pickling the Annotations loses the lvl attribute etc.
     for x in main_roi_dict:
         main_roi.__setattr__(x, main_roi_dict[x])
+    for i in range(len(sub_rois)):
+        for x in sub_roi_dicts[i]:
+            sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
     
     # initialize the Loader object for loading Frames
     try:
@@ -375,6 +385,7 @@ def main(argv):
         rois_to_process = process_slides(args, slides, logger)
     else:
         rois_to_process = process_rois(args, slides, logger)
+
     if args.reprocess:
         
         # create and start the jobs
@@ -400,7 +411,7 @@ def cmdl_parser(argv):
         '-njobs', type=int, default=1,
         help="number of jobs to deploy, NOTE: be careful with memory usage")
     parser.add_argument(
-        '-reprocess', action='store_true', default=False,
+        '-reprocess', action='store_true', default=True,
         help="whether or not to actually run the processor.run() code")
     parser.add_argument(
         '-adir', type=str, default="",

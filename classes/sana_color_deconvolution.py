@@ -14,12 +14,18 @@ class StainSeparator:
         self.stain_map = {
             'HE': ['HE',],
             'LFB': ['LFB',],
-            'H-DAB': ['AT8', 'MJFR13',], # TODO: add the others!
+            'H-DAB': ['AT8', 'MJFR13', 'NeuN'], # TODO: add the others!
         }
         for stain_type in self.stain_map:
+            if stain_type == stain:
+                self.stain_type = stain
+                break
             if stain in self.stain_map[stain_type]:
                 self.stain_type = stain_type
                 break
+        if not hasattr(self, 'stain_type'):
+            print('ERROR: Stain -- %s not found in the stain_map!!')
+            exit()
             
         # define the stain vector
         self.stain_vector = StainVector(self.stain_type, stain_vector)
