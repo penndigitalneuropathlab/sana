@@ -22,7 +22,6 @@ from sana_frame import Frame
 from sana_framer import Framer
 from sana_logger import SANALogger
 
-# TODO: rename processors to classifiers
 from sana_processors.NeuN_processor import NeuNProcessor
 from sana_processors.SMI32_processor import SMI32Processor
 from sana_processors.calretinin_processor import calretininProcessor
@@ -162,7 +161,8 @@ def process_rois(args, slides, logger):
         main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)
         logger.debug('Number of main_rois found: %d' % len(main_rois))
         if len(main_rois) == 0:
-            logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)])))
+            logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % \
+                         ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
 
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
@@ -222,7 +222,7 @@ def process_rois(args, slides, logger):
                 'main_roi': main_roi,
                 'main_roi_dict': main_roi.__dict__,
                 'sub_rois': sub_rois,
-                'sub_roi_dicts': [sub_roi.__dict__ for sub_roi in sub_rois],
+                'sub_roi_dicts': [sub_roi.__dict__ if sub_roi else None for sub_roi in sub_rois],
                 'roi_id': roi_id,
             })
         #
@@ -244,7 +244,8 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         main_roi.__setattr__(x, main_roi_dict[x])
     for i in range(len(sub_rois)):
         for x in sub_roi_dicts[i]:
-            sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
+            if sub_rois[i]:
+                sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
     
     # initialize the Loader object for loading Frames
     try:
