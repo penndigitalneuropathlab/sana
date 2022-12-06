@@ -5,6 +5,7 @@
 import numpy as np
 from numba import jit
 from shapely import geometry
+from shapely.geometry.multipolygon import MultiPolygon
 from matplotlib import pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.ndimage.interpolation import rotate
@@ -204,6 +205,40 @@ def hull_to_poly(hull, xy, lvl=0):
     return poly
 #
 # end of hull_to_pull
+
+ # this function converts shapely.Polygon's and shapely.MultiPolygon's to sana_geo.Polygon's
+# NOTE: Multi -> Poly takes the portion of the Multi w/ the largest area
+def from_shapely(p, is_micron=False, lvl=0, order=1):
+    if type(p) is MultiPolygon:
+        areas = [geom.area for geom in p.geoms]
+        return from_shapely(p.geoms[np.argmax(areas)])
+    else:
+        xs, ys = p.exterior.xy
+        return Polygon(xs, ys, is_micron, lvl, order)
+#
+# end of from_shapely
+
+# removes self-intersecting points and returns a new Polygon
+# NOTE: supports sana_geo.Polygon or shapely.Polygon
+# NOTE: sometimes this creates a MultiPolygon, sana_geo only supports Polygons,
+#       in this case we use the largest section of the MultiPolygon
+def fix_polygon(p):
+    was_sana_poly = type(p) is Polygon
+    if was_sana_poly:
+        is_micron, lvl, order = p.is_micron, p.lvl, p.order
+        p = p.to_shapely()
+
+    if not p.is_valid:
+        p = p.buffer(0) # NOTE: this could still end up invalid... add an exception?
+    else:
+        pass
+
+    if was_sana_poly:
+        p = from_shapely(p, is_micron, lvl, order)
+        
+    return p
+#
+# end of fix_polygon
 
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best
@@ -532,6 +567,7 @@ class Polygon(Array):
                 x.append(self[i][0])
                 y.append(self[i][1])
         return Polygon(x, y, self.is_micron, self.lvl, self.order)
+
 #
 # end of Polygon
 

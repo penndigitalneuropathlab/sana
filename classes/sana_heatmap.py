@@ -198,3 +198,8 @@ class Heatmap:
         return deform
     #
     # end of deform
+#
+# end of Heatmap
+
+#
+# end of file

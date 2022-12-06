@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 # system modules
 import os
+import inspect
 import sys
 import argparse
-import logging
 import time
 
 # installed modules
@@ -29,6 +29,8 @@ from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
+from sana_processors.SYN303_processor import SYN303Processor
+from sana_processors.HDAB_processor import HDABProcessor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -41,27 +43,24 @@ def get_processor(fname, frame, logger, debug_fibers=False):
         antibody = sana_io.get_antibody(fname)
     except:
         antibody = ''
-    if antibody == 'NeuN':
-        return NeuNProcessor(fname, frame, logger)
-    if antibody == 'SMI32':
-        return SMI32Processor(fname, frame, logger)
-    if antibody == 'CALR6BC':
-        return calretininProcessor(fname, frame, logger)
-    if antibody == 'parvalbumin':
-        return parvalbuminProcessor(fname, frame, logger)
-    if antibody == 'SMI94':
-        return MBPProcessor(fname, frame, logger, debug_fibers)
-    if antibody == 'SMI35':
-        return SMI35Processor(fname, frame, logger)
-    if antibody == 'MEGURO':
-        return MeguroProcessor(fname, frame, logger)
-    if antibody == 'AT8':
-        return AT8Processor(fname, frame, logger)
-    if antibody == 'IBA1':
-        return IBA1Processor(fname, frame, logger)
-    if antibody == 'R13':
-        return R13Processor(fname, frame, logger)
-    return None
+    antibody_map = {
+        'NeuN': NeuNProcessor,
+        'SMI32': SMI32Processor,
+        'CALR6BC': calretininProcessor,
+        'parvalbumin': parvalbuminProcessor,
+        'SMI94': MBPProcessor,
+        'SMI35': SMI35Processor,
+        'MEGURO': MeguroProcessor,
+        'AT8': AT8Processor,
+        'IBA1': IBA1Processor,
+        'R13': R13Processor,
+        'SYN303': SYN303Processor,
+        '': HDABProcessor,
+    }
+    cls = antibody_map[antibody]
+    path = inspect.getfile(cls)
+    proc = cls(fname, frame, logger, **kwargs)
+    return proc
 #
 # end of get_processor
 
@@ -158,6 +157,7 @@ def main(argv):
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
             params = Params()
+            params.data['lvl'] = args.lvl
 
             # create odir for detection jsons
             roi_odir = sana_io.create_odir(args.odir, 'detections')
@@ -194,8 +194,9 @@ def main(argv):
                 frame = loader.load_gm_frame(params, main_roi, padding=padding, logger=logger)
             else:
                 # just translates the coord. system, no rotating or cropping
-                frame = loader.load_roi_frame(params, main_roi, padding=padding, logger=logger)
+                frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
 
+            
             # transform the main ROI to the Frame's coord. system
             main_roi = transform_poly(
                 main_roi,
@@ -212,9 +213,11 @@ def main(argv):
                 )
 
             # get the processor object
-            processor = get_processor(
-                slide_f, frame, logger=logger)
-
+            kwargs = {
+                'roi_type': args.roi_type,
+                'qupath_threshold': args.qupath_threshold                               
+            }
+            processor = get_processor(slide_f, frame, logger, **kwargs)
             if processor is None:
                 logger.info('No processor found')
                 continue

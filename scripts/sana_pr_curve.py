@@ -10,14 +10,14 @@ import numpy as np
 from matplotlib import pyplot as plt
 from scipy.special import softmax
 import cv2
+from shapely.geometry.multipolygon import MultiPolygon
 
 # custom packages
-from sana_io import get_anno_files, read_annotations, read_list_file, create_filepath
 import sana_io
+from sana_io import get_anno_files, read_annotations, read_list_file, create_filepath
 from sana_loader import Loader
-from sana_geo import plot_poly
+from sana_geo import Converter, plot_poly, Polygon, fix_polygon, from_shapely
 from sana_frame import Frame
-from sana_geo import Converter
 from sana_params import Params
 
 # cmdl interface help messages
@@ -34,14 +34,19 @@ IOUTHRESH_HELP = "List of IOU Thresholds to use while scoring"
 USAGE = os.path.join(os.environ.get('SANAPATH'),
                      'scripts', 'usage', 'sana_pr_curve.usage')
 
+
 # calculates the IOU score of 2 Polygons
 # NOTE: this uses Shapely, converts to shapely objects for easy calculations
 def get_iou(x, y):
     # print('entered get_iou')
     x = x.copy().to_shapely()
     y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
     i = x.intersection(y).area
-    u = x.union(y).area
+    u = x.union(y).area 
     # print('i:',i)
     # print('u:',u)
     return i/u
@@ -87,7 +92,7 @@ def get_annos(args):
    
     # get all annotation files in the ref and hyp dirs
     ref_files = sorted(get_anno_files(args.refdir))
-    hyp_files = sorted(get_anno_files(args.hypdir))
+    hyp_files = sorted(get_anno_files(os.path.join(args.hypdir,'detections')))
  
     # loop through annotation files
     ref_annos, hyp_annos = [], []
@@ -165,7 +170,7 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
             bid = sana_io.get_bid(slide_name)
             region = sana_io.get_region(slide_name)
             antibody = sana_io.get_antibody(slide_name)
-            odir = os.path.join(args.hypdir.replace('detections',''), bid, antibody, region)
+            odir = os.path.join(args.hypdir, bid, antibody, region)
             main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() ]
             
 
@@ -203,9 +208,7 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
                 
                 params_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','.csv'))
                 params = Params(params_fname)
-
                 
-                # TODO: rename new_score to score
                 # TODO: rename results/seen 
                 results, seen, ref, hyp = score(ref, hyp, iou_threshold)
                 
@@ -220,31 +223,39 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
                     wc_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_R13.npy'))
                     wc_activation = np.load(wc_fname)
                     wc_softmax = softmax(wc_activation,axis=0)
+                    
+                    # # LB detections are at dim 1 in wc_activations (and nonsoftmax'd)
+                    # lb_activation = np.rint(255*wc_softmax[1,:,:]).astype(np.uint8)
+                    # lb_activation = cv2.resize(lb_activation, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
+                    # lb_activation = lb_activation[:,:,None]
 
-                    lb_softmax = np.rint(255*wc_softmax[2,:,:]).astype(np.uint8)
+                    lb_softmax = np.rint(255*wc_softmax[1,:,:]).astype(np.uint8)
                     lb_softmax = cv2.resize(lb_softmax, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
                     lb_softmax = lb_softmax[:,:,None]
                     
-                    # removing padding from original image and wildcat greyscale
+                    # # removing padding from original image and wildcat greyscale
                     # orig_frame.img = orig_frame.img[padding//2:-padding//2,padding//2:-padding//2]
                     # lb_softmax = lb_softmax[padding//2:-padding//2,padding//2:-padding//2]
                     # [x.translate(padding//2+params.data['loc']) for x in ref]
                     # [x.translate(padding//2+params.data['loc']) for x in hyp]
 
+
                     [x.translate(params.data['loc']) for x in ref]
                     [x.translate(params.data['loc']) for x in hyp]
 
                     alpha = np.full_like(lb_softmax, 60)
-                    alpha[lb_softmax<np.floor(255*0.8)] = 0
+                    # get probs > 80%
+                    alpha[lb_softmax<255*0.8] = 0
                     z = np.zeros_like(lb_softmax)
 
                     rgba_wc = np.concatenate([z,lb_softmax,z,alpha],axis=2)
-
-                                                    
+                                     
                     # print(len(results)==len(hyp))
                     # print(len(seen)==len(ref))
                     # print()
 
+
+                    # Plot Hit/TPs and Miss/FPs overlay
                     fig, ax = plt.subplots(1,1)
                     fig.suptitle('WildCat Probability of LB Detection >80%% \n %s | %s | IoU: %0.1f' %(slide_name.replace('.svs',''),tile_name,iou_threshold))
                     
@@ -257,10 +268,10 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
                     plot_fp = True
                     for i, poly in enumerate(hyp):
                         if results[i] == True:
-                            plot_poly(ax,poly,label='Hyp. TP' if plot_tp else '', color='green', linewidth=1.5)
+                            plot_poly(ax,poly,label='Hyp. TP' if plot_tp else '', color='green', linewidth=.75)
                             plot_tp = False
                         if results[i] == False:
-                            plot_poly(ax,poly,label='Hyp. FP' if plot_fp else '', color='red', linewidth=1.5)
+                            plot_poly(ax,poly,label='Hyp. FP' if plot_fp else '', color='red', linewidth=.75)
                             plot_fp = False
                     
                     # True in seen is blue, label=hit
@@ -269,10 +280,10 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
                     plot_miss = True
                     for i, poly in enumerate(ref):
                         if seen[i] == True:
-                            plot_poly(ax,poly,label='Ref. Hit' if plot_hit else '', color='blue', linewidth=1.5)
+                            plot_poly(ax,poly,label='Ref. Hit' if plot_hit else '', color='blue', linewidth=.75)
                             plot_hit = False
                         if seen[i] == False:
-                            plot_poly(ax,poly,label='Ref. Miss' if plot_miss else '', color='orange', linewidth=1.5)
+                            plot_poly(ax,poly,label='Ref. Miss' if plot_miss else '', color='orange', linewidth=.75)
                             plot_miss = False
                     
                     # Shrink current axis by 20%
@@ -294,8 +305,11 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
                     )
                     # don't show the plot, save to some directory (args.odir)
                     fig_fname = os.path.join(args.odir,'error_analysis',slide_name.replace('.svs','_IOU_%0.1f_ERRORS.png' %iou_threshold))
+                    sana_io.create_directory(fig_fname)
                     plt.savefig(fig_fname)
                     plt.close()
+                    # 
+                    # end of TP/FP overlay plot
     else:
         print('...error analysis NOT performed')
                     # plt.show()
@@ -319,8 +333,6 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args):
 
 
 # NOTE: this can be any subset of a dataset! works on multiple slides and ROIs
-# ERIC: error_analyze should loop through slides and ROI's in a slide
-#        then extract the ref and hyp inside that ROI and pass to new_score
 def score(ref_annos, hyp_annos, iou_threshold):
     # array of trues/falses denoting if each reference has been used up in the scoring
     # NOTE: True denotes that this annotation was hit, False means it was missed
@@ -350,6 +362,28 @@ def score(ref_annos, hyp_annos, iou_threshold):
                     # TODO: can we write our own calculate_iou()?
                     print(e)
                     iou_scores[ref_i] = 0
+                    r = ref.copy()
+                    h = hyp.copy()
+                    
+                    fig, axs = plt.subplots(1,2)                    
+                    fig.suptitle('Before fix_poly')
+                    plot_poly(axs[0],r)
+                    plot_poly(axs[1],h)
+
+                    r = from_shapely(fix_polygon(r.to_shapely()))
+                    h = from_shapely(fix_polygon(h.to_shapely()))
+
+                    # print('Ref:',r)
+                    # print('Hyp:',h)
+                    fig, axs = plt.subplots(1,2)                    
+                    fig.suptitle('After fix_poly')
+                    plot_poly(axs[0],r)
+                    plot_poly(axs[1],h)
+                    plt.show()
+                    # poly_fname = 'C:/Users/eteun/dev/data/lewy_pilot/bad_polys'
+                    # bad_polys = os.listdir(poly_fname)
+                    # bad_poly_name = os.path.basename(hyp.file_name).replace('.json','_bad_poly_%d.npy' %len(bad_polys))
+                    # np.save(os.path.join(poly_fname,bad_poly_name),hyp)
         #
         # end of iou calculation
 
@@ -427,18 +461,13 @@ def main(argv):
     parser.add_argument('-title', type=str, default="")
     args = parser.parse_args()
 
+    if not os.path.exists(args.odir):
+        os.makedirs(args.odir)
 
     # load the valid ref/hyp annos and the hyp confidences
     ref_annos, hyp_annos = get_annos(args)
-    
-    # print('...annotations loaded')
-    # print('ref_annos:',len(ref_annos))
-    # for ref in hyp_annos:
-    #     print(ref.file_name)
-    # # print('hyp_annos:',len(hyp_annos))
-    # # for hyp in hyp_annos:
-    # #     print(hyp)
-    # exit()
+    print('Annotations loaded...')
+
     fig, ax = plt.subplots(1,1)
 
     # loop through all provided iou thresholds
@@ -463,7 +492,7 @@ def main(argv):
     ax.set_xlabel('Recall')
     ax.set_xlim([0, 1.1])
     ax.set_ylim([0, 1.1])
-    plt.legend()
+    plt.legend(loc='lower right')
     plt.savefig(os.path.join(args.odir, 'pr_curves.png'), dpi=300)
     print('PNG saved:',args.odir)
 #
