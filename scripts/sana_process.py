@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 # system modules
 import os
+import inspect
 import sys
 import argparse
-import logging
 import time
 
 # installed modules
@@ -29,6 +29,8 @@ from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
+from sana_processors.SYN303_processor import SYN303Processor
+
 from sana_processors.HDAB_processor import HDABProcessor
 
 # debugging modules
@@ -53,11 +55,14 @@ def get_processor(fname, frame, logger, **kwargs):
         'AT8': AT8Processor,
         'IBA1': IBA1Processor,
         'R13': R13Processor,
+        'SYN303': SYN303Processor,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
-    
-    return cls(fname, frame, logger, **kwargs)
+    path = inspect.getfile(cls)
+    proc = cls(fname, frame, logger, **kwargs)
+    return proc
+
 #
 # end of get_processor
 
@@ -169,6 +174,7 @@ def main(argv):
             # relating to the loading/processing of the Frame, as well as
             # the various AO results
             params = Params()
+            params.data['lvl'] = args.lvl
 
             # create odir for detection jsons
             roi_odir = sana_io.create_odir(args.odir, 'detections')
@@ -213,8 +219,6 @@ def main(argv):
             else:
                 # just translates the coord. system, no rotating or cropping
                 frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
-
-            print(main_roi.lvl, params.data['loc'].lvl)
             
             # transform the main ROI to the Frame's coord. system
             transform_poly(
@@ -235,8 +239,8 @@ def main(argv):
 
             # get the processor object
             kwargs = {
-                'qupath_threshold': args.qupath_threshold,
-                'roi_type': args.roi_type,                
+                'roi_type': args.roi_type,
+                'qupath_threshold': args.qupath_threshold
             }
             processor = get_processor(slide_f, frame, logger, **kwargs)
             if processor is None:

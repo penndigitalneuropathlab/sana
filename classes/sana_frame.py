@@ -289,7 +289,7 @@ class Frame:
     # step  - distance between adjacent pixels [(1.,1.), (7., 7.)]
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
         if self.is_rgb():
-            raise RBGException('Cannot apply filter to RGB image')
+            raise RGBException('Cannot apply filter to RGB image')
         self.img = self.img.astype(float)
         deltaS = np.zeros_like(self.img)
         deltaE = deltaS.copy()
@@ -372,7 +372,7 @@ class Frame:
                 continue
             if c.polygon.area() <= min_body_area:
                 continue
-            if not max_body_area is None and d.polygon.area() >= max_body_area:
+            if not max_body_area is None and c.polygon.area() >= max_body_area:
                 continue
             c.body = True
         #

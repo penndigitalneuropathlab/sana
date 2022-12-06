@@ -226,19 +226,24 @@ class HDABProcessor(Processor):
         # create the output directory
         odir = sana_io.create_odir(odir,'')
 
+        # write params data to csv
+        self.save_params(odir,params)
+
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
             self.frame, self.auto_dab_thresh_img)
+        self.save_frame(odir, self.frame, 'ORIG')
         self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
         self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
         self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
         # save the feature signals
         signals = results['signals']
-        self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
-        self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
-        if 'sub_deform' in signals:
-            self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
+        if signals:
+            self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
+            self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
+            if 'sub_deform' in signals:
+                self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
     #
     # end of run_auto_ao
 
