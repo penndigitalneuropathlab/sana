@@ -12,18 +12,16 @@ class SANALogger():
         # debug  --> outputs method checks and info (frame size, angle found, etc.)
         # normal --> just Processing Slide/Processing Frame; standard info
         # quiet  --> outputs nothing
-        level_config = {'debug': logging.DEBUG,         # value: 10
-                        'normal': logging.INFO,         # value: 20
-                        # 'normal': logging.WARNING,     # value: 30
-                        'quiet': logging.ERROR,        # value: 40
-                        # 'critical': logging.CRITICAL # value: 50
-                        }
+        level_config = {
+            'full': logging.DEBUG,         # value: 10
+            'debug': logging.DEBUG,        # value: 10
+            'normal': logging.INFO,        # value: 20
+            'quiet': logging.ERROR,        # value: 40
+        }
         return level_config.get(debug_level)
 
     def get_sana_logger(debug_level):
-        # gets file/line_num/method where logger is being called
-        # ex. file: sana_io.py/line: 43/method: write_annotations()
-        logger_name = inspect.stack()[1][3]
+        logger_name = 'SANA Process'
 
         # Configure logger object, creating a unique logger each time its called
         logger = logging.getLogger(logger_name)
@@ -32,6 +30,10 @@ class SANALogger():
         # Set logging level from commandline
         level = SANALogger.get_level_config(debug_level.lower())
         logger.setLevel(level)
+        if debug_level == 'full':
+            logger.plots = True
+        else:
+            logger.plots = False
 
         # Setting logging file handler
         file_handler = logging.FileHandler('log.log',mode='w')
@@ -42,11 +44,6 @@ class SANALogger():
         stream_handler = logging.StreamHandler(sys.stdout)
         stream_handler.setFormatter(formatter)
         logger.addHandler(stream_handler)
-
-        if level == logging.DEBUG:
-            logger.plots = True
-        else:
-            logger.plots = False
         
         return logger
 

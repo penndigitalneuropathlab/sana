@@ -18,8 +18,8 @@ plt.rcParams['image.cmap'] = 'gray'
 # we also perform structure tensor analysis to identify
 # individual ------ in various directions in the tissue
 class MBPProcessor(HDABProcessor):
-    def __init__(self, fname, frame, debug=False, debug_fibers=False):
-        super(MBPProcessor, self).__init__(fname, frame)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(MBPProcessor, self).__init__(fname, frame, logger, **kwargs)
         self.debug = debug
         self.debug_fibers = debug_fibers
     #

@@ -10,8 +10,6 @@ from matplotlib import pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.ndimage.interpolation import rotate
 
-# custom packages
-
 # custom Exceptions
 ERR = "---> %s <---"
 ERR_RESCALE = ERR % ("Cannot rescale data in micron units")
@@ -97,6 +95,69 @@ def get_axes_from_poly(p):
     minor = float(np.min(side_lengths)/2)
     return major, minor
 
+# this function finds the amount of slide background in a thin rectangle
+#  surrounding the input line. This is used to orthogonalize the GM Zones
+# TODO: move to Frame!!!
+def get_local_slide_area(orig_frame, orig_line):
+
+    frame = orig_frame.copy()
+    line = orig_line.copy()
+    
+    # orthogonalize to the input Line
+    angle = line.get_angle()
+    M, nw, nh = frame.get_rotation_mat(angle)
+    frame.warp_affine(M, nw, nh)
+    line.transform(M)
+
+    # get a small around above and below the Line
+    l, r = int(line[0,0]), int(line[1,0])
+    l, r = sorted([l, r])
+    pad = 50    
+    mid = np.mean(line[:,1])
+    lo, hi = int(mid-pad), int(mid+pad)
+    lo = np.clip(lo, 0, frame.size()[1])
+    hi = np.clip(hi, 0, frame.size()[1])
+
+    # calculate the area of pixels that are slide background
+    local = frame.copy()
+    local.img = local.img[lo:hi,l:r]
+    local.to_gray()
+    area = np.mean(local.img > frame.csf_threshold)
+
+    return area
+#
+# end of get_local_slide_area
+
+def get_gm_zone_angle(orig_frame, orig_roi):
+
+    roi = orig_roi.copy()
+
+    # split the ROI into 4 lines
+    # TODO: this is only possible if its a 5 point ROI, could approximate a rectangle if not?
+    lines = [roi[0:2], roi[1:3], roi[2:4], roi[3:5]]
+    lines = [Line(x[:,0], x[:,1], roi.is_micron, roi.lvl, roi.order) for x in lines]
+
+    # find the line which has the most slide background near it
+    ind, mx = 0, 0
+    for i, line in enumerate(lines):
+        val = get_local_slide_area(orig_frame, line)
+        if val > mx:
+            ind = i
+            mx = val
+    best = lines[ind]
+
+    # add an extra 180 to the angle if the CSF ends up on bottom
+    angle = best.get_angle()
+    M, nw, nh = orig_frame.get_rotation_mat(angle)
+    best.transform(M)
+    if np.mean(best[:,1]) > orig_frame.size()[1]//2:
+        angle += 180
+
+    return angle
+    
+#
+# end of get_gm_zone_angle
+
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent
 #  vertices to separate into the 2 annotations
@@ -163,11 +224,11 @@ def transform_poly(x, loc, crop_loc, M1, M2):
     if not loc is None:
         x.translate(loc)
     if not M1 is None:
-        x = x.transform(M1)
+        x.transform(M1)
     if not crop_loc is None:
         x.translate(crop_loc)
     if not M2 is None:
-        x = x.transform(M2)
+        x.transform(M2)
     return x
 #
 # end of transform_poly
@@ -176,11 +237,11 @@ def transform_poly(x, loc, crop_loc, M1, M2):
 #  to the original coordinate system
 def transform_inv_poly(x, loc, crop_loc, M1, M2):
     if not M2 is None:
-        x = x.transform_inv(M2)
+        x.transform_inv(M2)
     if not crop_loc is None:
         x.translate(-crop_loc)
     if not M1 is None:
-        x = x.transform_inv(M1)
+        x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
 
@@ -189,18 +250,17 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
 # end of transform_inv_poly
 
 # VERY useful function for plotting a polygon onto a axis
-def plot_poly(ax, x, **kwargs):
+def plot_poly(ax, x, plot_connected=None, plot_disconnected=False, **kwargs):
+    if plot_connected == True:
+        x = x.connect()
+    elif plot_disconnected == True:
+        x = x.disconnect()
     ax.plot(x[:,0],x[:,1],**kwargs)
 
 # converts a Convexhull into a polygon
-def hull_to_poly(hull, xy, lvl=0):
-    x, y = [], []
-    for v in hull.vertices:
-        v = xy[v]
-        x.append(v[0])
-        y.append(v[1])
-    x, y = np.array(x), np.array(y)
-    p = Polygon(x, y, False, lvl)
+def hull_to_poly(hull, points, is_micron=False, lvl=0):
+    v = points[hull.vertices]
+    p = Polygon(v[:,0], v[:,1], is_micron=is_micron, lvl=lvl)
     poly = p.connect()
     return poly
 #
@@ -344,7 +404,6 @@ class Array(np.ndarray):
         if self.lvl != p.lvl or self.is_micron != p.is_micron:
             raise UnitException(ERR_COMPARE)
         self -= p
-        return self
     #
     # end of translate
 
@@ -390,6 +449,18 @@ class Point(Array):
         return obj
     #
     # end of Constructor
+    
+    def transform(self, M):
+        np.matmul(M[:,:2], self, out=self)
+        self += M[:,2]
+    #
+    # end of transform
+
+    def transform_inv(self, M):
+        self -= M[:,2]
+        np.matmul(np.linalg.inv(M[:,:2]), self, out=self)
+    #
+    # end of transform_inv
 #
 # end of Point
 
@@ -420,14 +491,14 @@ class Polygon(Array):
         return self.x1, self.y1
 
     def transform(self, M):
-        self = self @ M[:,:2].T + M[:,2]
-        return self
+        np.matmul(self, M[:,:2].T, out=self)
+        self += M[:,2]
     #
     # end of transform
 
     def transform_inv(self, M):
-        self = (self - M[:,2]) @ np.linalg.inv(M[:,:2].T)
-        return self
+        self -= M[:,2]
+        np.matmul(self, np.linalg.inv(M[:,:2].T), out=self)
     #
     # end of transform_inv
 
@@ -520,6 +591,15 @@ class Polygon(Array):
                 y.append(self[i][1])
         return Polygon(x, y, self.is_micron, self.lvl, self.order)
 
+    def partial_inside(self, p):
+        if self.is_micron != p.is_micron or self.lvl != p.lvl:
+            raise UnitException(ERR_COMPARE)
+
+        for i in range(self.shape[0]):
+            if ray_tracing(self[i][0], self[i][1], np.array(p)):
+                return True
+        return False
+
     def inside(self, p):
         if self.is_micron != p.is_micron or self.lvl != p.lvl:
             raise UnitException(ERR_COMPARE)
@@ -528,16 +608,24 @@ class Polygon(Array):
             if not ray_tracing(self[i][0], self[i][1], np.array(p)):
                 return False
         return True
-
+    
     def connected(self):
-        return self[0, 0] == self[-1, 0] and self[0, 1] == self[-1, 1]
+        return np.isclose(self[0,0], self[-1,0]) and np.isclose(self[0,1], self[-1,1])
 
-    # TODO: this and filter need to return Annotation sometimes...
     def connect(self):
         if not self.connected():
             x, y = self.get_xy()
             x = np.concatenate([x, [self[0,0]]], axis=0)
             y = np.concatenate([y, [self[0,1]]], axis=0)
+            return Polygon(x, y, self.is_micron, self.lvl, self.order)
+        else:
+            return self
+
+    def disconnect(self):
+        if self.connected():
+            x, y = self.get_xy()
+            x = x[:-1]
+            y = y[:-1]
             return Polygon(x, y, self.is_micron, self.lvl, self.order)
         else:
             return self
@@ -551,8 +639,11 @@ class Polygon(Array):
 
     # convert the Array to a Annotation to prepare for file io
     def to_annotation(self, file_name, class_name,
-                      anno_name="", confidence=1.0):
-        x, y = self.connect().get_xy()
+                      anno_name="", confidence=1.0, connect=True):
+        if connect:
+            x, y = self.connect().get_xy()
+        else:
+            x, y = self.get_xy()
         return Annotation(None, file_name, class_name, anno_name,
                           confidence=confidence, is_micron=self.is_micron,
                           lvl=self.lvl, order=self.order, x=x, y=y)
@@ -707,7 +798,19 @@ class Annotation(Polygon):
             return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence)
         else:
             return self
+    #
+    # end of connect
 
+    # TODO: why can't we call p = super().disconnect() then p.to_annotation()
+    def disconnect(self):
+        if self.connected():
+            x, y = self.get_xy()
+            x = x[:-1]
+            y = y[:-1]
+            p = Polygon(x, y, self.is_micron, self.lvl, self.order)
+            return p.to_annotation(self.file_name, self.class_name, self.name, self.confidence, connect=False)
+        else:
+            return self
 #
 # end of Annotation
 
