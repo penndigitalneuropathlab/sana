@@ -27,31 +27,47 @@ def organize_dataset(mode,patch_root,class_map_fname,manifest_fname):
 # end organize_dataset
 
 # configures initial settings for model, optimizer, and other parameters
-def get_config():
-    # TODO: how to set this up properly? take in any params?
+def get_config(num_classes,
+                # model params
+                num_epochs=20, input_size=224, batch_size=16,
+                kmin=0.0, kmax=0.02, alpha=0.7, num_maps=4,
+                # optimizer params
+                lr=0.001, momentum=0.9, weight_decay=1e-2,
+                # affine params
+                run_affine=True, affine_degrees=180, affine_translate=0.1,
+                #color jitter params
+                brightness=0.1, contrast=0.0, saturation=0.0, hue=0.3):
+
     # storing various initial params in dicts for accessibility
     config = {
-    "num_classes": 5,
+    "num_classes": num_classes,
     # predefined model settings, see WildCat paper - Table 1 for more
     "model_params": {
-        "num_epochs": 20,
-        "input_size": 224,
-        "batch_size": 16,
-        "kmax": 0.02,
-        "kmin": 0.0,
-        "alpha": 0.7,
-        "num_maps": 4
+        "num_epochs": num_epochs,
+        "input_size": input_size,
+        "batch_size": batch_size,
+        "kmax": kmax,
+        "kmin": kmin,
+        "alpha": alpha,
+        "num_maps": num_maps
         },
     # set options for SGD optimizer
     "optimizer_params": {
-        "lr": 0.001,
-        "momentum": 0.9,
-        "weight_decay":1e-2
+        "lr": lr,
+        "momentum": momentum,
+        "weight_decay": weight_decay
         },
     "affine_params": {
-        "run": True,
-        "degrees": 180,
-        "translate": 0.1
+        "run": run_affine,
+        "degrees": affine_degrees,
+        "translate": affine_translate,        
+        "resnet_normalize": False #TODO: move this somewhere that makes better sense
+        },
+    "color_jitter_params": {
+        "brightness": brightness,
+        "contrast": contrast,
+        "saturation": saturation,
+        "hue": hue
         }
     }
     return config
@@ -73,16 +89,21 @@ def get_dataset(mode, data_dir, manifest_dir, class_map_fname, config, data_tran
 # end get_datasets
 
 # TODO: maybe move these choices to a config['transforms'] dictionary?
-def get_transforms(random_rotation=False,random_vert_flip=False,random_horiz_flip=False,center_crop=False,to_tensor=False,normalize=False,color_jitter=False):
+def get_transforms(config,center_crop=False,to_tensor=False,color_jitter=False):
     # Transforms
     transform_list = []
-    if random_rotation: transform_list.append(transforms.RandomRotation(45))
-    if random_vert_flip: transform_list.append(transforms.RandomVerticalFlip())
-    if random_horiz_flip: transform_list.append(transforms.RandomHorizontalFlip())
-    if center_crop: transform_list.append(transforms.CenterCrop(112))
+    if center_crop: transform_list.append(transforms.CenterCrop(config['model_params']['input_size']//2))
     if to_tensor: transform_list.append(transforms.ToTensor())
-    if normalize: transform_list.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))
-    if color_jitter: transform_list.append(transforms.ColorJitter(brightness=0.1,contrast=0.0,saturation=0.0,hue=0.3))
+    if config['affine_params']['resnet_normalize']: transform_list.append(transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]))
+    if color_jitter: 
+        transform_list.append(
+            transforms.ColorJitter(
+                brightness=config['color_jitter_params']['brightness'],
+                contrast=config['color_jitter_params']['contrast'],
+                saturation=config['color_jitter_params']['saturation'],
+                hue=config['color_jitter_params']['hue']
+                )
+            )
     return transforms.Compose([transform_list])
 # 
 # end get_transforms
