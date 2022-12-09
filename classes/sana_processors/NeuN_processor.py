@@ -1,6 +1,7 @@
 
 # system modules
 import os
+import pickle
 
 # installed modules
 import cv2
@@ -14,7 +15,7 @@ from sklearn.cluster import KMeans
 import sana_io
 from sana_thresholds import max_dev, kittler
 from sana_processors.HDAB_processor import HDABProcessor
-from sana_geo import Point, transform_inv_poly, Polygon
+from sana_geo import Point, transform_inv_poly, Polygon, Neuron
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
 from sana_frame import mean_normalize, create_mask, overlay_thresh
@@ -27,13 +28,12 @@ from sana_geo import plot_poly
 class NeuNProcessor(HDABProcessor):
     def __init__(self, fname, frame, logger, **kwargs):
         super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
-        self.debug = debug
     #
     # end of constructor
 
-    def run(self, odir, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
 
-        self.mask_frame(main_roi, sub_rois)
+        self.generate_masks(main_roi, sub_rois)
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
@@ -45,10 +45,11 @@ class NeuNProcessor(HDABProcessor):
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=1.0, mx=90)
+        # NOTE: this threshold is super lenient, additionally we remove very tiny objects
+        self.run_auto_ao(odir, params, scale=1.0, mx=120, open_r=7)
 
         # detect and analyze the neurons in the ROI
-        self.run_neurons(odir, params, main_roi, debug=False)
+        self.run_neurons(odir, roi_odir, first_run, params, main_roi, debug=False)
         
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -62,114 +63,111 @@ class NeuNProcessor(HDABProcessor):
     #
     # end of run
 
-    def run_neurons(self, odir, params, main_roi, debug=False):
+    def run_neurons(self, odir, roi_odir, first_run, params, main_roi, debug=False):
         
         # instance segment the neurons
+        # TODO: some holes are getting through, is this closing issue or the img_final issue?
         disk_r = 7
         sigma = 3
         n_iterations = 1
         close_r = 9
         open_r = 9
-        clean_r = 15
-        neurons = self.segment_cells(
-            self.dab_norm, self.auto_dab_norm_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r, debug=False)
+        clean_r = 11
+        cells = self.segment_cells(
+            self.dab_norm, self.auto_dab_threshold, disk_r, sigma, n_iterations, close_r, open_r, clean_r)
 
+        neurons = [Neuron(cell, self.fname, main_roi, confidence=1.0) for cell in cells]
+        
         # write the neuron segmentations
         ofname = sana_io.create_filepath(
-            self.fname, ext='.json', suffix='NEURONS', fpath=odir)
-        neuron_annos = [x.to_annotation(ofname, 'NEURON') for x in neurons]
+            self.fname, ext='.json', suffix='NEURONS', fpath=roi_odir)
+        neuron_annos = [x.polygon.to_annotation(ofname, 'NEURON') for x in neurons]
         [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in neuron_annos]
-        sana_io.write_annotations(ofname, neuron_annos)
+        if first_run:
+            sana_io.write_annotations(ofname, neuron_annos)
+        else:
+            sana_io.append_annotations(ofname, neuron_annos)
 
-        return
-    
-        neurons = [n for n in neurons if n.inside(main_roi)]
+        # only include neurons inside the main ROI
+        neurons = [n for n in neurons if n.polygon.inside(main_roi)]
 
-        
+        # very few neurons detected, just report NaN
         if len(neurons) < 10:
             params.data['grn_ao'] = np.nan
             params.data['grn_sub_aos'] = np.nan
             params.data['pyr_ao'] = np.nan
             params.data['pyr_sub_aos'] = np.nan
             return neurons
+
+        # grab the features of the neurons
+        feats = np.array([x.feats for x in neurons])
         
-        # calculate the feats of the data
-        # TODO: remove area here and test
-        feats = np.zeros((5, len(neurons)), dtype=float)
-        feats[0] = [x.area() for x in neurons]
-        feats[1] = [x.minor() for x in neurons]
-        feats[2] = [x.major() for x in neurons]
-        feats[3] = [x.eccentricity() for x in neurons]
-        feats[4] = [x.circularity() for x in neurons]  
-        feats = feats.T
+        # load the pre-trained model
+        # NOTE: this isn't a wildcat model but no better place for it right now
+        clf = pickle.load(open(os.path.join(os.environ['SANAHOME'], 'classes', 'wildcat', 'RF_model.dat'), 'rb'))
 
-        # split the neurons into K different clusters
-        K = 4
-        clf = KMeans(n_clusters=K)
-        clf = clf.fit(feats)
-        labels = clf.labels_
-        clusters = [[] for _ in range(K)]
-        for i in range(len(neurons)):
-            clusters[labels[i]].append(neurons[i])
+        # TODO: this is hardcoded bc idk how to save this somewhere convenient, would be nice to wrap the threshold and teh .dat file into some object that a class can load, or just hardcode it in the classifier class
+        thresh = 0.62
 
-        # get the cluster with the lowest eccentricity, most likely granular cluster
-        grn_ind = np.argmin(clf.cluster_centers_[:,3])
-
-        # combine the other clusters into the pyramidal cluster
-        grn = clusters[grn_ind]
-        pyr = []
-        for i in range(len(clusters)):
-            if i != grn_ind:
-                pyr.extend(clusters[i])
-
-        # get the thresholded masks of the granular and pyramidal classes
-        grn_mask = create_mask(grn, self.frame.size(), self.frame.lvl, self.frame.converter)
-        pyr_mask = create_mask(pyr, self.frame.size(), self.frame.lvl, self.frame.converter)
-        tot_mask = create_mask(grn+pyr, self.frame.size(), self.frame.lvl, self.frame.converter)
+        # classify neurons as either pyramidal or non
+        probs = np.array(clf.predict_proba(feats))[:,1]
+        pyr_inds = probs > thresh
+        non_inds = probs <= thresh
+        pyr_neurons = [neurons[i].polygon for i in range(len(neurons)) if pyr_inds[i]]
+        non_neurons = [neurons[i].polygon for i in range(len(neurons)) if non_inds[i]]
+        tot_neurons = [neurons[i].polygon for i in range(len(neurons))]
+        print(len(pyr_neurons), len(non_neurons), len(tot_neurons), flush=True)
+        
+        # get the thresholded masks of the neurons
+        pyr_mask = create_mask(pyr_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
+        non_mask = create_mask(non_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
+        tot_mask = create_mask(tot_neurons, self.frame.size(), self.frame.lvl, self.frame.converter)
+        pyr_outline = create_mask(pyr_neurons, self.frame.size(), self.frame.lvl, self.frame.converter, outlines_only=True)
+        non_outline = create_mask(non_neurons, self.frame.size(), self.frame.lvl, self.frame.converter, outlines_only=True)        
         
         # run the AO process over grn and pyr
-        grn_results = self.run_ao(grn_mask, grn)
-        pyr_results = self.run_ao(pyr_mask, pyr)
-        tot_results = self.run_ao(tot_mask, grn+pyr)
+        pyr_results = self.run_ao(pyr_mask, pyr_neurons)
+        non_results = self.run_ao(non_mask, non_neurons)        
+        tot_results = self.run_ao(tot_mask, tot_neurons)
 
-        # store the results! 
-        params.data['grn_ao'] = grn_results['ao']
-        params.data['grn_sub_aos'] = grn_results['sub_aos']
+        # store the results!
         params.data['pyr_ao'] = pyr_results['ao']
-        params.data['pyr_sub_aos'] = pyr_results['sub_aos']
-        params.data['tot_ao'] = tot_results['ao']
+        params.data['non_ao'] = non_results['ao']
+        params.data['tot_ao'] = tot_results['ao']        
+        params.data['pyr_sub_aos'] = pyr_results['sub_aos']        
+        params.data['non_sub_aos'] = non_results['sub_aos']
         params.data['tot_sub_aos'] = tot_results['sub_aos']
 
         # create and store the debugging overlay
         overlay = self.frame.copy()
-        cols = ['blue', 'red']    
-        overlay = overlay_thresh(overlay, grn_mask, alpha=0.5, color=cols[0])
-        overlay = overlay_thresh(overlay, pyr_mask, alpha=0.5, color=cols[1])
+        colors = ['red', 'blue']
+        overlay = overlay_thresh(overlay, pyr_outline, alpha=1.0, color=colors[0])
+        overlay = overlay_thresh(overlay, non_outline, alpha=1.0, color=colors[1])
 
         # save the original frame
-        self.save_frame(odir, overlay, 'GRNPYR')
+        self.save_frame(odir, overlay, 'PYR')
 
         # save the feature signals
-        grn_signals = grn_results['signals']
-        pyr_signals = pyr_results['signals']
-        tot_signals = tot_results['signals']        
-        self.save_signals(odir, grn_signals['normal'], 'GRN_NORMAL')
-        self.save_signals(odir, grn_signals['main_deform'], 'GRN_MAIN_DEFORM')
-        self.save_signals(odir, grn_signals['sub_deform'], 'GRN_SUB_DEFORM')
-        self.save_signals(odir, pyr_signals['normal'], 'PYR_NORMAL')
-        self.save_signals(odir, pyr_signals['main_deform'], 'PYR_MAIN_DEFORM')
-        self.save_signals(odir, pyr_signals['sub_deform'], 'PYR_SUB_DEFORM')
+        pyr_signals = pyr_results['signals']        
+        non_signals = non_results['signals']
+        tot_signals = tot_results['signals']
+        self.save_signals(odir, pyr_signals['normal'], 'PYR_NORMAL')        
+        self.save_signals(odir, non_signals['normal'], 'NON_NORMAL')
         self.save_signals(odir, tot_signals['normal'], 'TOT_NORMAL')
+        self.save_signals(odir, pyr_signals['main_deform'], 'PYR_MAIN_DEFORM')
+        self.save_signals(odir, non_signals['main_deform'], 'NON_MAIN_DEFORM')
         self.save_signals(odir, tot_signals['main_deform'], 'TOT_MAIN_DEFORM')
+        self.save_signals(odir, pyr_signals['sub_deform'], 'PYR_SUB_DEFORM')
+        self.save_signals(odir, non_signals['sub_deform'], 'NON_SUB_DEFORM')
         self.save_signals(odir, tot_signals['sub_deform'], 'TOT_SUB_DEFORM')
-        
-        if debug:            
-            custom_lines = [Line2D([0],[0], color=col, lw=4) for col in cols]
+
+        if self.logger.plots:
+            custom_lines = [Line2D([0],[0], color=color, lw=4) for color in colors]
             fig, ax = plt.subplots(1,1)
             ax.imshow(overlay.img)
-            ax.legend(custom_lines, ['Granular', 'Pyramidal'])
+            ax.legend(custom_lines, ['Pyramidal', 'Non-Pyramidal'])
             plt.axis('off')
             plt.show()
     #
@@ -200,7 +198,7 @@ class NeuNProcessor(HDABProcessor):
         # detect the the hematoxylin cells
         n_iterations = 2
         neurons = self.detect_neurons(
-            odir, params, disk_r, n_iterations, sigma, close_r, open_r, soma_r, debug=False)
+            odir, params, disk_r, n_iterations, sigma, close_r, open_r, soma_r)
 
         # tile size and step for the convolution operation to calculate feats
         tsize = Point(300, 200, True)

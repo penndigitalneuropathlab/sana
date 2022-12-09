@@ -6,6 +6,8 @@ from tqdm import tqdm
 from PIL import Image
 from scipy.ndimage import convolve1d
 from scipy.spatial import ConvexHull
+from scipy.interpolate import interp1d
+from scipy.signal import medfilt
 
 # custom modules
 import sana_io
@@ -15,7 +17,7 @@ from sana_thresholds import max_dev, kittler
 from sana_antibody_processor import Processor
 from sana_filters import minmax_filter
 from sana_heatmap import Heatmap
-from sana_geo import Point, Polygon, transform_inv_poly, hull_to_poly
+from sana_geo import Point, Polygon, transform_inv_poly, hull_to_poly, Line
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -28,7 +30,7 @@ class HDABProcessor(Processor):
         super(HDABProcessor, self).__init__(fname, frame, logger, **kwargs)
 
         # prepare the stain separator
-        self.ss = StainSeparator('H-DAB')
+        self.ss = StainSeparator('H-DAB', self.stain_vector)
 
         # if self.logger.plots:
         #     ds = 20
@@ -57,6 +59,7 @@ class HDABProcessor(Processor):
         # rescale the OD stains to 8 bit pixel values
         # NOTE: this uses the physical min/max of the stains based
         #       on the stain vector used
+        # TODO: this compresses teh digital space, need to scale it back to 0 and 255!
         self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
@@ -64,7 +67,7 @@ class HDABProcessor(Processor):
         if self.qupath_threshold:
             self.manual_dab_threshold = \
                 (self.qupath_threshold - self.ss.min_od[1]) / \
-                (self.ss.max_od[1] - self.min_od[1])
+                (self.ss.max_od[1] - self.ss.min_od[1])
 
         self.gray = self.frame.copy()
         self.gray.to_gray()
@@ -197,7 +200,7 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0,):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0, save_images=True):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
@@ -232,30 +235,46 @@ class HDABProcessor(Processor):
         # save the images used in processing
         self.auto_overlay = overlay_thresh(
             self.frame, self.auto_dab_thresh_img)
-        self.save_frame(odir, self.frame, 'ORIG')
-        self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
-        self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
-        self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+
+        if save_images:
+            #self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
+            self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
+            #self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
         # save the feature signals
-        signals = results['signals']
-        if signals:
-            self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
-            self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
-            if 'sub_deform' in signals:
-                self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
+        if save_images:
+            signals = results['signals']
+            if signals:
+                self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
+                self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
+                if 'sub_deform' in signals:
+                    self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
     #
     # end of run_auto_ao
 
     # TODO: comment and describe parameters, why current values are selected!
-    def run_segment(self, odir, params, landmarks, padding=0,
-                disk_r=7, sigma=3,
-                close_r=9, open_r=9, debug=False):
+    def run_segment(self, odir, params, landmarks, padding=0):
 
+        hem = self.hem.copy()
+        hem.anisodiff()
+        
         # detect the the hematoxylin cells
-        n_iterations = 2
-        hem_cells = self.detect_hem_cells(
-            params, disk_r, n_iterations, sigma, close_r, open_r, debug=False)
+        # TODO: try hem - dab??? some faint HEM comes from the dark DAB
+        # TODO: try 2 iterations
+        disk_r = 5
+        sigma = 3
+        n_iterations = 1
+        close_r = 9
+        open_r = 7
+        clean_r = 5
+        hem_hist = hem.histogram()
+        scale = 0.7
+        mx = 150
+        hem_threshold = max_dev(hem_hist, scale=scale, mx=mx)
+        self.main_mask = None
+        hem_cells = self.segment_cells(
+            hem, hem_threshold, disk_r, sigma, n_iterations,
+            close_r, open_r, clean_r)
 
         # write the cell segmentations
         ofname = sana_io.create_filepath(
@@ -267,22 +286,24 @@ class HDABProcessor(Processor):
         sana_io.write_annotations(ofname, hem_annos)
 
         # tile size and step for the convolution operation to calculate feats
-        tsize = Point(300, 200, True)
+        tsize = Point(400, 300, True)
         tstep = Point(15, 15, True)
 
         # calculate features from the cell detections
+        # TODO: include other pixel features other than intensity
         heatmap = Heatmap(self.hem, hem_cells, tsize, tstep, min_area=0, debug=True)
-        feats = heatmap.run([heatmap.density, heatmap.intensity])
-        feats_labels = ['DENSITY', 'INTENSITY']
+        feats = heatmap.run([heatmap.density, heatmap.intensity, heatmap.area])
+        feats_labels = ['DENSITY', 'INTENSITY', 'AREA']
 
-        # calculate the %AO of the cells
-        cell_mask = create_mask(
-            hem_cells, self.frame.size(), self.frame.lvl, self.frame.converter)
-        hm = Heatmap(cell_mask, hem_cells, tsize, tstep)
-        ao = hm.ao
-        feats = np.concatenate([feats, [ao]], axis=0)
-        feats_labels.append('AO')
+        # # calculate the %AO of the cells
+        # cell_mask = create_mask(
+        #     hem_cells, self.frame.size(), self.frame.lvl, self.frame.converter)
+        # hm = Heatmap(cell_mask, hem_cells, tsize, tstep)
+        # ao = hm.ao
+        # feats = np.concatenate([feats, [ao]], axis=0)
+        # feats_labels.append('AO')
 
+        # standardize the feats so that they all contribute equally to the fitness calculation
         feats[feats==np.nan] = 0
         mu = np.mean(feats, axis=(1,2))[:,None,None]
         sigma = np.std(feats, axis=(1,2))[:,None,None]
@@ -290,93 +311,97 @@ class HDABProcessor(Processor):
         feats = (feats - mu) / sigma
 
         # calculate the grayscale intensity throughout the image
-        # TODO: should do this slightly differently
-        gray = cv2.GaussianBlur(self.hem_gray.img, ksize=(0,0), sigmaX=10, sigmaY=1)
+        # TODO: is this the best feat?
+        self.gray = self.frame.copy()
+        self.gray.to_gray()
+        gray = cv2.GaussianBlur(self.gray.img, ksize=(0,0), sigmaX=40, sigmaY=1)
+        gray_ds = np.array([30.0, 10.0])
+        dsize = (int(round(gray.shape[1]/gray_ds[0])), int(round(gray.shape[0]/gray_ds[1])))
+        gray = cv2.resize(gray, dsize)
         gray = gray[None, :, :]
-
-        # make sure the landmarks fit in the image boundaries
-        landmarks = np.clip(landmarks.astype(int), 0, gray.shape[1]-1)
-
+        
         # detect the CSF to GM boundary with the grayscale intensity
-        csf_gm = self.fit_boundary(gray, landmarks[0,0], landmarks[1,1])
+        # NOTE: using the CSF and WM landmarks since the GM landmark grayscale is pretty dark and it errors
+        #       on the layer1/2 boundary sometimes
+        # TODO: make this a incline not step!
+        self.logger.info('Fitting CSF Boundary')
+        landmarks[0,1] = 0.0
+        csf_gm = self.fit_boundary(gray, gray_ds[1], landmarks[0,1], landmarks[2,1], debug=self.logger.plots)
+        
+        # detect the GM to WM boundary with the cell features
+        feats_ds = heatmap.tiler.ds
+        self.logger.info('Fitting GM Boundary')        
+        gm_wm, feat_ind = self.fit_boundary_on_feat(feats, feats_ds[1], landmarks[1,1], landmarks[2,1], debug=self.logger.plots)
 
-        # scale the landmarks to the tiled image
-        landmarks = (landmarks/heatmap.tiler.ds).astype(int)
-        landmarks = np.clip(landmarks, 0, feats.shape[1]-1)
+        # get the x arrays for the boundaries
+        csf_gm_x = np.linspace(0, feats.shape[2], csf_gm.shape[0])
+        gm_wm_x = np.linspace(0, feats.shape[2], gm_wm.shape[0])
+        
+        # interpolate so that the boundaries are equal in length
+        feats_padding = self.frame.padding / feats_ds[0]
+        new_x = np.linspace(feats_padding, feats.shape[2]-feats_padding, 100)
+        csf_gm_f = interp1d(csf_gm_x, csf_gm)
+        gm_wm_f = interp1d(gm_wm_x, gm_wm)
+        csf_gm_y = csf_gm_f(new_x) * gray_ds[1] / feats_ds[1]
+        gm_wm_y = gm_wm_f(new_x)
 
-        # get the L34 and L45 boundaries
-        l34, l45 = self.fit_boundaries(feats, landmarks[2,1], landmarks[3,1])
-
-        # get the L12 boundary
-        # NOTE: the l23 boundary may not always be accurate
-        #          (i.e. landmark might be placed in L2),
-        #       however using this function instead of fit_boundary()
-        #       should be more consistent for L12
-        l12, l23 = self.fit_boundaries(feats, landmarks[1,1], int(np.mean(l34)))
-
-        # get the GM/WM boundary
-        # NOTE: same reason we use get_ls here as L12
-        l56, gm_wm = self.fit_boundaries(feats, int(np.mean(l45)), landmarks[4,1])
-
-        # gm_wm, feat_ind = self.fit_boundary_on_feat(feats, landmarks[3,1], landmarks[4,1])
-        gm_wm = self.fit_boundary(feats, landmarks[3,1], landmarks[4,1])
-
-        # if self.debug:
-        #     fig, axs = plt.subplots(1, feats.shape[0])
-        #     if feats.shape[0] == 1:
-        #         axs = [axs]
-        #     for i in range(feats.shape[0]):
-        #         axs[i].imshow(feats[i])
-        #         axs[i].set_title(feats_labels[i])
-        #         axs[i].plot(l12, color='red')
-        #         axs[i].plot(l23, color='orange')
-        #         axs[i].plot(l34, color='yellow')
-        #         axs[i].plot(l45, color='green')
-        #         axs[i].plot(l56, color='blue')
-        #         axs[i].plot(gm_wm, color='purple')
-        #     plt.show()
-        # TODO: need to clip the boundaries to the padding
-
+        if self.logger.plots:
+            fig, axs = plt.subplots(1, feats.shape[0]+3)
+            axs[0].imshow(self.frame.img)
+            axs[1].imshow(self.hem.img)
+            axs[2].imshow(gray[0])
+            axs[2].set_aspect(self.frame.img.shape[1] / self.frame.img.shape[0])
+            for i in range(feats.shape[0]):
+                axs[i+3].imshow(feats[i])
+                axs[i+3].set_title(feats_labels[i])
+                axs[i+3].plot(new_x, csf_gm_y, color='red')
+                axs[i+3].plot(new_x, gm_wm_y, color='blue')
+                axs[i+3].plot(landmarks[:,0]/feats_ds[0], landmarks[:,1]/feats_ds[1], 'x', color='purple')
+            
         # smooth the boundaries with a moving average filter
         # TODO: this is not really how to do it, theres too much large spikes
         #       that the script attaches to. really want to do waht paul said
         #       the general density of the layer shouldn't change that much
-        Mfilt, Nfilt = 151, 21
-        csf_gm_y = convolve1d(csf_gm, np.ones(Mfilt)/Mfilt, mode='reflect')
-        boundaries = [convolve1d(x, np.ones(Nfilt)/Nfilt, mode='reflect') \
-                  for x in [l12, l23, l34, l45, l56, gm_wm]]
+        Mfilt = 17
+        #csf_gm_y = convolve1d(csf_gm_y, np.ones(Mfilt)/Mfilt, mode='reflect')
+        #gm_wm_y = convolve1d(gm_wm_y, np.ones(Mfilt)/Mfilt, mode='reflect')
+        #csf_gm_y = medfilt(csf_gm_y, Mfilt)
+        #gm_wm_y = medfilt(gm_wm_y, Mfilt)
 
         # scale back to the original resolution
-        boundaries_x = np.arange(feats.shape[2]) * heatmap.tiler.ds[0]
-        boundaries_y = [x * heatmap.tiler.ds[1] for x in boundaries]
-        csf_gm_x = np.linspace(0, boundaries_x[-1], gray.shape[2])
+        new_x *= heatmap.tiler.ds[0]
+        csf_gm_y *= feats_ds[1]
+        gm_wm_y *= feats_ds[1]
+
+        # convert the GM/WM boundary to a straight line
+        #gm_wm_line = Line(new_x, gm_wm_y, False, self.frame.lvl)
+        #m, b = gm_wm_line.linear_regression()
+        #gm_wm_y = new_x * m + b
+        
+        if self.logger.plots:
+            fig, ax = plt.subplots(1,1)
+            ax.imshow(self.frame.img)
+            ax.plot(new_x, csf_gm_y, color='black')
+            ax.plot(new_x, gm_wm_y, color='black')
+            plt.show()
 
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='GM', fpath=odir)
 
         # generate and store the annotations
-        CLASSES = [
-            'CSF_BOUNDARY',
-            'L1_L2_BOUNDARY','L2_L3_BOOUNDARY',
-            'L3_L4_BOUNDARY','L4_L5_BOUNDARY',
-            'L5_L6_BOUNDARY','GM_WM_BOUNDARY'
-        ]
-        LVL = 0
-        csf_gm = Polygon(csf_gm_x, csf_gm_y, False, self.frame.lvl) \
-            .to_annotation(ofname, CLASSES[0])
-        boundaries = [csf_gm] + [Polygon(boundaries_x, boundaries_y[i], False, LVL) \
-                                 .to_annotation(ofname, CLASSES[i+1]) \
-                                 for i in range(len(boundaries_y))]
-
+        csf_gm = Polygon(new_x, csf_gm_y, False, self.frame.lvl).to_annotation(ofname, 'CSF_BOUNDARY')
+        gm_wm = Polygon(new_x, gm_wm_y, False, self.frame.lvl).to_annotation(ofname, 'GM_WM_BOUNDARY')
+        boundaries = [csf_gm, gm_wm]
+        
         # inverse transform the annotations
         [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in boundaries]
 
-        # finally, write the predictions
+        # finally, write the predicted boundaries
         sana_io.write_annotations(ofname, boundaries)
 
-        # save the feature files
+        # save the feature images
         for i in range(feats.shape[0]):
             self.save_array(odir, feats[i], feats_labels[i])
     #
@@ -384,11 +409,22 @@ class HDABProcessor(Processor):
 
     # this fits a step function to each column in the img
     # TODO: the values of step function are set by the max of the row, is this good?
-    def fit_boundary(self, feats, st, en, v0=None, v1=None, debug=False):
+    def fit_boundary(self, feats, ds, st, en, v0=None, v1=None, debug=False):
 
+        # scale the st/en boundaries to the feature array
+        st = int(round(st / ds))
+        en = int(round(en / ds))
+        if st < 0:
+            st = 0
+        if en > feats.shape[1]-1:
+            en = feats.shape[1]-1
+
+        sigs_img = np.zeros_like(feats)
+        score_img = np.zeros_like(feats[0])
+            
         # calculate the boundary at each column
         boundary = np.zeros(feats.shape[2])
-        for j in range(feats.shape[2]):
+        for j in tqdm(range(feats.shape[2])):
 
             # extract the signal column
             sig = feats[:, st:en, j]
@@ -400,13 +436,15 @@ class HDABProcessor(Processor):
 
             # get the 2 extreme values for the step function
             if v0 is None:
-                v0 = np.mean(feats[:, st,:], axis=1)[:, None]
+                v0 = np.mean(feats[:,st,:], axis=1)[:, None]
             if v1 is None:
-                v1 = np.mean(feats[:, en,:], axis=1)[:, None]
+                v1 = np.mean(feats[:,en,:], axis=1)[:, None]
 
             # calculate the distance score for each possible index in the signal
-            score = np.zeros(sig.shape[1], dtype=float)
-            for x0 in range(1, sig.shape[1]-1):
+            mi_x0 = 2
+            best_score = 0
+            best_x0 = mi_x0
+            for x0 in range(mi_x0, sig.shape[1]-1):
 
                 # create the template signal to compare to the original signal
                 template = np.zeros_like(sig)
@@ -419,31 +457,48 @@ class HDABProcessor(Processor):
                     x, y = sig[i], template[i]
                     corr.append(np.mean((x-np.mean(x))*(y-np.mean(y))) / (np.std(x)*np.std(y)))
                 if len(corr) == 1:
-                    score[x0] = corr[0]
+                    score = corr[0]
                 else:
-                    score[x0] = np.mean(corr)
-
-                if debug:
-                    print(corr, flush=True)
-                    plt.plot(sig[0])
-                    plt.plot(template[0])
-                    plt.show()
+                    score = np.mean(corr)
+                score_img[st+x0,j] = score
+                if score > best_score:
+                    best_score = score
+                    sigs_img[:,st:en,j] = template
+                    best_x0 = x0
             #
             # end of score calculation
 
             # the boundary val at this column is the min distance index
-            boundary[j] = np.argmax(score) + st
+            boundary[j] = st + best_x0
         #
         # end of boundary detection
 
+        if debug:
+            fig, axs = plt.subplots(2, feats.shape[0]+1)
+            for i in range(feats.shape[0]):
+                axs[0,i].imshow(feats[i])
+                axs[1,i].imshow(sigs_img[i])
+            axs[0,-1].imshow(score_img)
+            axs[1,-1].imshow(score_img)
+            for ax in axs.ravel():
+                ax.set_aspect(feats.shape[2] / feats.shape[1])
+        
         return boundary
     #
     # end of fit_boundary
 
     # this finds the "best" feature to segment on by looking at the difference
     #  between the values at each landmark
-    def fit_boundary_on_feat(self, feats, st, en):
+    def fit_boundary_on_feat(self, feats, ds, st, en, debug=False):
 
+        # scale the st/en boundaries to the feature array
+        st = int(round(st / ds))
+        en = int(round(en / ds))
+        if st < 0:
+            st = 0
+        if en > feats.shape[1]-1:
+            en = feats.shape[1]-1
+        
         # get the 2 extreme values for the step function
         v0 = np.mean(feats[:, st,:], axis=1)[:, None]
         v1 = np.mean(feats[:, en,:], axis=1)[:, None]
@@ -452,7 +507,7 @@ class HDABProcessor(Processor):
         feat_ind = np.argmax(np.abs((v0-v1)/v0))
 
         feats = feats[feat_ind][None, ...]
-        boundary = self.fit_boundary(feats, st, en)
+        boundary = self.fit_boundary(feats, 1, st, en, debug)
         return boundary, feat_ind
 
     # this fits a sloped pulse function to each column in the img
@@ -524,7 +579,7 @@ class HDABProcessor(Processor):
     # end of fit_boundaries
 
     def detect_hem_cells(self, params,
-                         disk_r, sigma, n_iterations, close_r, open_r, debug=False):
+                         disk_r, sigma, n_iterations, close_r, open_r):
 
         # smooth the image
         # self.hem.anisodiff()
@@ -558,7 +613,7 @@ class HDABProcessor(Processor):
 
         # perform the min-max filtering to maximize centers of cells
         # TODO: inverse this filter
-        img_minmax = minmax_filter(255-img, disk_r, sigma, n_iterations, self.debug)
+        img_minmax = minmax_filter(255-img, disk_r, sigma, n_iterations)
 
         # define the sure foreground, small circles at minimums of filter output
         candidates = np.where((img_minmax == -1) & (img != 0))
@@ -601,8 +656,7 @@ class HDABProcessor(Processor):
 
         cells = [c.polygon for c in mframe.get_body_contours()]
 
-        if debug:
-
+        if self.logger.plots:
             rgb_markers = np.zeros_like(rgb_hem)
             colors = [(np.random.randint(10, 255),
                        np.random.randint(10, 255),
@@ -616,7 +670,8 @@ class HDABProcessor(Processor):
             fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
             axs[0].imshow(self.frame.img)
             axs[0].set_title('orig')
-            axs[1].imshow(img, vmin=vmi, vmax=vmx)
+            #axs[1].imshow(img, vmin=vmi, vmax=vmx)
+            axs[1].imshow(img)
             axs[1].set_title('preprocess')
             axs[2].imshow(img_minmax)
             axs[2].plot(candidates[1], candidates[0], '+', color='red', markersize=3)
@@ -628,7 +683,7 @@ class HDABProcessor(Processor):
             axs[4].set_title('candidate locs')
             plt.show()
 
-        if debug:
+        if self.logger.plots:
             gray = self.frame.copy()
             gray.to_gray()
 

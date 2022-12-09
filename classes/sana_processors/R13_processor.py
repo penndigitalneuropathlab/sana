@@ -1,5 +1,3 @@
-# TODO: 
-
 
 # system modules
 import os
@@ -8,6 +6,7 @@ import os
 import cv2
 import numpy as np
 from sana_logger import SANALogger
+from sana_frame import overlay_thresh
 from tqdm import tqdm
 from PIL import Image
 import json
@@ -38,8 +37,6 @@ class R13Processor(HDABProcessor):
     # end of constructor
 
     def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
-        # generate the neuronal and glial severity results
-
         self.logger.info('Running R13 Processor...')
 
         self.generate_masks(main_roi, sub_rois)
@@ -47,7 +44,14 @@ class R13Processor(HDABProcessor):
         self.run_lb_detection(odir, roi_odir, first_run, params, 0.85)
 
         # generate the auto AO results
+        # TODO: define a minimum threshold value!
         self.run_auto_ao(odir, params, scale=1.0, mx=90)
+
+        # save the original frame
+        self.save_frame(odir, self.frame, 'ORIG')
+
+        # save the params IO to a file
+        self.save_params(odir, params)
     #
     # end of run
 
@@ -62,11 +66,11 @@ class R13Processor(HDABProcessor):
         self.logger.info('Running LB detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
 
+        # decode the model to get activations of each class
         model = R13Classifier(self.frame)
         wc_activation = model.run()
+        wc_probs = softmax(wc_activation, axis=0)
         
-        wc_softmax = softmax(wc_activation,axis=0)
-
         # save the output probabilities
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_R13.npy'))
         np.save(ofname, wc_activation)
@@ -99,7 +103,18 @@ class R13Processor(HDABProcessor):
             open_r = 13, #always an odd number (7 < open_r < 13)
             mask = self.main_mask,
             debug = self.logger.plots
-            )
+        )
+        relevant_ln_dab_msk, dab_thresh = self.process_dab(
+            self.dab,
+            run_normalize = True,
+            scale = 1.0,
+            mx = 90, #default: 90, experiment w/ mx = 100-110
+            close_r = 0,
+            open_r = 0, #always an odd number (7 < open_r < 13)
+            mask = self.main_mask,
+            debug = self.logger.plots
+        )
+        
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
         # 1 for dice loss and 2 for SoftMargin (selecting LB activation map)
@@ -222,9 +237,15 @@ class R13Processor(HDABProcessor):
         tile = roi_name.split('_')[-1]
         lb_annos = []
         for lb in lbs:
-            fname = bid+'_'+antibody+'_'+region+'_'+tile
+
+            # confidence is the average LB activation inside the polygon
             conf = self.get_confidence(lb, lb_activation)
-            lb_annos.append(lb.to_annotation(fname,class_name='LB detection',confidence=conf))
+            
+            fname = bid+'_'+antibody+'_'+region+'_'+tile
+            lb_anno = lb.to_annotation(
+                fname, class_name='LB detection', confidence=conf
+            )
+            lb_annos.append(lb_anno)
 
         # transform detections to the original slide coordinate system
         lb_annos = [transform_inv_poly(x, params.data['loc'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
@@ -233,36 +254,43 @@ class R13Processor(HDABProcessor):
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             fig.suptitle('Debugging Plot of an LB Detection')
             axs = axs.ravel()
-            for lb in lbs:
-                plot_poly(axs[0],lb,color='red')
-                plot_poly(axs[1],lb,color='red')
-                plot_poly(axs[2],lb,color='red')
-                plot_poly(axs[3],lb,color='red')
-     
+
+            # plot the original image
             axs[0].imshow(self.frame.img) 
             axs[0].set_title('Orig. Img')
 
-            axs[1].imshow(lb_softmax.img,vmin=0,vmax=1)
-            axs[1].set_title('WildCat Frame')
+            # plot the strong DAB in the image
+            axs[1].imshow(relevant_dab_msk.img)
+            axs[1].set_title('DAB mask')
 
-            axs[2].imshow(relevant_dab_msk.img)
-            axs[2].set_title('Proc. DAB Mask')
+            alpha = 0.4
+            overlay = overlay_thresh(self.frame, lb_preds, alpha=alpha, color='red')
+            overlay = overlay_thresh(overlay, ln_preds, alpha=alpha, color='blue')
+            axs[2].imshow(overlay.img)
+            axs[2].set_title('WC Pixel Predictions')
+            [plot_poly(axs[2], lb, color='black') for lb in lbs]
+            [plot_poly(axs[2], lb, color='yellow') for lb in lns]            
 
-            axs[3].imshow(lb_msk.img)
-            axs[3].set_title('LB Mask')
+            fig, axs = plt.subplots(1,3)
+            axs[0].imshow(wc_probs[0])
+            axs[1].imshow(wc_probs[1])
+            axs[2].imshow(wc_probs[2])
+            
             plt.show()
+        #
+        # end of debugging
 
         # set pixel lvl to 0
-        [self.dab.converter.rescale(lb, 0) for lb in lb_annos]        
+        [self.dab.converter.rescale(x, 0) for x in annos]        
 
         # finally, write the annoations to a file
         afile = os.path.basename(self.fname).replace('.svs','.json')
         anno_fname = roi_odir+'/'+afile
         if not os.path.exists(anno_fname) or first_run:
-            sana_io.write_annotations(anno_fname, lb_annos)
+            sana_io.write_annotations(anno_fname, annos)
             first_run = False
         else:
-            sana_io.append_annotations(anno_fname, lb_annos)
+            sana_io.append_annotations(anno_fname, annos)
         
     # 
     # end of run_lb_detection

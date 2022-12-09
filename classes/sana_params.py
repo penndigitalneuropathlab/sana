@@ -27,7 +27,7 @@ INT_KEYS = [
 ]
 POINT_KEYS = [
     'loc', 'size',
-    'crop_loc', 'crop_size',
+    'orig_size', 'crop_loc', 'crop_size',
     'ds',
 ]
 M_KEYS = [
@@ -40,6 +40,7 @@ FLOAT_KEYS = [
     'manual_ao', 'auto_ao',
     'vert_fibers_ao', 'horz_fibers_ao',
     'grn_ao', 'pyr_ao', 'tot_ao',
+    'lb_wc_ao', 'lb_poly_ao', 'ln_wc_ao', 'lb_poly_ao',
 ]
 LIST_KEYS = [
     'sub_areas',
@@ -157,7 +158,7 @@ class Params:
     def convert_int(self, x):
         return "%d" % (x)
     def convert_float(self, x):
-        return '%.6f' % (x)
+        return '%.16f' % (x)
     def convert_list(self, x):
         return '\t'.join([self.to_string(y) for y in x])
     def convert_M(self, x):

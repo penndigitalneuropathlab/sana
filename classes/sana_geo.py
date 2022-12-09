@@ -9,6 +9,7 @@ from shapely.geometry.multipolygon import MultiPolygon
 from matplotlib import pyplot as plt
 from scipy.spatial import ConvexHull
 from scipy.ndimage.interpolation import rotate
+from pyefd import elliptic_fourier_descriptors as efd
 
 # custom Exceptions
 ERR = "---> %s <---"
@@ -128,35 +129,59 @@ def get_local_slide_area(orig_frame, orig_line):
 #
 # end of get_local_slide_area
 
-def get_gm_zone_angle(orig_frame, orig_roi):
+def get_gm_zone_angle(frame, roi, logger):
 
-    roi = orig_roi.copy()
+    # get the CSF and GM boundaries from the zone ROI
+    csf, gm = split_gm_zone(frame, roi)
 
-    # split the ROI into 4 lines
-    # TODO: this is only possible if its a 5 point ROI, could approximate a rectangle if not?
-    lines = [roi[0:2], roi[1:3], roi[2:4], roi[3:5]]
-    lines = [Line(x[:,0], x[:,1], roi.is_micron, roi.lvl, roi.order) for x in lines]
-
-    # find the line which has the most slide background near it
-    ind, mx = 0, 0
-    for i, line in enumerate(lines):
-        val = get_local_slide_area(orig_frame, line)
-        if val > mx:
-            ind = i
-            mx = val
-    best = lines[ind]
-
+    if logger.plots:
+        fig, ax = plt.subplots(1,1)
+        ax.imshow(frame.img)
+        plot_poly(ax, csf, label='CSF', color='red')
+        plot_poly(ax, gm, label='GM', color='blue')
+        ax.legend()
+        plt.show()
+        
+    # angle of rotation is the average angle of the two boundaries
+    # NOTE: could just rotate by tissue?
+    angle = (csf.get_angle() + gm.get_angle()) / 2
+    
     # add an extra 180 to the angle if the CSF ends up on bottom
-    angle = best.get_angle()
-    M, nw, nh = orig_frame.get_rotation_mat(angle)
-    best.transform(M)
-    if np.mean(best[:,1]) > orig_frame.size()[1]//2:
+    M, nw, nh = frame.get_rotation_mat(angle)
+    csf.transform(M)
+    if np.mean(csf[:,1]) > frame.size()[1]//2:
         angle += 180
 
     return angle
-    
 #
 # end of get_gm_zone_angle
+
+def split_gm_zone(frame, roi):
+
+    # split the ROI into 4 lines
+    # TODO: this only possible if its a 5 point ROI, is this always true?
+    lines = [roi[0:2], roi[1:3], roi[2:4], roi[3:5]]
+    lines = [Line(x[:,0], x[:,1], roi.is_micron, roi.lvl, roi.order) for x in lines]
+
+    # find the CSF boundary -- line which has the most slide background in proximity
+    ind, mx = 0, 0
+    for i, line in enumerate(lines):
+        val = get_local_slide_area(frame, line)
+        if val > mx:
+            ind = i
+            mx = val
+    csf = lines.pop(ind)
+    
+    # find the GM boundary -- line which has the closest angle to the CSF boundary
+    # NOTE: angles are always in quadrant I and II, so we just use the similarity as the distance from 90
+    #        often times the similar angles will be in different quadrants, so this makes 179 and 1 degrees similar
+    csf_angle = np.abs(90 - csf.get_angle())
+    other_angles = [np.abs(90 - x.get_angle()) for x in lines]
+    gm = lines[np.argmin(np.abs(other_angles-csf_angle))]
+
+    return csf, gm
+#
+# end of split_gm_zone
 
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent
@@ -709,13 +734,13 @@ class Annotation(Polygon):
         if x is None or y is None:
             x, y = cls.get_vertices(geo)
         obj = Polygon(x, y, is_micron, lvl, order).view(cls)
-
+        
         # store attributes
         obj.file_name = file_name
         obj.class_name = class_name
         obj.name = anno_name
         obj.confidence = confidence
-
+    
         return obj
 
     def __array_finalize__(self, obj):
@@ -814,5 +839,21 @@ class Annotation(Polygon):
 #
 # end of Annotation
 
+class Neuron:
+    def __init__(self, polygon, fname, main_roi=None, sub_roi=None, confidence=1.0):
+        self.polygon = polygon
+        self.fname = fname
+        self.main_roi = main_roi
+        self.sub_roi = sub_roi
+        self.confidence = confidence
+        self.feats = self.to_feats(self.polygon)
+
+    # TODO: include intensity, std intesnity,  and area etc.!
+    def to_feats(self, p, efd_order=10):
+        coeffs = efd(self.polygon, order=efd_order, normalize=True)
+        feats = coeffs.flatten()[3:]
+        return feats
+#
+# end of Neuron
 #
 # end of file
