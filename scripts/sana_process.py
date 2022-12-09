@@ -1,11 +1,11 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 
 # system modules
 import os
+import inspect
 import sys
 import math
 import argparse
-import logging
 import time
 from multiprocessing import Process
 
@@ -32,9 +32,9 @@ from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
+from sana_processors.SYN303_processor import SYN303Processor
 from sana_processors.HDAB_processor import HDABProcessor
 from sana_processors.HE_processor import HEProcessor
-from sana_processors.aSYN_processor import aSYNProcessor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -60,12 +60,14 @@ def get_processor(fname, frame, logger, **kwargs):
         'R13': R13Processor,
         'MJFR13': R13Processor,
         'HE': HEProcessor,
-        'aSYN': aSYNProcessor,
+        'SYN303': SYN303Processor,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
-    
-    return cls(fname, frame, logger, **kwargs)
+    path = inspect.getfile(cls)
+    proc = cls(fname, frame, logger, **kwargs)
+    return proc
+
 #
 # end of get_processor
 

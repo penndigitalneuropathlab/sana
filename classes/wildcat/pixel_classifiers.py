@@ -117,7 +117,7 @@ class Model:
                 tran = transforms.Compose([
                     transforms.Resize((wwc, wwc)),
                     transforms.ToTensor(),
-                    #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
                 ])
 
                 # convert the read chunk to tensor format
@@ -163,16 +163,12 @@ class Model:
         # cutoff the extra padded data from the windowing
         output = output[:, :self.true_out_dim[0], :self.true_out_dim[1]]
 
-        # # add the frame padding border
-        # pad = self.frame.padding
-        # output = np.pad(output, ((pad,pad),(pad,pad),(0,0)), mode='constant', constant_values=0)
-
-        # print(output.shape, self.frame.img.shape, flush=True)
-        if self.debug:
-            fig, axs = plt.subplots(1,2)
-            axs[0].imshow(self.frame.img, extent=(0,100,0,100))
-            axs[1].imshow(output[0], extent=(0,100,0,100))
-            plt.show()
+        # # print(output.shape, self.frame.img.shape, flush=True)
+        # if self.debug:
+        #     fig, axs = plt.subplots(1,2)
+        #     axs[0].imshow(self.frame.img, extent=(0,100,0,100))
+        #     axs[1].imshow(output[0], extent=(0,100,0,100))
+        #     plt.show()
 
         return output
     #
@@ -197,5 +193,10 @@ class MicrogliaClassifier(Model):
 
 class R13Classifier(Model):
     def __init__(self, frame):
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'R13.dat')
-        super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'R13_dice_colorjitter.dat')
+        super().__init__(model_path, frame, 4, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+
+class SYN303Classifier(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'syn303_LB.dat')
+        super().__init__(model_path, frame, 2, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
