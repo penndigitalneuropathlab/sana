@@ -34,6 +34,7 @@ from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
 from sana_processors.HDAB_processor import HDABProcessor
 from sana_processors.HE_processor import HEProcessor
+from sana_processors.aSYN_processor import aSYNProcessor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -59,6 +60,7 @@ def get_processor(fname, frame, logger, **kwargs):
         'R13': R13Processor,
         'MJFR13': R13Processor,
         'HE': HEProcessor,
+        'aSYN': aSYNProcessor,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
@@ -222,7 +224,7 @@ def process_rois(args, slides, logger):
                 'main_roi': main_roi,
                 'main_roi_dict': main_roi.__dict__,
                 'sub_rois': sub_rois,
-                'sub_roi_dicts': [sub_roi.__dict__ if sub_roi else None for sub_roi in sub_rois],
+                'sub_roi_dicts': [sub_roi.__dict__ if not sub_roi is None else None for sub_roi in sub_rois],
                 'roi_id': roi_id,
             })
         #
@@ -243,10 +245,10 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     for x in main_roi_dict:
         main_roi.__setattr__(x, main_roi_dict[x])
     for i in range(len(sub_rois)):
-        for x in sub_roi_dicts[i]:
-            if sub_rois[i]:
+        if not sub_roi_dicts[i] is None:
+            for x in sub_roi_dicts[i]:
                 sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
-    
+
     # initialize the Loader object for loading Frames
     try:
         loader = Loader(slide)

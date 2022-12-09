@@ -147,14 +147,18 @@ class Processor:
         ret, markers = cv2.connectedComponents(sure_fg)
         markers += 1
         markers[unknown == 255] = 0
-        img_thresh_rgb = np.stack((img_thresh,)*3, axis=-1)
+        #img_thresh_rgb = np.stack((img_thresh,)*3, axis=-1)
+        img_thresh_rgb = np.stack((np.rint(frame.img[:,:,0]).astype(np.uint8),)*3, axis=-1)
+        #img_thresh_rgb = self.frame.img
         markers = cv2.watershed(img_thresh_rgb, markers)
         markers[markers <= 1] = 0
 
         # generate Polygons from the instance segmented markers image
+        # TODO: store the mu/sg intensity w/ the polygon!
         cells = []
         z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
         o = z.copy() + 1
+        self.logger.info('Generating Cell Detection Polygons')
         for val in tqdm(range(1, np.max(markers)+1)):
             x = np.where(markers == val, o, z)
             f = Frame(x, frame.lvl, frame.converter)
@@ -165,26 +169,39 @@ class Processor:
                 cells.append(bodies[0].polygon.connect())
 
         if self.logger.plots:
+            self.logger.debug('Recoloring Cell Markers')
+            rgb_markers = np.zeros_like(self.frame.img)
+            colors = [(np.random.randint(10, 255),
+                       np.random.randint(10, 255),
+                       np.random.randint(10, 255)) \
+                      for _ in range(1,np.max(markers))]
+            colors = [(0,0,0)] + colors + [(80,80,80)]
+            for j in tqdm(range(rgb_markers.shape[0])):
+                for i in range(rgb_markers.shape[1]):
+                    rgb_markers[j,i] = colors[markers[j,i]]
+            
             # plot all the intermediate images
             fig, axs = plt.subplots(2,4, sharex=True, sharey=True)
             axs = axs.ravel()
-            axs[0].imshow(frame.img)
-            axs[0].set_title('Orig DAB')
-            axs[4].matshow(img_objs, cmap='gray')
-            axs[4].set_title('Proc. DAB for Objs only')
-            axs[1].imshow(img_dist, cmap='gray')
-            axs[1].set_title('Distance Transform')
-            axs[5].imshow(img_minmax, cmap='gray')
-            axs[5].set_title('Min-Max Filtered Dist. Transform')
-            axs[5].plot(candidates[1], candidates[0], 'x', color='red')
-            axs[2].matshow(img_thresh, cmap='gray')
-            axs[2].set_title('Proc. DAB for All Cells Parts')
-            axs[6].matshow(255-sure_bg, cmap='gray')
-            axs[6].set_title('Sure Background Data')
-            axs[3].matshow(unknown, cmap='gray')
-            axs[3].set_title('Unknown Pixel Data')
-            axs[7].matshow(markers, cmap='rainbow')
-            axs[7].set_title('Instance Segmented Neurons')
+            axs[0].imshow(self.frame.img)
+            axs[0].set_title('Original Frame')
+            axs[1].matshow(img_objs, cmap='gray')
+            axs[1].set_title('Proc. Stain for Objs only')
+            axs[2].imshow(img_dist, cmap='gray')
+            axs[2].set_title('Distance Transform')
+            axs[3].matshow(img_thresh, cmap='gray')
+            axs[3].set_title('Proc. Stain for All Cells Parts')
+            axs[4].imshow(frame.img)
+            axs[4].set_title('Original Stain')
+            axs[5].matshow(unknown, cmap='gray')
+            axs[5].set_title('Unknown Pixel Data')                        
+            axs[6].imshow(img_minmax, cmap='gray')
+            axs[6].set_title('Min-Max Filtered Dist. Transform')
+            axs[6].plot(candidates[1], candidates[0], 'x', color='red')
+            axs[7].matshow(rgb_markers, cmap='rainbow')
+            axs[7].set_title('Instance Segmented Cells')
+            # axs[6].matshow(255-sure_bg, cmap='gray')
+            # axs[6].set_title('Sure Background Data')
             
             fig.tight_layout()
         #
@@ -196,7 +213,8 @@ class Processor:
 
     def get_thresh(self, img, threshold, mask, close_r, open_r):
         img = img.copy()
-        img[mask.img == 0] = 0
+        if not mask is None:
+            img[mask.img == 0] = 0
         img_thresh = np.where(img < threshold, 0, 255).astype(np.uint8)[:,:,0]
         close_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (close_r, close_r))
         open_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (open_r, open_r))

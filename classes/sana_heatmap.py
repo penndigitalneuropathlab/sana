@@ -83,7 +83,8 @@ class Heatmap:
                 x = np.clip(x, 0, self.frame.img.shape[1])
                 y = np.clip(y, 0, self.frame.img.shape[0])
                 tile = Polygon(x, y, False, self.lvl)
-
+                self.tile_area = tile.area()
+                
                 # get the objects that are in the tile
                 # TODO: add option for other checks, like size for example
                 inds = (

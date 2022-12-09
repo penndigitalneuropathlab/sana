@@ -140,7 +140,7 @@ class Hemisphere:
 # stores Subregions that were annotated and analyzed within the .svs slides
 class Region:
     region_mapping = {
-        'MFC': [],
+        'MFC': ['GM'],
         'OFC': [
             'medOFC', 'latOFC',
             's32',

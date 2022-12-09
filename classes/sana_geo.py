@@ -181,7 +181,7 @@ def split_gm_zone(frame, roi):
     return csf, gm
 #
 # end of split_gm_zone
-    
+
 # this function assumes we are processing a segmentation which is essentially
 #  the joining of 2 boundary annotations. It finds the max distance between adjacent
 #  vertices to separate into the 2 annotations

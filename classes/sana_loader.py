@@ -339,7 +339,7 @@ class Loader(openslide.OpenSlide):
             w = np.max(l[0][:,0])-np.min(l[0][:,0])
             l[0].rotate(c, -angle)
         else:
-            w = 1600
+            w = 3000 # TODO: make this a args parameter
 
         # sort the vector by the y values
         v = v[np.argsort(v[:,1])]
@@ -357,6 +357,7 @@ class Loader(openslide.OpenSlide):
         # load a bigger frame based on the rotated rect
         rect_loc, rect_size = rect.bounding_box()
         frame = self.load_frame(rect_loc, rect_size)
+        frame.padding = padding
         orig_frame = frame.copy()
 
         # get the local intensities at the vertices
