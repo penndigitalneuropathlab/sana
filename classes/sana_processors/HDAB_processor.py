@@ -80,7 +80,7 @@ class HDABProcessor(Processor):
 
     # performs a simple threshold using a manually selected cut off point
     # then runs the %AO process
-    def run_manual_ao(self, odir, params):
+    def run_manual_ao(self, odir, params, save_images=True):
 
         # apply the thresholding
         self.manual_dab_thresh = self.dab.copy()
@@ -100,17 +100,19 @@ class HDABProcessor(Processor):
         odir = sana_io.create_odir(odir, 'manual_ao')
 
         # save the images used in processing
-        self.manual_overlay = overlay_thresh(
-            self.frame, self.manual_dab_thresh)
-        self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
-        self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
+        if save_images:
+            self.manual_overlay = overlay_thresh(
+                self.frame, self.manual_dab_thresh)
+            self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
+            self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
         # save the feature signals
-        signals = results['signals']
-        self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
-        self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
-        if 'sub_deform' in signals:
-            self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
+        if save_images:
+            signals = results['signals']
+            self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
+            self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
+            if 'sub_deform' in signals:
+                self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -232,14 +234,15 @@ class HDABProcessor(Processor):
         # write params data to csv
         self.save_params(odir,params)
 
-        # save the images used in processing
-        self.auto_overlay = overlay_thresh(
-            self.frame, self.auto_dab_thresh_img)
-
         if save_images:
+            
+            # save the images used in processing
+            self.auto_overlay = overlay_thresh(
+                self.frame, self.auto_dab_thresh_img)
+            
             #self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
             self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
-            #self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+            self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
         # save the feature signals
         if save_images:

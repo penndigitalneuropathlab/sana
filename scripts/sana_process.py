@@ -61,6 +61,7 @@ def get_processor(fname, frame, logger, **kwargs):
         'MJFR13': R13Processor,
         'HE': HEProcessor,
         'SYN303': SYN303Processor,
+        'aSYN': SYN303Processor,
         '': HDABProcessor,
     }
     cls = antibody_map[antibody]
@@ -94,7 +95,7 @@ def process_slides(args, slides, logger):
         if args.slide_mask:
             mask = Frame(args.slide_mask, loader.thumbnail_lvl, loader.converter)
         else:
-            mask = Frame(np.ones_like(loader.thumbnail[:,:,0][:,:,None]), loader.thumbnail_lvl, loader.converter)
+            mask = Frame(np.ones_like(loader.thumbnail.img[:,:,0][:,:,None]), loader.thumbnail_lvl, loader.converter)
 
         # loop through the frame locations
         for i, j in framer.inds():
@@ -104,7 +105,10 @@ def process_slides(args, slides, logger):
             loader.converter.rescale(loc, loader.thumbnail_lvl)
             loader.converter.rescale(size, loader.thumbnail_lvl)
             frame_mask = mask.get_tile(loc, size)
-            if np.sum(frame_mask) > 0.05*args.frame_size**2:
+
+            # TODO: this logic isn't correct!
+            #if np.sum(frame_mask) > 0.05*args.frame_size**2:            
+            if True:
                 loader.converter.rescale(loc, args.lvl)
                 loader.converter.rescale(size, args.lvl)
 
@@ -112,7 +116,7 @@ def process_slides(args, slides, logger):
                 x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
                 y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
                 main_roi = Polygon(x, y, is_micron=False, lvl=args.lvl)
-                main_roi = main_roi.to_annotation(slide_f, 'ROI')
+                main_roi = main_roi.to_annotation(slide_f, sana_io.get_antibody(slide_f)+'_ROI')
                 sub_rois = []
                 roi_id = '%s_%d_%d' % (main_roi.class_name, i, j)
 

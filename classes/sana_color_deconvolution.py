@@ -14,7 +14,9 @@ class StainSeparator:
         self.stain_map = {
             'HE': ['HE',],
             'LFB': ['LFB',],
-            'H-DAB': ['AT8', 'MJFR13', 'NeuN'], # TODO: add the others!
+            'H-DAB': ['AT8', 'MJFR13', 'NeuN', 'aSYN',
+                      'calretinin', 'IBA1', 'MBP', 'MEGURO',
+                      'parvalbumin', 'SMI32', 'SMI35'],
         }
         for stain_type in self.stain_map:
             if stain_type == stain:

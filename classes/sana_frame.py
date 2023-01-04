@@ -247,13 +247,11 @@ class Frame:
     # NOTE: if the array is floating point, the image will be written as a
     #        numpy data file, else as whatever datatype is given
     def save(self, fname, invert_sform=False):
-        if self.is_float():
-            print(fname, 'asdjklfjklasdfjkl')
-            np.save(fname.split('.')[0]+'.npy', self.img)
+        if fname.endswith('.nii.gz'):
+            self.save_nifti(fname, invert_sform)
         else:
-            if fname.endswith('.nii.gz'):
-                print(fname)
-                self.save_nifti(fname, invert_sform)
+            if self.is_float():
+                np.save(fname.split('.')[0]+'.npy', self.img)
             else:
                 im = self.img
                 if not self.is_rgb():
@@ -265,10 +263,11 @@ class Frame:
     #
     # end of save
 
-    def save_nifti(self, fname, invert_sform=False):
+    def save_nifti(self, fname, invert_sform=False, spacing=None):
         pix = self.img.astype(np.uint8)
         pix = np.expand_dims(pix, (2))
-        spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
+        if spacing is None:
+            spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
         if pix.shape[-1] == 3:
             rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
             pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
@@ -821,7 +820,7 @@ def get_csf_threshold(frame):
     frame.gauss_blur(5)
 
     # perform kittler thresholding
-    return kittler(frame.histogram()[:, 0], mi=0, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=128, mx=255)[0]
 #
 # end of get_csf_threshold
 
