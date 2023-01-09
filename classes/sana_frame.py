@@ -169,12 +169,17 @@ class Frame:
     # end of crop
 
     # scales an array to a new size given a scaling factor
-    def scale(self, ds, interpolation=cv2.INTER_CUBIC, size=None):
-        if size is None:
-            size = self.size().astype(float) / ds
-            if ds[0] > 1:
-                size = np.ceil(size)
-            size = self.converter.to_int(size)
+    def scale(self, ds, interpolation=cv2.INTER_CUBIC):
+        size = self.size().astype(float) / ds
+        if ds[0] > 1:
+            size = np.ceil(size)
+        self.resize(size, interpolation=interpolation)
+    #
+    # end of scale
+
+    # TODO: add checks for uint8
+    def resize(self, size, interpolation=cv2.INTER_CUBIC):
+        size = self.converter.to_int(size)
         self.img = cv2.resize(self.img, dsize=(size[0], size[1]),
                               interpolation=interpolation)
         if len(self.img.shape) == 2:

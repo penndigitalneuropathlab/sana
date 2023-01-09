@@ -20,12 +20,15 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None, stain_vector=None):
+    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None,
+                 save_images=False, run_wildcat=True, stain_vector=None):
         self.fname = fname
         self.frame = frame
         self.logger = logger
         self.roi_type = roi_type
         self.qupath_threshold = qupath_threshold
+        self.save_images = save_images
+        self.run_wildcat = run_wildcat
         self.stain_vector = stain_vector
     #
     # end of constructor

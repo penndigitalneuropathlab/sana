@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 
 # system modules
 import os
@@ -18,7 +18,7 @@ import sana_io
 from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly, transform_inv_poly, Point, Polygon
-from sana_frame import Frame
+from sana_frame import Frame, create_mask
 from sana_framer import Framer
 from sana_logger import SANALogger
 
@@ -72,47 +72,110 @@ def get_processor(fname, frame, logger, **kwargs):
 #
 # end of get_processor
 
+def get_slides(logger, lists, skip):
+    slides = sana_io.get_slides_from_lists(lists)
+    if len(slides) == 0:
+        logger.error("No Slides Found")
+    else:
+        # skip a number of slides at the beginning of the list
+        slides = slides[skip:]
+        logger.debug('Skipping %d slides!' % skip)
+        
+    return slides
+#
+# end of get_slides
+
+def get_annotation_file(logger, slide_f, adir, rdir, ext='.json'):
+        
+    # get the annotation file containing ROIs
+    anno_f = sana_io.create_filepath(
+        slide_f, ext=ext, fpath=adir, rpath=rdir)
+
+    # make sure the file exists, else we skip this slide
+    if not os.path.exists(anno_f):
+        logger.warning('Annotation file %s does not exist\n' % anno_f)
+        return None
+    
+    return anno_f
+#
+# end of get_annotation_file
+
+def get_loader(logger, slide_f, lvl):
+    try:
+        loader = Loader(slide_f)
+        loader.set_lvl(lvl)
+    except Exception as e:
+        print(e)
+        logger.warning('Could not load .svs file: %s' % e)
+        
+    return loader
+#
+# end of get_loader
+
+def load_rois(logger, anno_f, main_class, main_name):
+    main_rois = sana_io.read_annotations(anno_f, class_name=main_class, name=main_name)
+    logger.debug('Number of main_rois found: %d' % len(main_rois))
+    if len(main_rois) == 0:
+        logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % \
+                     ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
+    return main_rois
+#
+# end of load_main_rois
+
 def process_slides(args, slides, logger):
 
     # loop through slides to load in all frames to process
     rois_to_process = []
-    for slide_i, slide_f in enumerate(slides):
+    for slide_f in slides:
 
-        # initialize the Loader object for loading Frames
-        try:
-            loader = Loader(slide_f)
-            loader.set_lvl(args.lvl)
-        except Exception as e:
-            print(e)
-            logger.info('Could not load .svs file: %s' % e)
+        loader = get_loader(logger, slide_f, args.lvl)
+        if loader is None:
             continue
 
         # find the locations of all the frames to process
         size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
         framer = Framer(loader, size)
 
-        # load the slide mask, if given
-        if args.slide_mask:
-            mask = Frame(args.slide_mask, loader.thumbnail_lvl, loader.converter)
+        # generate the slide mask, if given
+        # NOTE: this is generated from the main_rois and allows us to skip portions of the slide
+        #       if they are not annotated. This will significantly speed up processing
+        if args.use_mask:
+            anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
+            if anno_f is None:
+                slide_mask = None
+            else:
+                rois = load_rois(logger, anno_f,
+                                 args.main_class, args.main_name)
+                if len(rois) == 0:
+                    slide_mask = None
+                else:
+                    slide_mask = create_mask(rois, loader.thumbnail.size(),
+                                             loader.thumbnail.lvl, loader.thumbnail.converter)
         else:
-            mask = Frame(np.ones_like(loader.thumbnail.img[:,:,0][:,:,None]), loader.thumbnail_lvl, loader.converter)
+            slide_mask = None
 
         # loop through the frame locations
         for i, j in framer.inds():
             loc = framer.locs[i][j]
 
-            # check if we want to actually process this frame
-            loader.converter.rescale(loc, loader.thumbnail_lvl)
-            loader.converter.rescale(size, loader.thumbnail_lvl)
-            frame_mask = mask.get_tile(loc, size)
+            # check if we want to actually process this frame            
+            if slide_mask is None:
+                do_process = True
+            else:
 
-            # TODO: this logic isn't correct!
-            #if np.sum(frame_mask) > 0.05*args.frame_size**2:            
-            if True:
+                # grab the corresponding portion of the slide_mask
+                loader.converter.rescale(loc, loader.thumbnail_lvl)
+                loader.converter.rescale(size, loader.thumbnail_lvl)
+                frame_mask = slide_mask.get_tile(loc, size)
+
+                # only process if some of the mask is inside this frame
+                do_process = np.sum(frame_mask != 0) > 0
+
+            if do_process:
+
+                # build the main ROI to process
                 loader.converter.rescale(loc, args.lvl)
                 loader.converter.rescale(size, args.lvl)
-
-                # build the ROI to process
                 x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
                 y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
                 main_roi = Polygon(x, y, is_micron=False, lvl=args.lvl)
@@ -120,6 +183,7 @@ def process_slides(args, slides, logger):
                 sub_rois = []
                 roi_id = '%s_%d_%d' % (main_roi.class_name, i, j)
 
+                # store the process arguments
                 rois_to_process.append({
                     'args': args,
                     'slide': slide_f,
@@ -129,13 +193,12 @@ def process_slides(args, slides, logger):
                     'sub_roi_dicts': [sub_roi.__dict__ for sub_roi in sub_rois],
                     'roi_id': roi_id,
                 })
-            #
-            # end of mask checking
         #
-        # end of loc checking
+        # end of frames loop
     #
     # end of slides loop
 
+    # return the list of ROIs we extracted from the list of slides
     return rois_to_process
 #
 # end of process_slides
@@ -144,34 +207,19 @@ def process_rois(args, slides, logger):
     
     # loop through the slides
     rois_to_process = []
-    logger.info('Loading ROI Annotations')
-    for slide_i, slide_f in tqdm(list(enumerate(slides))):
+    for slide_f in slides:
 
-        # get the annotation file containing ROIs
-        anno_f = sana_io.create_filepath(
-            slide_f, ext='.json', fpath=args.adir, rpath=args.rdir)
-
-        # make sure the file exists, else we skip this slide
-        if not os.path.exists(anno_f):
-            logger.warning('Annotation file %s does not exist\n' % anno_f)
+        anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
+        if anno_f is None:
             continue
         
-        # initialize the Loader object for loading Frames
-        try:
-            loader = Loader(slide_f)
-            loader.set_lvl(args.lvl)            
-        except Exception as e:
-            print(e)
-            logger.warning('Could not load .svs file: %s' % e)
+        loader = get_loader(logger, slide_f, args.lvl)
+        if loader is None:
             continue
-
+        
         # load the main roi(s) from the json file
-        main_rois = sana_io.read_annotations(anno_f, class_name=args.main_class, name=args.main_name)
-        logger.debug('Number of main_rois found: %d' % len(main_rois))
-        if len(main_rois) == 0:
-            logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % \
-                         ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
-
+        main_rois = load_rois(logger, anno_f, args.main_class, args.main_name)
+        
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
 
@@ -181,20 +229,7 @@ def process_rois(args, slides, logger):
                 continue
             
             # load the sub roi(s) that are inside this main roi
-            sub_rois = []
-            for sub_class in args.sub_classes:
-                rois = sana_io.read_annotations(anno_f, sub_class)
-                for roi in rois:
-                    if roi.inside(main_roi):
-                        sub_rois.append(roi)
-                        break
-                # NOTE: None is used for not found sub rois since we still need to measure something
-                else:
-                    sub_rois.append(None)
-            logger.debug('Number of sub_rois found: %d' % len(sub_rois))
-
-            # load the sub roi(s) that are inside this main roi
-            # NOTE: None is used for not found sub rois since we still need to measure something
+            # NOTE: we attempt to find a sub_roi for each given sub_class
             sub_rois = []
             for sub_class in args.sub_classes:
                 rois = sana_io.read_annotations(anno_f, sub_class)
@@ -202,28 +237,33 @@ def process_rois(args, slides, logger):
                     if roi.partial_inside(main_roi) or main_roi.partial_inside(roi):
                         sub_rois.append(roi)
                         break
+                # NOTE: None is used for not found sub rois since we still need to measure something
                 else:
                     sub_rois.append(None)
+                    logger.warning('Couldn\'t find the %s sub_roi' % sub_class)
 
+            # generate a quick plot of the thumbnail, and the main/sub ROIs we loaded in
             if logger.plots:
                 logger.debug('Main ROI: %s' % str(main_roi))
                 logger.debug('SHAPE: %s' % str(main_roi.shape))
                 plot_rois = [main_roi.copy()] + [sub_roi.copy() for sub_roi in sub_rois]
-                [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois]                
+                [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois]
                 colors = ['black', 'red']
                 
                 fig, ax = plt.subplots(1,1)
                 ax.imshow(loader.thumbnail.img)
-                [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]                
+                [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]
                 plot_poly(ax, plot_rois[0], color='black')
                 plt.show()
 
+            # create the ROI ID
             if not main_roi.name:
                 roi_name = str(main_roi_i)
             else:
                 roi_name = main_roi.name
             roi_id = '%s_%s' % (main_roi.class_name, roi_name)
 
+            # store the process arguments for this ROI
             rois_to_process.append({
                 'args': args,
                 'slide': slide_f,
@@ -238,6 +278,7 @@ def process_rois(args, slides, logger):
     #
     # end of slides loop
 
+    # return a list of ROIs extracted from the list of slides
     return rois_to_process
 #
 # end of process_roi
@@ -248,6 +289,7 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
 
     # reset the attributes on the annotations
     # NOTE: this is because pickling the Annotations loses the lvl attribute etc.
+    # TODO: this is messy, we need to find a better way to pickle Annotation objects
     for x in main_roi_dict:
         main_roi.__setattr__(x, main_roi_dict[x])
     for i in range(len(sub_rois)):
@@ -255,22 +297,16 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
             for x in sub_roi_dicts[i]:
                 sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
 
-    # initialize the Loader object for loading Frames
-    try:
-        loader = Loader(slide)
-        loader.set_lvl(args.lvl)
-    except Exception as e:
-        print(e)
-        logger.info('Could not load .svs file: %s' % e)
-        return
-
+    loader = get_loader(logger, slide, args.lvl)
+    if loader is None:
+        return None
     
     # initialize the Params IO object, this will store parameters
     # relating to the loading/processing of the Frame, as well as
     # the various AO results
     params = Params()
-
-    # create odir for detection jsons
+    
+    # create odir for detection jsons, if needed
     roi_odir = sana_io.create_odir(args.odir, 'detections')
     
     # create the output directory path
@@ -293,7 +329,6 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
             
     # load the frame into memory using the main roi
-    
     if args.mode == 'GM':
 
         # rotate/translate the coord. system to retrieve the frame from
@@ -311,14 +346,12 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         # just translates the coord. system, no rotating or cropping
         frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
 
-    # transform the main ROI to the Frame's coord. system
+    # transform the ROIs to the Frame's coord. system
     transform_poly(
         main_roi,
         params.data['loc'], params.data['crop_loc'],
         params.data['M1'], params.data['M2']
     )
-
-    # transform the sub ROIs to the Frame's coord. system
     for sub_roi_i in range(len(sub_rois)):
         if sub_rois[sub_roi_i] is None:
             continue
@@ -332,11 +365,13 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     kwargs = {
         'qupath_threshold': args.qupath_threshold,
         'roi_type': args.mode,
+        'save_images': args.save_images,
+        'run_wildcat': args.run_wildcat,
     }
     processor = get_processor(slide_f, frame, logger, **kwargs)
     if processor is None:
-        logger.info('No processor found')
-        return
+        logger.warning('No processor found for %s' % slide_f)
+        return None
 
     # finally, analyze the frame based on the antibody it was stained with
     processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
@@ -346,11 +381,14 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
 def process_job(pid, rois_to_process):
     n = len(rois_to_process)
     for i in range(n):
-        rois_to_process[i]['nrois'] = n
-        rois_to_process[i]['roi_i'] = i
-        rois_to_process[i]['first_run'] = i == 0
-        process(**rois_to_process[i])
-    
+        roi = rois_to_process[i]
+        roi['nrois'] = n
+        roi['roi_i'] = i
+        roi['first_run'] = i == 0
+        process(**roi)
+#
+# end of process_job
+
 def dispatch(rois_to_process, njobs):
 
     nrois = math.ceil(len(rois_to_process) / njobs)
@@ -359,7 +397,7 @@ def dispatch(rois_to_process, njobs):
     for pid in range(njobs):
         st = pid * nrois
         en = (pid+1) * nrois
-
+        
         # create, store, start the job
         p = Process(target=process_job, args=(pid, rois_to_process[st:en]))
         jobs.append(p)
@@ -377,34 +415,61 @@ def main(argv):
     parser = cmdl_parser(argv)
     args = parser.parse_args()
 
+    # setup the logger
     logger = SANALogger.get_sana_logger(args.debug_level)
     
     # get all the slide files to process
-    slides = sana_io.get_slides_from_lists(args.lists)
+    slides = get_slides(logger, args.lists, args.skip)
     if len(slides) == 0:
-        logger.debug("No Slides Found")
         parser.print_usage()
-        exit()
-    logger.debug('Number of slides found: %d' % len(slides))
-    
-    slides = slides[args.skip:]
-    logger.info('Skipping %d slides!' % args.skip)
 
-    if args.mode == 'SLIDESCAN':
-        rois_to_process = process_slides(args, slides, logger)
-    else:
-        rois_to_process = process_rois(args, slides, logger)
+    # get the ROIs within the slides to process
+    logger.info('Number of slides found: %d' % len(slides))
+    if args.reprocess:    
+        if args.mode == 'SLIDESCAN':
 
-    if args.reprocess:
-        
+            # process the entire slide
+            rois_to_process = process_slides(args, slides, logger)
+        else:
+
+            # process ROIs based on input annotations
+            rois_to_process = process_rois(args, slides, logger)
+            
         # create and start the jobs
         jobs = dispatch(rois_to_process, args.njobs)
-
+            
         # join and wait until all jobs are finished        
         [job.join() for job in jobs]        
+        
+    # TODO: put sana_results here
+    
+    # TODO: put the SLIDESCAN aggregation here
+    for slide_f in slides:
 
-    # TODO: write code to combine outputs in SLIDESCAN
-    # TODO: can probably just include sana_results here right???????
+        loader = get_loader(logger, slide_f, args.lvl)
+        if loader is None:
+            continue
+
+        size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
+        framer = Framer(loader, size)
+        
+        heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
+        heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
+        
+        d = sana_io.get_slide_odir(args.odir, slide_f)
+        roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
+        for roi_dir in roi_dirs:
+            x, y = map(int, roi_dir.split('_')[:-2])
+
+            params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
+            params = Params(params_f)
+            for measure_i, measure in enumerate(heatmap_measures):
+                heatmap[measure_i, x, y] = params.data[measure]
+
+    fig, axs = plt.subplots(2, heatmap.shape[0])
+    for i in range(heatmap.shape[0]):
+        axs[0,i].imshow(heatmap[i])
+        axs[1,i].imshow(interp_heatmap[i])
 #
 # end of main
 
@@ -423,6 +488,12 @@ def cmdl_parser(argv):
         '-reprocess', action='store_true', default=True,
         help="whether or not to actually run the processor.run() code")
     parser.add_argument(
+        '-save_images', action='store_true', default=False,
+        help="writes out intermediate image results to file -- WARNING: this will take up a lot of disk space with many slides")
+    parser.add_argument(
+        '-run_wildcat', action='store_true', default=True,
+        help="runs the wildcat model (if available)")
+    parser.add_argument(
         '-adir', type=str, default="",
         help="directory path containing .json files")
     parser.add_argument(
@@ -438,8 +509,8 @@ def cmdl_parser(argv):
         '-frame_size', type=int, default=1024,
         help="size of frame to load during SLIDESCAN")
     parser.add_argument(        
-        '-slide_mask', type=str, default="",
-        help="path to a thumbnail resolution slide mask")
+        '-use_mask', action='store_true', default=False,
+        help="for SLIDESCAN, uses the main ROIs to reduce the number of frames to process the slide")
     parser.add_argument(
         '-main_class', type=str, default=None,
         help="ROI class used to load and process the Frame")

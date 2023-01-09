@@ -2,6 +2,9 @@
 import os
 import sys
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning)
+
 # installed modules
 import torch
 from torchvision import transforms
@@ -117,7 +120,7 @@ class Model:
                 tran = transforms.Compose([
                     transforms.Resize((wwc, wwc)),
                     transforms.ToTensor(),
-                    transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
                 ])
 
                 # convert the read chunk to tensor format

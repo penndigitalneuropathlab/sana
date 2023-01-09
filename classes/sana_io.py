@@ -175,6 +175,9 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 #
 # end of create_filepath
 
+def get_slide_odir(odir, slide):
+    return os.path.join(odir, get_bid(slide), get_region(slide), get_antibody(slide))
+
 # creates a subdirectory for the ith ROI in a given json file
 def create_odir(odir, s):
     odir = '%s/%s' % (odir, s)

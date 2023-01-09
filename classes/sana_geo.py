@@ -243,6 +243,11 @@ def get_ortho_angle(seg):
 #
 # end of get_ortho_angle
 
+def transform_poly_with_params(x, params):
+    return transform_poly(
+        x, params.data['loc'], params.data['crop_loc'],
+        params.data['M1'], params.data['M2'])
+
 # performs a series a translations and rotations to transform a polygon
 #  to the coordinate system of a processed Frame
 def transform_poly(x, loc, crop_loc, M1, M2):
