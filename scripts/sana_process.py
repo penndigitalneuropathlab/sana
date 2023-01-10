@@ -485,13 +485,13 @@ def cmdl_parser(argv):
         '-njobs', type=int, default=1,
         help="number of jobs to deploy, NOTE: be careful with memory usage")
     parser.add_argument(
-        '-reprocess', action='store_true', default=True,
+        '-reprocess', action='store_true', default=False,
         help="whether or not to actually run the processor.run() code")
     parser.add_argument(
         '-save_images', action='store_true', default=False,
         help="writes out intermediate image results to file -- WARNING: this will take up a lot of disk space with many slides")
     parser.add_argument(
-        '-run_wildcat', action='store_true', default=True,
+        '-run_wildcat', action='store_true', default=False,
         help="runs the wildcat model (if available)")
     parser.add_argument(
         '-adir', type=str, default="",

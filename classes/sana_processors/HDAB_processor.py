@@ -66,7 +66,7 @@ class HDABProcessor(Processor):
         # calculate the manual dab threshold if a qupath threshold was given
         if self.qupath_threshold:
             self.manual_dab_threshold = \
-                (self.qupath_threshold - self.ss.min_od[1]) / \
+                255*(self.qupath_threshold - self.ss.min_od[1]) / \
                 (self.ss.max_od[1] - self.ss.min_od[1])
 
         self.gray = self.frame.copy()
@@ -80,7 +80,7 @@ class HDABProcessor(Processor):
 
     # performs a simple threshold using a manually selected cut off point
     # then runs the %AO process
-    def run_manual_ao(self, odir, params, save_images=True):
+    def run_manual_ao(self, odir, params):
 
         # apply the thresholding
         self.manual_dab_thresh = self.dab.copy()
@@ -100,14 +100,14 @@ class HDABProcessor(Processor):
         odir = sana_io.create_odir(odir, 'manual_ao')
 
         # save the images used in processing
-        if save_images:
+        if self.save_images:
             self.manual_overlay = overlay_thresh(
                 self.frame, self.manual_dab_thresh)
             self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
             self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
         # save the feature signals
-        if save_images:
+        if self.save_images:
             signals = results['signals']
             self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
             self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
@@ -202,7 +202,7 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0, save_images=True):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0):
         # Old DAB Processing code
         # # normalize the image
         self.dab_norm = mean_normalize(self.dab)
@@ -234,7 +234,7 @@ class HDABProcessor(Processor):
         # write params data to csv
         self.save_params(odir,params)
 
-        if save_images:
+        if self.save_images:
             
             # save the images used in processing
             self.auto_overlay = overlay_thresh(
@@ -245,7 +245,7 @@ class HDABProcessor(Processor):
             self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
         # save the feature signals
-        if save_images:
+        if self.save_images:
             signals = results['signals']
             if signals:
                 self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')

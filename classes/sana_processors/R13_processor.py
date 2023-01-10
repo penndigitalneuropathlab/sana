@@ -41,11 +41,21 @@ class R13Processor(HDABProcessor):
 
         self.generate_masks(main_roi, sub_rois)
 
-        self.run_lb_detection(odir, roi_odir, first_run, params, 0.85)
+        if self.run_wildcat:
+            self.run_lb_detection(odir, roi_odir, first_run, params, 0.85)
 
         # generate the auto AO results
         # TODO: define a minimum threshold value!
-        self.run_auto_ao(odir, params, scale=1.0, mx=90)
+        # self.run_auto_ao(odir, params, scale=1.0, mx=90)
+
+        # either use the cmdl input value or a pre-defined value from before
+        # NOTE: this pre-defined value was picked from analyzing multiple slides
+        #        in QuPath w/ varying intensities and pathology severity
+        if not hasattr(self, 'manual_dab_threshold'):
+            self.manual_dab_threshold = 94
+        
+        # generate the manually curated AO results
+        self.run_manual_ao(odir, params)
 
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
