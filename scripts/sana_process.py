@@ -117,7 +117,7 @@ def load_rois(logger, anno_f, main_class, main_name):
     logger.debug('Number of main_rois found: %d' % len(main_rois))
     if len(main_rois) == 0:
         logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % \
-                     ','.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
+                     ', '.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
     return main_rois
 #
 # end of load_main_rois
@@ -154,6 +154,7 @@ def process_slides(args, slides, logger):
         else:
             slide_mask = None
 
+        logger.debug('Looping through frames...')
         # loop through the frame locations
         for i, j in framer.inds():
             loc = framer.locs[i][j]
@@ -284,7 +285,7 @@ def process_rois(args, slides, logger):
 # end of process_roi
 
 def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_rois=[], sub_roi_dicts=[], roi_id=None):
-    logger = SANALogger.get_sana_logger(args.debug_level)    
+    logger = SANALogger.get_sana_logger(args.debug_level)
     logger.info('Processing Frame (%d/%d)' % (roi_i, nrois))
 
     # reset the attributes on the annotations
@@ -312,10 +313,12 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     # create the output directory path
     # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
     slide_f = loader.fname    
+    bid = sana_io.get_bid(slide_f)
+    antibody = sana_io.get_antibody(slide_f)
+    region = sana_io.get_region(slide_f)
+    # added if statement to only reprocess ROI dirs that are empty (useful when running SLIDESCAN and GPU runs out of RAM)
+    # if not os.path.exists(os.path.join(args.odir,bid,antibody,region,roi_id)):
     try:
-        bid = sana_io.get_bid(slide_f)
-        antibody = sana_io.get_antibody(slide_f)
-        region = sana_io.get_region(slide_f)
         odir = sana_io.create_odir(args.odir, bid)
         odir = sana_io.create_odir(odir, antibody)
         odir = sana_io.create_odir(odir, region)
@@ -330,12 +333,11 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
             
     # load the frame into memory using the main roi
     if args.mode == 'GM':
-
         # rotate/translate the coord. system to retrieve the frame from
         # the slide. the frame will be orthogonalized such that CSF is
         # at the top and WM is at the bottom of the image.
         frame = loader.load_gm_frame(params, main_roi, padding=args.padding, logger=logger)
-        
+
     elif args.mode == 'GMZONE':
 
         # same rotation goal as above, except we have to test all
@@ -356,10 +358,20 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         if sub_rois[sub_roi_i] is None:
             continue
         transform_poly(
-            sub_rois[sub_roi_i],
+            main_roi,
             params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']
         )
+
+        # transform the sub ROIs to the Frame's coord. system
+        for sub_roi_i in range(len(sub_rois)):
+            if sub_rois[sub_roi_i] is None:
+                continue
+            transform_poly(
+                sub_rois[sub_roi_i],
+                params.data['loc'], params.data['crop_loc'],
+                params.data['M1'], params.data['M2']
+            )
 
     # get the processor object
     kwargs = {
@@ -368,6 +380,11 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         'save_images': args.save_images,
         'run_wildcat': args.run_wildcat,
     }
+
+    # check for half_full debug level (skip ROI loading debugging plots and just generate processing debugging plots)
+    if args.debug_level == 'half_full':
+        logger.plots = True 
+
     processor = get_processor(slide_f, frame, logger, **kwargs)
     if processor is None:
         logger.warning('No processor found for %s' % slide_f)
@@ -417,6 +434,8 @@ def main(argv):
 
     # setup the logger
     logger = SANALogger.get_sana_logger(args.debug_level)
+    if logger.plots:
+        logger.debug('Generating debugging plots...')  
     
     # get all the slide files to process
     slides = get_slides(logger, args.lists, args.skip)
@@ -440,36 +459,36 @@ def main(argv):
             
         # join and wait until all jobs are finished        
         [job.join() for job in jobs]        
-        
+    logger.error('sana_process...done!')
     # TODO: put sana_results here
     
     # TODO: put the SLIDESCAN aggregation here
-    for slide_f in slides:
+    # for slide_f in slides:
 
-        loader = get_loader(logger, slide_f, args.lvl)
-        if loader is None:
-            continue
+    #     loader = get_loader(logger, slide_f, args.lvl)
+    #     if loader is None:
+    #         continue
 
-        size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
-        framer = Framer(loader, size)
+    #     size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
+    #     framer = Framer(loader, size)
         
-        heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
-        heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
+    #     heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
+    #     heatmap = np.zeros((len(heatmap_measures), len(framer.locs)))
         
-        d = sana_io.get_slide_odir(args.odir, slide_f)
-        roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
-        for roi_dir in roi_dirs:
-            x, y = map(int, roi_dir.split('_')[:-2])
+    #     d = sana_io.get_slide_odir(args.odir, slide_f)
+    #     roi_dirs = [x for x in os.listdir(d) if os.path.isdir(x)]
+    #     for roi_dir in roi_dirs:
+    #         x, y = map(int, roi_dir.split('_')[:-2])
 
-            params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
-            params = Params(params_f)
-            for measure_i, measure in enumerate(heatmap_measures):
-                heatmap[measure_i, x, y] = params.data[measure]
+    #         params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
+    #         params = Params(params_f)
+    #         for measure_i, measure in enumerate(heatmap_measures):
+    #             heatmap[measure_i, x, y] = params.data[measure]
 
-    fig, axs = plt.subplots(2, heatmap.shape[0])
-    for i in range(heatmap.shape[0]):
-        axs[0,i].imshow(heatmap[i])
-        axs[1,i].imshow(interp_heatmap[i])
+    # fig, axs = plt.subplots(2, heatmap.shape[0])
+    # for i in range(heatmap.shape[0]):
+    #     axs[0,i].imshow(heatmap[i])
+    #     axs[1,i].imshow(interp_heatmap[i])
 #
 # end of main
 
@@ -522,7 +541,7 @@ def cmdl_parser(argv):
         help="class names of ROIs inside the main ROI to separately process")
     parser.add_argument(
         '-debug_level', type=str, default='normal',
-        help="Logging debug level", choices=['full', 'debug', 'normal', 'quiet'])
+        help="Logging debug level", choices=['full', 'half_full', 'debug', 'normal', 'quiet'])
     parser.add_argument(
         '-padding', type=int, default=0,
         help="Thickness of border to add to Frame to provide context for models")

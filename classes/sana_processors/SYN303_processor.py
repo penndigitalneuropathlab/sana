@@ -56,6 +56,10 @@ class SYN303Processor(HDABProcessor):
 
         # self.run_lb_detection(odir, roi_odir, first_run, params, 0.60)
 
+        # save the original frame
+        self.save_frame(odir, self.frame, 'ORIG')
+
+        # save params to csv
         self.save_params(odir, params)        
     #
     # end of run
@@ -71,34 +75,34 @@ class SYN303Processor(HDABProcessor):
         self.logger.info('Running LB detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
 
+        # decode the model to get activations of each class
         model = SYN303Classifier(self.frame)
         wc_activation = model.run()
+        wc_probs = softmax(wc_activation, axis=0)
         
-        wc_softmax = softmax(wc_activation,axis=0)
-
         # save the output probabilities
-        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_R13.npy'))
+        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_PROBS.npy'))
         np.save(ofname, wc_activation)
         
         if self.logger.plots:
              # debug WC activations for each of the classes
             class_dict = {
                 0: 'Background',
-                1: 'Lewy-Body',
+                1: 'Lewy-Body'
             }
             fig, ax = plt.subplots(1,1)
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             ax.imshow(self.frame.img)
-            fig, axs = plt.subplots(1,len(class_dict))
+            fig, axs = plt.subplots(1,2)
             axs = axs.ravel()
             for i in range(len(axs)):
-                axs[i].imshow(wc_activation[i,:,:])
+                axs[i].imshow(wc_probs[i,:,:])
                 axs[i].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
             plt.show()
         
-        relevant_dab_msk, dab_thresh = self.process_dab(self.dab,
+        relevant_lb_dab_msk, dab_thresh = self.process_dab(self.dab,
             run_normalize = True,
             scale = 1.0,
             mx = 90, #default: 90, experiment w/ mx = 100-110
@@ -106,30 +110,76 @@ class SYN303Processor(HDABProcessor):
             open_r = 13, #always an odd number (7 < open_r < 13)
             mask = self.main_mask,
             debug = self.logger.plots
-            )
+        )
+        
+        # relevant_ln_dab_msk, dab_thresh = self.process_dab(
+        #     self.dab,
+        #     run_normalize = True,
+        #     scale = 1.0,
+        #     mx = 90, #default: 90, experiment w/ mx = 100-110
+        #     close_r = 0,
+        #     open_r = 0, #always an odd number (7 < open_r < 13)
+        #     mask = self.main_mask,
+        #     debug = self.logger.plots
+        # )
+        
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
-        lb_activation = wc_activation[1,:,:]
-        lb_softmax = wc_softmax[1,:,:]
+        # get the lewy body pixel activations
+        lb_activation = wc_probs[1,:,:]
+        lb_activation = Frame(
+            lb_activation, lvl=self.dab.lvl, converter=self.dab.converter
+        )
+        size = self.frame.size()
+        lb_activation.img = cv2.resize(
+            lb_activation.img, dsize=(int(size[0]), int(size[1])),
+            interpolation=cv2.INTER_NEAREST
+        )
+        # ln_activation = wc_activation[2,:,:]
+        # ln_activation = Frame(
+        #     ln_activation, lvl=self.dab.lvl, converter=self.dab.converter
+        # )
+        # ln_activation.img = cv2.resize(
+        #     ln_activation.img, dsize=(int(size[0]), int(size[1])),
+        #     interpolation=cv2.INTER_NEAREST
+        # )
 
-        # Calculate hyp annos
-        # store DAB 
-        lb_activation = Frame(lb_activation,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_activation.img = cv2.resize(lb_activation.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
-        
-        lb_softmax = Frame(lb_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
+        # get the pixel predictions
+        # NOTE: we remove predictions that aren't very confident to remove background!
+        thresh = softmax_prob_thresh
+        wc_preds = np.argmax(wc_probs, axis=0)
+        wc_preds[np.max(wc_probs, axis=0) < thresh] = 0
+        lb_preds = Frame((wc_preds == 1).astype(np.uint8), self.dab.lvl, self.dab.converter)
+        lb_preds.img = cv2.resize(lb_preds.img, dsize=tuple(self.frame.size()),
+                                  interpolation=cv2.INTER_NEAREST)[:,:,None]
+        # ln_preds = Frame((wc_preds == 2).astype(np.uint8), self.dab.lvl, self.dab.converter)
 
-        # threshold probs img at LB prob and store in a Frame
-        lb_msk = np.where(lb_softmax.img >= softmax_prob_thresh, relevant_dab_msk.img[:,:,0], np.zeros_like(relevant_dab_msk.img[:,:,0]))
-        lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
+        # ln_preds.img = cv2.resize(ln_preds.img, dsize=tuple(self.frame.size()),
+        #                           interpolation=cv2.INTER_NEAREST)[:,:,None]
 
+        # LB mask is the pixels LB was predicted and DAB is strong
+        lb_msk = lb_activation.copy()
+        lb_msk.img = ((lb_preds.img == 1) & (relevant_lb_dab_msk.img == 1)).astype(np.uint8)
+
+        # LN mask is the pixels LN was predicted and DAB is strong
+        # TODO: need a separate relevant_dab_mask since the opening filter rmeoves all LNs!!!
+        # ln_msk = ln_activation.copy()
+        # ln_msk.img = ((ln_preds.img == 1) & (relevant_ln_dab_msk.img == 1)).astype(np.uint8)
+
+        # get the contours/polygons from the LB mask
         lb_msk.get_contours()
         lb_msk.filter_contours(min_body_area=0/self.dab.converter.mpp) #default: 20/mpp
         lb_contours = lb_msk.get_body_contours()
         lbs = [contour.polygon for contour in lb_contours]
+        
+        # get the contours/polygons from the LN mask
+        # ln_msk.get_contours()
+        # ln_msk.filter_contours(min_body_area=0/self.dab.converter.mpp) #default: 20/mpp
+        # ln_contours = ln_msk.get_body_contours()
+        # lns = [contour.polygon for contour in ln_contours]
+
         # lbs = []
-        # apply a coarseness mask
+        # # apply a coarseness mask
         # for i, lb in enumerate(old_lbs):
         #     # - load local DAB image using bounding box of LB polygon
         #     loc, size = lb.bounding_box()
@@ -152,7 +202,7 @@ class SYN303Processor(HDABProcessor):
         #         dt=2.5,
         #         tol=1e-7,
         #         max_num_iter=8,
-        #         init_level_set='small disk',
+        #         init_level_set='checkerboard',
         #         extended_output=True
         #     )
 
@@ -161,18 +211,18 @@ class SYN303Processor(HDABProcessor):
 
         #     if self.logger.plots:
         #         # Plot outputs from Chan-Vese
-        #         fig, axs = plt.subplots(2,2)
-        #         fig.suptitle('Chan-Vese Segmentation of Processed DAB')
-        #         axs = axs.ravel()
-        #         axs[0].set_title('Orig. Local DAB')            
-        #         axs[0].imshow(local_dab.img,cmap='gray')
-        #         axs[1].set_title('Segmentation')
-        #         axs[1].imshow(segmentation_msk,cmap='gray')
-        #         axs[2].set_title('Level Set')
-        #         axs[2].imshow(phi,cmap='gray')
-        #         axs[3].set_title('Energy/iter. (to be minimized)')
-        #         axs[3].plot(energies)
-        #         fig.tight_layout()
+        #         # fig, axs = plt.subplots(2,2)
+        #         # fig.suptitle('Chan-Vese Segmentation of Processed DAB')
+        #         # axs = axs.ravel()
+        #         # axs[0].set_title('Orig. Local DAB')            
+        #         # axs[0].imshow(local_dab.img,cmap='gray')
+        #         # axs[1].set_title('Segmentation')
+        #         # axs[1].imshow(segmentation_msk,cmap='gray')
+        #         # axs[2].set_title('Level Set')
+        #         # axs[2].imshow(phi,cmap='gray')
+        #         # axs[3].set_title('Energy/iter. (to be minimized)')
+        #         # axs[3].plot(energies)
+        #         # fig.tight_layout()
 
         #         # Plot outputs and compare to old method
         #         fig, axs = plt.subplots(2,2)
@@ -187,7 +237,7 @@ class SYN303Processor(HDABProcessor):
         #         axs[3].set_title('LB Mask')
         #         axs[3].imshow(local_lb_msk.img)
         #         fig.tight_layout()
-        #         plt.show()
+        #         # plt.show()
 
         #     # - find contours on that thresholded image surrounding the LB polygon
         #     local_lb_msk.get_contours()
@@ -198,97 +248,127 @@ class SYN303Processor(HDABProcessor):
         #     lb.translate(loc)
 
         #     # Plot the new LBs on the DAB and Orig img
-        #     # if self.logger.plots:
-        #     #     local_frame = self.frame.copy()
-        #     #     local_frame.crop(loc,size)
-        #     #     fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
-        #     #     fig.suptitle('Comparison of Orig LB Poly vs Chan-Vese LB Poly')
-        #     #     axs[0].set_title('Before CV')
-        #     #     axs[0].imshow(local_frame.img)
-        #     #     plot_poly(axs[0],lb,color='red')
-        #     #     axs[1].set_title('After CV')
-        #     #     axs[1].imshow(local_frame.img)
-        #     #     axs[2].set_title('After EFD')
-        #     #     axs[2].imshow(local_frame.img)
-        #     #     for i, new_lb in enumerate(new_lbs):
-        #     #         plot_poly(axs[1],new_lb,color='red')
-                    
-        #     #         calculate loc by finding centroid of CV polygon
-        #     #         lb_loc, lb_size = new_lb.bounding_box()
-        #     #         c = lb_loc+(lb_size/2)
-
-        #     #         coeffs = pyefd.elliptic_fourier_descriptors(new_lb, order=20)
-        #     #         clean_poly = pyefd.reconstruct_contour(coeffs,locus=c,num_points=150)
-        #     #         plot_poly(axs[2],clean_poly,color='red')
-
-        #     #     plt.show()
+        #     if self.logger.plots:
+        #         local_frame = self.frame.copy()
+        #         local_frame.crop(loc,size)
+        #         fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
+        #         fig.suptitle('Comparison of Orig LB Poly vs Chan-Vese LB Poly')
+        #         axs[0].set_title('Before CV')
+        #         axs[0].imshow(local_frame.img)
+        #         plot_poly(axs[0],lb,color='red')
+        #         axs[1].set_title('After CV')
+        #         axs[1].imshow(local_frame.img)
+        #         axs[2].set_title('After EFD')
+        #         axs[2].imshow(local_frame.img)
+        #         for i, new_lb in enumerate(new_lbs):
+        #             plot_poly(axs[1],new_lb,color='red')
+        #         plt.show()
             
         #     # translate before saving
         #     [p.translate(-loc) for p in new_lbs]
 
         #     # - replace the LB polygon w/ this contour 
         #     if new_lbs:
-        #         # lb_loc, lb_size = new_lbs[-1].bounding_box()
-        #         # c = lb_loc+(lb_size/2)
-        #         # coeffs = pyefd.elliptic_fourier_descriptors(new_lbs[-1], order=20)
-        #         # clean_poly = pyefd.reconstruct_contour(coeffs,locus=c,num_points=150)
-                
-        #         # send this to Polygon obj
-        #         # lbs.append(Polygon(clean_poly[:,0], clean_poly[:,1], new_lbs[-1].is_micron, new_lbs[-1].lvl, new_lbs[-1].order))
         #         lbs.append(new_lbs[-1])
+        #
+        # end of Chan-Vese loop
 
             # * done before saving the LB annotations in run_lb_detections
 
         # convert polygons to annotations and calculate confidence
         bid, antibody, region, roi_name = odir.split('/')[-4:]
         tile = roi_name.split('_')[-1]
+        
         lb_annos = []
         for lb in lbs:
-            fname = bid+'_'+antibody+'_'+region+'_'+tile
-            conf = self.get_confidence(lb, lb_activation)
-            lb_annos.append(lb.to_annotation(fname,class_name='LB detection',confidence=conf))
 
-        # transform detections to the original slide coordinate system
-        lb_annos = [transform_inv_poly(x, params.data['loc'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
+            # confidence is the average LB activation inside the polygon
+            conf = self.get_confidence(lb, lb_activation)
+            
+            fname = bid+'_'+antibody+'_'+region+'_'+tile
+            lb_anno = lb.to_annotation(
+                fname, class_name='LB detection', confidence=conf
+            )
+            lb_annos.append(lb_anno)
+
+        # ln_annos = []
+        # for ln in lns:
+
+        #     # confidence is the average LB activation inside the polygon
+        #     conf = self.get_confidence(ln, ln_activation)
+
+        #     fname = bid+'_'+antibody+'_'+region+'_'+tile
+        #     ln_anno = ln.to_annotation(
+        #         fname, class_name='LN detection', confidence=conf
+        #     )
+        #     ln_annos.append(ln_anno)
+
+        lb_poly_mask = create_mask(lb_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
+        # ln_poly_mask = create_mask(ln_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
+
+        # run the %AO of the detections
+        results = self.run_ao(lb_preds)
+        params.data['lb_wc_ao'] = results['ao']
+        self.save_signals(odir, results['signals']['main_deform'], 'LB')
+        
+        results = self.run_ao(lb_poly_mask)
+        params.data['lb_poly_ao'] = results['ao']
+        self.save_signals(odir, results['signals']['main_deform'], 'LB_POLY')        
+        
+        # results = self.run_ao(ln_preds)
+        # params.data['ln_wc_ao'] = results['ao']
+        # self.save_signals(odir, results['signals']['main_deform'], 'LN')        
+        
+        # results = self.run_ao(ln_poly_mask)
+        # params.data['ln_poly_ao'] = results['ao']
+        # self.save_signals(odir, results['signals']['main_deform'], 'LN_POLY')
 
         if len(lb_annos)>0 and self.logger.plots:
-            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
+            fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
             fig.suptitle('Debugging Plot of an LB Detection')
             axs = axs.ravel()
-            for lb in lbs:
-                plot_poly(axs[0],lb,color='red')
-                plot_poly(axs[1],lb,color='red')
-                plot_poly(axs[2],lb,color='red')
-                plot_poly(axs[3],lb,color='red')
-     
+
+            # plot the original image
             axs[0].imshow(self.frame.img) 
             axs[0].set_title('Orig. Img')
 
-            axs[1].imshow(lb_softmax.img,vmin=0,vmax=1)
-            axs[1].set_title('WildCat Frame')
+            # plot the strong DAB in the image
+            axs[1].imshow(relevant_lb_dab_msk.img)
+            axs[1].set_title('DAB mask')
+            
+            alpha = 0.4
+            overlay = overlay_thresh(self.frame, lb_preds, alpha=alpha, color='red')
+            # overlay = overlay_thresh(overlay, ln_preds, alpha=alpha, color='blue')
+            axs[2].imshow(overlay.img)
+            axs[2].set_title('WC Pixel Predictions')
+            [plot_poly(axs[2], lb, color='black') for lb in lbs]
+            # [plot_poly(axs[2], lb, color='yellow') for lb in lns]
 
-            axs[2].imshow(relevant_dab_msk.img)
-            axs[2].set_title('Proc. DAB Mask')
-
-            axs[3].imshow(lb_msk.img)
-            axs[3].set_title('LB Mask')
+            fig, axs = plt.subplots(1,2)
+            axs[0].imshow(wc_probs[0])
+            axs[1].imshow(wc_probs[1])
+            
             plt.show()
-
+        #
+        # end of debugging
+        
+        # transform detections to the original slide coordinate system
+        annos = [transform_inv_poly(x, params.data['loc'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
+        
         # set pixel lvl to 0
-        [self.dab.converter.rescale(lb, 0) for lb in lb_annos]        
+        [self.dab.converter.rescale(x, 0) for x in annos]        
 
         # finally, write the annoations to a file
         afile = os.path.basename(self.fname).replace('.svs','.json')
         anno_fname = roi_odir+'/'+afile
         if not os.path.exists(anno_fname) or first_run:
-            sana_io.write_annotations(anno_fname, lb_annos)
+            sana_io.write_annotations(anno_fname, annos)
             first_run = False
         else:
-            sana_io.append_annotations(anno_fname, lb_annos)
+            sana_io.append_annotations(anno_fname, annos)
         
     # 
-    # end of run_lb_detection
-#
+    # end of run_lb_detection#
 # end of R13Processor
 
 #

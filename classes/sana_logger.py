@@ -14,6 +14,7 @@ class SANALogger():
         # quiet  --> outputs nothing
         level_config = {
             'full': logging.DEBUG,         # value: 10
+            'half_full': logging.DEBUG,    # value: 10
             'debug': logging.DEBUG,        # value: 10
             'normal': logging.INFO,        # value: 20
             'quiet': logging.ERROR,        # value: 40
@@ -34,6 +35,9 @@ class SANALogger():
             logger.plots = True
         else:
             logger.plots = False
+        
+        if (logger.hasHandlers()):
+            logger.handlers.clear()
 
         # Setting logging file handler
         if (logger.hasHandlers()):

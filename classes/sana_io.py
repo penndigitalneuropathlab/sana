@@ -129,7 +129,7 @@ def get_fpath(ifpath, fpath="", rpath=""):
 
     # apply the replacement directory, if given
     elif rpath != "":
-        fpath = os.path.dirname(ifile).replace(rpath, fpath)
+        fpath = os.path.dirname(ifpath).replace(rpath, fpath)
 
     return fpath
 #
@@ -176,7 +176,7 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 # end of create_filepath
 
 def get_slide_odir(odir, slide):
-    return os.path.join(odir, get_bid(slide), get_region(slide), get_antibody(slide))
+    return os.path.join(odir, get_bid(slide), get_antibody(slide), get_region(slide))
 
 # creates a subdirectory for the ith ROI in a given json file
 def create_odir(odir, s):
@@ -320,7 +320,7 @@ def append_annotations(ofile, annos):
         orig_annos = read_annotations(ofile)
 
         # if file is not empty, add new annos to old annos
-        if orig_annos:
+        if len(orig_annos)>0:
             annos = orig_annos + annos
     else:
         print('Output directory does not exist:',ofile)

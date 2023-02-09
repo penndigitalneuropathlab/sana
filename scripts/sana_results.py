@@ -43,6 +43,8 @@ ANTIBODY_MEASUREMENTS = {
     'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
     'SMI35': ['manual', 'auto'],
     'MJFR13': ['auto', 'lb_wc', 'ln_wc'],
+    'SYN303': ['auto', 'lb_wc', 'ln_wc'],
+    'R13': ['auto', 'lb_wc', 'ln_wc'],
 }
 
 class DirectoryIncompleteError(Exception):
@@ -141,17 +143,28 @@ class Hemisphere:
 class Region:
     region_mapping = {
         'MFC': ['GM'],
-        'OFC': [
-            'medOFC', 'latOFC',
-            's32',
-            'med_GyrusRectus', 'lat_GyrusRectus',
-            'med_MedialOrbitalGyrus', 'lat_MedialOrbitalGyrus'
-        ],
-        'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
-        'SMTC': ['ROI',],
+        'OFC': [ 'GM'],
+        'aCING': ['GM'],
+        'pCING': ['GM'],
+        'PRECU': ['GM'],
+        'aINS': ['GM'],
+        'aITC': ['GM'],
+        'iPFC': ['GM'],
+        'mePFC': ['GM'],
+        'dlPFC': ['GM'],
+        'SMTC': ['GM'],
+        'SENS': ['GM'],
+        'HIP': ['GM'],
+        'ANG': ['GM'],
+        'SPC': ['GM'],
+        'IFC': ['GM'],
+        'S1': ['GM'],
+        'V1': ['GM'],
+        'M1': ['GM'],
+        'PC': ['GM'],
     }
     for region_name in region_mapping:
-        region_mapping[region_name] += ['ROI', 'Greatest GM Sampling']
+        region_mapping[region_name] += ['ROI', 'Greatest GM Sampling zone_*']
     def __init__(self, name, bid):
         self.name = name
         self.bid = bid
@@ -469,7 +482,7 @@ def get_HC_model(patients, antibody_name, measurement, hemisphere_name=None, reg
             hc.append(hemisphere.collapse_ao(antibody_name, measurement))
             continue
 
-        # region not available for this patient, skip!
+        # if region not available for this patient, skip!
         if not region_name in hemisphere.regions:
             continue
 
@@ -535,6 +548,8 @@ def generate_files(odir, prefix):
 
 # this function collapses our hierarchical patient dataset into a table
 def generate_spreadsheets(odir, patients, available_antibodies):
+    if not os.path.exists(odir):
+        os.makedirs(odir)
 
     # generate the file pointers for the raw and aggregated data
     roi_fps = generate_files(odir, 'full')
@@ -656,8 +671,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                         #     x = region.collapse_ao(antibody_name, measurement,
                         #                            subregions=['a24a', 'a24b', 'a24c'])
                         #     z = z_score(x, region_models[region_name]['model'])
-                        #     write_row(
-                        #         region_fps, aid, bid,
+                        #     write_row( region_fps, aid, bid,
                         #         hemisphere_name, region_name, 'a24abc', 'AVG',
                         #         antibody_name, measurement, x, z,
                         #     )

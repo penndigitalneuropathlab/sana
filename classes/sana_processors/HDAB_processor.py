@@ -109,10 +109,11 @@ class HDABProcessor(Processor):
         # save the feature signals
         if self.save_images:
             signals = results['signals']
-            self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
-            self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
-            if 'sub_deform' in signals:
-                self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
+            if not signals is None:
+                self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
+                self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
+                if 'sub_deform' in signals:
+                    self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -242,7 +243,7 @@ class HDABProcessor(Processor):
             
             #self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
             self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
-            self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+            self.save_frame(odir, self.auto_overlay, 'AUTO_QC_OVERLAY')
 
         # save the feature signals
         if self.save_images:

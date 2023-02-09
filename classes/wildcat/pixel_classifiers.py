@@ -189,6 +189,11 @@ class TangleClassifier(Model):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tangle.dat')
         super().__init__(model_path, frame, 2, kmax=0.05, kmin=0.02, alpha=0.5, num_maps=4)
 
+class HIPTangleClassifier(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tangle_dice_3class.dat')
+        super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+
 class MicrogliaClassifier(Model):
     def __init__(self, frame):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'microglia.dat')

@@ -5,16 +5,8 @@ import os
 # installed modules
 import cv2
 import numpy as np
-from sana_logger import SANALogger
-from sana_frame import overlay_thresh
-from tqdm import tqdm
-from PIL import Image
-import json
+from sana_frame import frame_like
 from scipy.special import softmax
-from scipy.ndimage.filters import generic_filter
-from skimage import data, img_as_float
-from skimage.segmentation import chan_vese
-import pyefd 
 
 # custom modules
 import sana_io
@@ -46,7 +38,7 @@ class R13Processor(HDABProcessor):
 
         # generate the auto AO results
         # TODO: define a minimum threshold value!
-        # self.run_auto_ao(odir, params, scale=1.0, mx=90)
+        self.run_auto_ao(odir, params, scale=1.0, mx=90)
 
         # either use the cmdl input value or a pre-defined value from before
         # NOTE: this pre-defined value was picked from analyzing multiple slides
@@ -62,6 +54,7 @@ class R13Processor(HDABProcessor):
 
         # save the params IO to a file
         self.save_params(odir, params)
+        self.logger.debug('Saving params...'+odir)
     #
     # end of run
 
@@ -82,7 +75,7 @@ class R13Processor(HDABProcessor):
         wc_probs = softmax(wc_activation, axis=0)
         
         # save the output probabilities
-        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_R13.npy'))
+        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_PROBS.npy'))
         np.save(ofname, wc_activation)
         
         if self.logger.plots:
@@ -96,16 +89,17 @@ class R13Processor(HDABProcessor):
             fig, ax = plt.subplots(1,1)
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             ax.imshow(self.frame.img)
-            fig, axs = plt.subplots(2,2)
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
             for i in range(len(axs)):
-                axs[i].imshow(wc_activation[i,:,:])
+                axs[i].imshow(wc_probs[i,:,:])
                 axs[i].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
             plt.show()
         
-        relevant_dab_msk, dab_thresh = self.process_dab(self.dab,
+        relevant_lb_dab_msk, dab_thresh = self.process_dab(
+            self.dab,
             run_normalize = True,
             scale = 1.0,
             mx = 90, #default: 90, experiment w/ mx = 100-110
@@ -114,16 +108,17 @@ class R13Processor(HDABProcessor):
             mask = self.main_mask,
             debug = self.logger.plots
         )
-        relevant_ln_dab_msk, dab_thresh = self.process_dab(
-            self.dab,
-            run_normalize = True,
-            scale = 1.0,
-            mx = 90, #default: 90, experiment w/ mx = 100-110
-            close_r = 0,
-            open_r = 0, #always an odd number (7 < open_r < 13)
-            mask = self.main_mask,
-            debug = self.logger.plots
-        )
+        
+        # relevant_ln_dab_msk, dab_thresh = self.process_dab(
+        #     self.dab,
+        #     run_normalize = True,
+        #     scale = 1.0,
+        #     mx = 90, #default: 90, experiment w/ mx = 100-110
+        #     close_r = 0,
+        #     open_r = 0, #always an odd number (7 < open_r < 13)
+        #     mask = self.main_mask,
+        #     debug = self.logger.plots
+        # )
         
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
@@ -134,20 +129,31 @@ class R13Processor(HDABProcessor):
         # Calculate hyp annos
         # store DAB 
         lb_activation = Frame(lb_activation,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_activation.img = cv2.resize(lb_activation.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
+        lb_activation.img = cv2.resize(lb_activation.img, relevant_lb_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
         
         lb_softmax = Frame(lb_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
+        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_lb_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
 
         # threshold probs img at LB prob and store in a Frame
-        lb_msk = np.where(lb_softmax.img >= softmax_prob_thresh, relevant_dab_msk.img[:,:,0], np.zeros_like(relevant_dab_msk.img[:,:,0]))
+        lb_msk = np.where(lb_softmax.img >= softmax_prob_thresh, relevant_lb_dab_msk.img[:,:,0], np.zeros_like(relevant_lb_dab_msk.img[:,:,0]))
         lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
 
+        # generate WC predictions for %AO
+        wc_preds = frame_like(self.frame, (wc_probs[2] > softmax_prob_thresh).astype(np.uint8))
+        wc_preds.resize(self.frame.size(), interpolation=cv2.INTER_NEAREST)
+
+        # get the contours/polygons from the LB mask
         lb_msk.get_contours()
         lb_msk.filter_contours(min_body_area=0/self.dab.converter.mpp) #default: 20/mpp
         lb_contours = lb_msk.get_body_contours()
-        lbs = [contour.polygon for contour in lb_contours]        
-        #old_lbs = [contour.polygon for contour in lb_contours]
+        lbs = [contour.polygon for contour in lb_contours]
+        
+        # get the contours/polygons from the LN mask
+        # ln_msk.get_contours()
+        # ln_msk.filter_contours(min_body_area=0/self.dab.converter.mpp) #default: 20/mpp
+        # ln_contours = ln_msk.get_body_contours()
+        # lns = [contour.polygon for contour in ln_contours]
+
         # lbs = []
         # # apply a coarseness mask
         # for i, lb in enumerate(old_lbs):
@@ -240,12 +246,15 @@ class R13Processor(HDABProcessor):
         #     # - replace the LB polygon w/ this contour 
         #     if new_lbs:
         #         lbs.append(new_lbs[-1])
+        #
+        # end of Chan-Vese loop
 
         #     # * done before saving the LB annotations in run_lb_detections
 
         # convert polygons to annotations and calculate confidence
         bid, antibody, region, roi_name = odir.split('/')[-4:]
         tile = roi_name.split('_')[-1]
+        
         lb_annos = []
         for lb in lbs:
 
@@ -258,8 +267,41 @@ class R13Processor(HDABProcessor):
             )
             lb_annos.append(lb_anno)
 
-        # transform detections to the original slide coordinate system
-        lb_annos = [transform_inv_poly(x, params.data['loc'], params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in lb_annos]
+        # ln_annos = []
+        # for ln in lns:
+
+        #     # confidence is the average LB activation inside the polygon
+        #     conf = self.get_confidence(ln, ln_activation)
+
+        #     fname = bid+'_'+antibody+'_'+region+'_'+tile
+        #     ln_anno = ln.to_annotation(
+        #         fname, class_name='LN detection', confidence=conf
+        #     )
+        #     ln_annos.append(ln_anno)
+
+        lb_poly_mask = create_mask(lb_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
+        # ln_poly_mask = create_mask(ln_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
+
+        # run the %AO over predictions
+        results = self.run_ao(wc_preds)
+        params.data['lb_wc_ao'] = results['ao']
+        if not results['signals'] is None:
+            self.save_signals(odir, results['signals']['main_deform'], 'LB')
+
+        results = self.run_ao(lb_poly_mask)
+        params.data['lb_poly_ao'] = results['ao']
+        if not results['signals'] is None:
+            self.save_signals(odir, results['signals']['main_deform'], 'LB_POLY')        
+        
+        # results = self.run_ao(ln_preds)
+        # params.data['ln_wc_ao'] = results['ao']
+        # if not results['signals'] is None:
+        #     self.save_signals(odir, results['signals']['main_deform'], 'LN')        
+
+        # results = self.run_ao(ln_poly_mask)
+        # params.data['ln_poly_ao'] = results['ao']
+        # if not results['signals'] is None:
+        #     self.save_signals(odir, results['signals']['main_deform'], 'LN_POLY')
 
         # TODO: this is broken
         # if len(lb_annos)>0 and self.logger.plots:
@@ -272,7 +314,7 @@ class R13Processor(HDABProcessor):
         #     axs[0].set_title('Orig. Img')
 
         #     # plot the strong DAB in the image
-        #     axs[1].imshow(relevant_dab_msk.img)
+        #     axs[1].imshow(relevant_lb_dab_msk.img)
         #     axs[1].set_title('DAB mask')
 
         #     alpha = 0.4
