@@ -80,9 +80,12 @@ def is_anno(f):
 def get_slide_id(fname):
     return fname.split('_')[0]
 
+def get_slide_name(fname):
+    return os.path.splitext(os.path.basename(fname))[0]
+
 def get_slide_parts(fname):
     if not is_slide(fname):
-        print('ERROR: Cannot get antibody from file: %s' % fname)
+        print('ERROR: Cannot parse slide parts from file: %s' % fname)
         exit()
     fname = ntpath.basename(fname)
     parts = fname.split('_')
@@ -176,7 +179,10 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 # end of create_filepath
 
 def get_slide_odir(odir, slide):
-    return os.path.join(odir, get_bid(slide), get_region(slide), get_antibody(slide))
+    return os.path.join(odir, get_bid(slide), get_antibody(slide), get_region(slide))
+
+def get_params_file(odir, slide_name):
+    return os.path.join(odir, slide_name+'.csv')
 
 # creates a subdirectory for the ith ROI in a given json file
 def create_odir(odir, s):
