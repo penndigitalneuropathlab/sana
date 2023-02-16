@@ -104,11 +104,10 @@ def get_loader(logger, slide_f, lvl):
     try:
         loader = Loader(slide_f)
         loader.set_lvl(lvl)
+        return loader
     except Exception as e:
-        print(e)
         logger.warning('Could not load .svs file: %s' % e)
-        
-    return loader
+        return None
 #
 # end of get_loader
 
@@ -127,7 +126,7 @@ def process_slides(args, slides, logger):
     # loop through slides to load in all frames to process
     rois_to_process = []
     for slide_f in slides:
-
+        
         loader = get_loader(logger, slide_f, args.lvl)
         if loader is None:
             continue
@@ -207,8 +206,9 @@ def process_rois(args, slides, logger):
     
     # loop through the slides
     rois_to_process = []
-    for slide_f in slides:
-
+    for slide_f in tqdm(slides):
+        logger.debug('Processing Slide: %s' % slide_f)
+        
         anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
         if anno_f is None:
             continue
@@ -241,20 +241,6 @@ def process_rois(args, slides, logger):
                 else:
                     sub_rois.append(None)
                     logger.warning('Couldn\'t find the %s sub_roi' % sub_class)
-
-            # generate a quick plot of the thumbnail, and the main/sub ROIs we loaded in
-            if logger.plots:
-                logger.debug('Main ROI: %s' % str(main_roi))
-                logger.debug('SHAPE: %s' % str(main_roi.shape))
-                plot_rois = [main_roi.copy()] + [sub_roi.copy() for sub_roi in sub_rois]
-                [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois]
-                colors = ['black', 'red']
-                
-                fig, ax = plt.subplots(1,1)
-                ax.imshow(loader.thumbnail.img)
-                [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]
-                plot_poly(ax, plot_rois[0], color='black')
-                plt.show()
 
             # create the ROI ID
             if not main_roi.name:
@@ -324,6 +310,20 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         odir = sana_io.create_odir(args.odir, roi_id)
     logger.debug('Output directory successfully created: %s' % odir)
 
+    # generate a quick plot of the thumbnail, and the main/sub ROIs we loaded in
+    if logger.plots:
+        logger.debug('Main ROI: %s' % str(main_roi))
+        logger.debug('SHAPE: %s' % str(main_roi.shape))
+        plot_rois = [main_roi.copy()] + [sub_roi.copy() for sub_roi in sub_rois]
+        [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois]
+        colors = ['black', 'red']
+                
+        fig, ax = plt.subplots(1,1)
+        ax.imshow(loader.thumbnail.img)
+        [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]
+        plot_poly(ax, plot_rois[0], color='black')
+        plt.show()
+    
     # rescale the ROIs to the proper level
     loader.converter.rescale(main_roi, loader.lvl)
     [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
@@ -443,33 +443,33 @@ def main(argv):
         
     # TODO: put sana_results here
     
-    # TODO: put the SLIDESCAN aggregation here
-    for slide_f in slides:
+    # # TODO: put the SLIDESCAN aggregation here
+    # for slide_f in slides:
 
-        loader = get_loader(logger, slide_f, args.lvl)
-        if loader is None:
-            continue
+    #     loader = get_loader(logger, slide_f, args.lvl)
+    #     if loader is None:
+    #         continue
 
-        size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
-        framer = Framer(loader, size)
+    #     size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
+    #     framer = Framer(loader, size)
         
-        heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
-        heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
+    #     heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
+    #     heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
         
-        d = sana_io.get_slide_odir(args.odir, slide_f)
-        roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
-        for roi_dir in roi_dirs:
-            x, y = map(int, roi_dir.split('_')[:-2])
+    #     d = sana_io.get_slide_odir(args.odir, slide_f)
+    #     roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
+    #     for roi_dir in roi_dirs:
+    #         x, y = map(int, roi_dir.split('_')[:-2])
 
-            params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
-            params = Params(params_f)
-            for measure_i, measure in enumerate(heatmap_measures):
-                heatmap[measure_i, x, y] = params.data[measure]
+    #         params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
+    #         params = Params(params_f)
+    #         for measure_i, measure in enumerate(heatmap_measures):
+    #             heatmap[measure_i, x, y] = params.data[measure]
 
-    fig, axs = plt.subplots(2, heatmap.shape[0])
-    for i in range(heatmap.shape[0]):
-        axs[0,i].imshow(heatmap[i])
-        axs[1,i].imshow(interp_heatmap[i])
+    # fig, axs = plt.subplots(2, heatmap.shape[0])
+    # for i in range(heatmap.shape[0]):
+    #     axs[0,i].imshow(heatmap[i])
+    #     axs[1,i].imshow(interp_heatmap[i])
 #
 # end of main
 

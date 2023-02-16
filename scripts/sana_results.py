@@ -42,7 +42,8 @@ ANTIBODY_MEASUREMENTS = {
     'parvalbumin': ['manual', 'auto'],    
     'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
     'SMI35': ['manual', 'auto'],
-    'MJFR13': ['auto', 'lb_wc', 'ln_wc'],
+    'MJFR13': ['manual', 'auto', 'lb_wc'],
+    'AT8': ['manual', 'auto'],
 }
 
 class DirectoryIncompleteError(Exception):
