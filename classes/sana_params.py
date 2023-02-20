@@ -23,7 +23,7 @@ from sana_geo import Point
 INT_KEYS = [
     'lvl', 'padding',
     'csf_threshold',
-    'manual_stain_threshold', 'auto_stain_threshold', 'padding',
+    'padding',
 ]
 POINT_KEYS = [
     'loc', 'size',
@@ -37,6 +37,7 @@ M_KEYS = [
 FLOAT_KEYS = [
     'angle1', 'angle2',
     'area',
+    'manual_stain_threshold', 'auto_stain_threshold', 
     'manual_ao', 'auto_ao',
     'vert_fibers_ao', 'horz_fibers_ao',
     'grn_ao', 'pyr_ao', 'tot_ao',
@@ -85,6 +86,7 @@ class Params:
 
     # loops through the stored key value pairs and writes them to the file
     def write_data(self, fname):
+        self.fname = fname
         fp = open(fname, 'w')
         for key in KEYS:
             if key in self.data:

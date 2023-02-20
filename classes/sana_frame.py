@@ -169,12 +169,17 @@ class Frame:
     # end of crop
 
     # scales an array to a new size given a scaling factor
-    def scale(self, ds, interpolation=cv2.INTER_CUBIC, size=None):
-        if size is None:
-            size = self.size().astype(float) / ds
-            if ds[0] > 1:
-                size = np.ceil(size)
-            size = self.converter.to_int(size)
+    def scale(self, ds, interpolation=cv2.INTER_CUBIC):
+        size = self.size().astype(float) / ds
+        if ds[0] > 1:
+            size = np.ceil(size)
+        self.resize(size, interpolation=interpolation)
+    #
+    # end of scale
+
+    # TODO: add checks for uint8
+    def resize(self, size, interpolation=cv2.INTER_CUBIC):
+        size = self.converter.to_int(size)
         self.img = cv2.resize(self.img, dsize=(size[0], size[1]),
                               interpolation=interpolation)
         if len(self.img.shape) == 2:
@@ -247,13 +252,11 @@ class Frame:
     # NOTE: if the array is floating point, the image will be written as a
     #        numpy data file, else as whatever datatype is given
     def save(self, fname, invert_sform=False):
-        if self.is_float():
-            print(fname, 'asdjklfjklasdfjkl')
-            np.save(fname.split('.')[0]+'.npy', self.img)
+        if fname.endswith('.nii.gz'):
+            self.save_nifti(fname, invert_sform)
         else:
-            if fname.endswith('.nii.gz'):
-                print(fname)
-                self.save_nifti(fname, invert_sform)
+            if self.is_float():
+                np.save(fname.split('.')[0]+'.npy', self.img)
             else:
                 im = self.img
                 if not self.is_rgb():
@@ -265,10 +268,11 @@ class Frame:
     #
     # end of save
 
-    def save_nifti(self, fname, invert_sform=False):
+    def save_nifti(self, fname, invert_sform=False, spacing=None):
         pix = self.img.astype(np.uint8)
         pix = np.expand_dims(pix, (2))
-        spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
+        if spacing is None:
+            spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
         if pix.shape[-1] == 3:
             rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
             pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
@@ -670,13 +674,6 @@ def get_tissue_orientation(frame, roi, angle, logger):
     else:
         top, bot = s0, s1
     
-    if logger.plots:
-        fig, ax = plt.subplots(1,1)
-        ax.imshow(frame.img)
-        plot_poly(ax, s0, color='red')
-        plot_poly(ax, s1, color='blue')
-        fig.show()
-
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()
@@ -821,7 +818,7 @@ def get_csf_threshold(frame):
     frame.gauss_blur(5)
 
     # perform kittler thresholding
-    return kittler(frame.histogram()[:, 0], mi=0, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=128, mx=255)[0]
 #
 # end of get_csf_threshold
 

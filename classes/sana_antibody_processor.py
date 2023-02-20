@@ -20,12 +20,15 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # generic processor class, sets the main attributes and holds
 # functions for generating data from processed Frames
 class Processor:
-    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None, stain_vector=None):
+    def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None,
+                 save_images=False, run_wildcat=True, stain_vector=None):
         self.fname = fname
         self.frame = frame
         self.logger = logger
         self.roi_type = roi_type
         self.qupath_threshold = qupath_threshold
+        self.save_images = save_images
+        self.run_wildcat = run_wildcat
         self.stain_vector = stain_vector
     #
     # end of constructor
@@ -68,11 +71,10 @@ class Processor:
         frame.mask(self.main_mask)
 
         # get the total area of the roi
-        # TODO: don't just divide by 255, make sure to check first!!
-        area = np.sum(self.main_mask.img / 255)
+        area = np.sum(self.main_mask.img / np.max(self.main_mask.img))
 
         # get the pos. area in the frame
-        pos = np.sum(frame.img / 255)
+        pos = np.sum(frame.img / np.max(frame.img))
 
         # calculate %AO of the main roi
         ao = pos / area
@@ -86,8 +88,8 @@ class Processor:
             else:
                 tmp_frame = frame.copy()
                 tmp_frame.mask(sub_mask)
-                sub_area = np.sum(sub_mask.img / 255)
-                sub_pos = np.sum(tmp_frame.img / 255)
+                sub_area = np.sum(sub_mask.img / np.max(sub_mask.img))
+                sub_pos = np.sum(tmp_frame.img / np.max(tmp_frame.img))
                 sub_ao = sub_pos / sub_area
                 sub_aos.append(sub_ao)
                 sub_areas.append(sub_area)

@@ -66,7 +66,7 @@ class HDABProcessor(Processor):
         # calculate the manual dab threshold if a qupath threshold was given
         if self.qupath_threshold:
             self.manual_dab_threshold = \
-                (self.qupath_threshold - self.ss.min_od[1]) / \
+                255*(self.qupath_threshold - self.ss.min_od[1]) / \
                 (self.ss.max_od[1] - self.ss.min_od[1])
 
         self.gray = self.frame.copy()
@@ -96,21 +96,23 @@ class HDABProcessor(Processor):
         params.data['manual_sub_aos'] = results['sub_aos']
         params.data['manual_stain_threshold'] = self.manual_dab_threshold
 
-        # create the output directory
-        odir = sana_io.create_odir(odir, 'manual_ao')
-
+        # write params data to csv
+        self.save_params(odir, params)
+        
         # save the images used in processing
-        self.manual_overlay = overlay_thresh(
-            self.frame, self.manual_dab_thresh)
-        self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
-        self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
+        if self.save_images:
+            self.manual_overlay = overlay_thresh(
+                self.frame, self.manual_dab_thresh)
+            self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
+            self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
         # save the feature signals
-        signals = results['signals']
-        self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
-        self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
-        if 'sub_deform' in signals:
-            self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
+        if self.save_images:
+            signals = results['signals']
+            self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
+            self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
+            if 'sub_deform' in signals:
+                self.save_signals(odir, signals['sub_deform'], 'MANUAL_SUB_DEFORM')
     #
     # end of run_manual_ao
 
@@ -132,15 +134,15 @@ class HDABProcessor(Processor):
             axs[0].imshow(self.frame.img)
             axs[0].set_title('Orig. Img')
 
+        # plot #2
+        if debug:
+            axs[1].imshow(dab.img)
+            axs[1].set_title('Normalized DAB Img')
+            
         if run_normalize:
             # normalize the image
             # TODO: rename mean_normalize --> bckgrnd subtraction (denoising)
             dab = mean_normalize(dab)
-
-            # plot #2
-            if debug:
-                axs[1].imshow(dab.img)
-                axs[1].set_title('Normalized DAB Img')
 
             # TODO: run anisodiff
             # smooth the image
@@ -150,7 +152,6 @@ class HDABProcessor(Processor):
             if debug:
                 axs[2].imshow(dab.img)
                 axs[2].set_title('Normalized/Smoothed DAB Img')
-
 
         # get the histograms
         dab_hist = dab.histogram()
@@ -200,11 +201,7 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0, save_images=True):
-        # Old DAB Processing code
-        # # normalize the image
-        self.dab_norm = mean_normalize(self.dab)
-
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0):
         self.auto_dab_thresh_img, self.auto_dab_threshold = \
             self.process_dab(
                 self.dab,
@@ -232,23 +229,23 @@ class HDABProcessor(Processor):
         # write params data to csv
         self.save_params(odir,params)
 
-        # save the images used in processing
-        self.auto_overlay = overlay_thresh(
-            self.frame, self.auto_dab_thresh_img)
-
-        if save_images:
-            #self.save_frame(odir, self.dab_norm, 'AUTO_PROB')
-            self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
-            #self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
-
         # save the feature signals
-        if save_images:
-            signals = results['signals']
-            if signals:
-                self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
-                self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
-                if 'sub_deform' in signals:
-                    self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
+        signals = results['signals']
+        if signals:
+            self.save_signals(odir, signals['normal'], 'AUTO_NORMAL')
+            self.save_signals(odir, signals['main_deform'], 'AUTO_MAIN_DEFORM')
+            if 'sub_deform' in signals:
+                self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
+        
+        if self.save_images:
+            
+            # save the images used in processing
+            self.auto_overlay = overlay_thresh(
+                self.frame, self.auto_dab_thresh_img)
+            
+            self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
+            self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
+
     #
     # end of run_auto_ao
 
@@ -256,7 +253,7 @@ class HDABProcessor(Processor):
     def run_segment(self, odir, params, landmarks, padding=0):
 
         hem = self.hem.copy()
-        hem.anisodiff()
+        hem.anisodiff() # TODO: test if we need this?
         
         # detect the the hematoxylin cells
         # TODO: try hem - dab??? some faint HEM comes from the dark DAB
@@ -326,6 +323,8 @@ class HDABProcessor(Processor):
         # TODO: make this a incline not step!
         self.logger.info('Fitting CSF Boundary')
         landmarks[0,1] = 0.0
+
+        # TODO: should be 1 instead of 2!
         csf_gm = self.fit_boundary(gray, gray_ds[1], landmarks[0,1], landmarks[2,1], debug=self.logger.plots)
         
         # detect the GM to WM boundary with the cell features
@@ -404,6 +403,8 @@ class HDABProcessor(Processor):
         # save the feature images
         for i in range(feats.shape[0]):
             self.save_array(odir, feats[i], feats_labels[i])
+
+        self.save_params(odir, params)            
     #
     # end of run_segment
 

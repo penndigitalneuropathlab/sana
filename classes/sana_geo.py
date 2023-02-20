@@ -243,6 +243,16 @@ def get_ortho_angle(seg):
 #
 # end of get_ortho_angle
 
+def transform_poly_with_params(x, params, inverse=False):
+    if inverse:
+        return transform_inv_poly(
+            x, params.data['loc'], params.data['crop_loc'],
+            params.data['M1'], params.data['M2'])
+    else:
+        return transform_poly(
+            x, params.data['loc'], params.data['crop_loc'],
+            params.data['M1'], params.data['M2'])
+
 # performs a series a translations and rotations to transform a polygon
 #  to the coordinate system of a processed Frame
 def transform_poly(x, loc, crop_loc, M1, M2):
@@ -324,6 +334,24 @@ def fix_polygon(p):
     return p
 #
 # end of fix_polygon
+
+# calculates the IOU score of 2 Polygons
+# NOTE: this uses Shapely, converts to shapely objects for easy calculations
+def get_iou(x, y):
+    # print('entered get_iou')
+    x = x.copy().to_shapely()
+    y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
+    i = x.intersection(y).area
+    u = x.union(y).area 
+    # print('i:',i)
+    # print('u:',u)
+    return i/u
+#
+# end of iou
 
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best
