@@ -35,7 +35,7 @@ class SYN303Processor(HDABProcessor):
     #
     # end of constructor
 
-    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
+    def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
         # generate the neuronal and glial severity results
 
         self.logger.info('Running SYN303 Processor...')
@@ -54,7 +54,7 @@ class SYN303Processor(HDABProcessor):
         # generate the auto AO results
         self.run_auto_ao(odir, params, scale=1.0, mx=90, save_images=False)
 
-        # self.run_lb_detection(odir, roi_odir, first_run, params, 0.60)
+        # self.run_lb_detection(odir, detection_odir, first_run, params, 0.60)
 
         self.save_params(odir, params)        
     #
@@ -67,7 +67,7 @@ class SYN303Processor(HDABProcessor):
     #
     # end of get_confidence
 
-    def run_lb_detection(self, odir, roi_odir, first_run, params, softmax_prob_thresh=0.5):   
+    def run_lb_detection(self, odir, detection_odir, first_run, params, softmax_prob_thresh=0.5):   
         self.logger.info('Running LB detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
 
@@ -279,7 +279,7 @@ class SYN303Processor(HDABProcessor):
 
         # finally, write the annoations to a file
         afile = os.path.basename(self.fname).replace('.svs','.json')
-        anno_fname = roi_odir+'/'+afile
+        anno_fname = detection_odir+'/'+afile
         if not os.path.exists(anno_fname) or first_run:
             sana_io.write_annotations(anno_fname, lb_annos)
             first_run = False

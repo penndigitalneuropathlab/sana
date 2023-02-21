@@ -28,11 +28,11 @@ LAYER_NAMES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6',
                'L23', 'L56', 'L123', 'L456', 'L123456']
 LAYERS_HEADER = ''.join(['%s,' % x for x in LAYER_NAMES])
 ZLAYERS_HEADER = ''.join(['z_%s,' % x for x in LAYER_NAMES])
-FIELDS_HEADER = 'AutopsyID,BlockID,Hemisphere,Region,Subregion,ROI,Antibody,Measurement,'
+FIELDS_HEADER = 'SlideName,AutopsyID,BlockID,Hemisphere,Region,Subregion,ROI,Antibody,Measurement,'
 LONG_HEADER = FIELDS_HEADER+'Layer,AO,z_AO,'
 WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
-LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f,%0.16f\n'
-WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*22+'\n'
+LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f,%0.16f\n'
+WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*22+'\n'
 
 # TODO: rename grn to non
 ANTIBODY_MEASUREMENTS = {
@@ -42,7 +42,10 @@ ANTIBODY_MEASUREMENTS = {
     'parvalbumin': ['manual', 'auto'],    
     'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
     'SMI35': ['manual', 'auto'],
-    'MJFR13': ['auto', 'lb_wc', 'ln_wc'],
+    'MJFR13': ['manual', 'auto', 'lb_wc'],
+    'AT8': ['manual', 'auto'],
+    'TDP43': ['manual', 'auto'],
+    'TDP43MP': ['manual', 'auto'],
 }
 
 class DirectoryIncompleteError(Exception):
@@ -269,37 +272,45 @@ class Antibody:
 
 # loads and stores all data found within a ROI output directory
 class Entry:
-    def __init__(self, directory, hemisphere_data):
+    def __init__(self, patients, directory, hemisphere_data, hc_aids):
         self.directory = directory
-        self.set_directory_parts(hemisphere_data)
-
+        
+        self.set_slide_parts(hemisphere_data)
+        
         self.load_data()
+
+        if not self.aid in patients:
+            patients[aid] = Patient(self.aid, self.aid in hc_aids)
+        patients[aid].add_entry(self)
     #
     # end of constructor
     
-    def set_directory_parts(self, hemisphere_data):
+    def set_slide_parts(self, hemisphere_data):
         d, self.roi_name = os.path.split(self.directory)
-        d, self.region_name = os.path.split(d)
-        d, self.antibody_name = os.path.split(d)
-        d, self.bid = os.path.split(d)
+        d, self.slide_name = os.path.split(d)
+        self.slide_f = self.slide_name+'.svs'
+        self.region_name = sana_io.get_region(self.slide_f)
+        self.antibody_name = sana_io.get_antibody(self.slide_f)
+        self.bid = sana_io.get_bid(self.slide_f)        
+        self.aid = sana_io.get_aid(self.slide_f)
 
+        self.roi_name = self.slide_name+'_'+self.roi_name
+        
         region = Region(self.region_name, self.bid)
         self.subregion_name = region.get_subregion_name(self.roi_name)
         if self.subregion_name is None:
             raise SubregionNameError(self.region_name, self.roi_name)
-        
-        self.params_f = [f for f in os.listdir(self.directory) if f.endswith('.csv')]
-        if len(self.params_f) == 0:
+
+        self.params_f = os.path.join(self.directory, self.slide_name+'.csv')
+        if not os.path.exists(self.params_f)
             raise DirectoryIncompleteError
-        self.params_f = os.path.join(self.directory, self.params_f[0])
-        self.slide_name = os.path.basename(self.params_f).replace('.csv', '.svs')
 
         if self.bid in hemisphere_data:
             self.hemisphere_name = hemisphere_data[self.bid]
         else:
             self.hemisphere_name = sana_io.get_hemi(self.slide_name)
     #
-    # end of get_directory_parts
+    # end of get_slide_parts
 
     # TODO: create functions for Signal, Densities, Sizes, etc...
     def get_ao_data(self, measurement):
@@ -394,53 +405,30 @@ def collect_patients(idir, hc, hemi):
     antibodies = []
     
     # loop through the BIDs found in the idir
-    for bid in tqdm(os.listdir(idir)):
-        bid_d = os.path.join(idir, bid)
-        if not os.path.isdir(bid_d):
+    for slide_name in tqdm(os.listdir(idir)):
+        slide_d = os.path.join(idir, slide_name)
+        if not os.path.isdir(slide_d):
             continue
-
-        # create a new Patient, if needed
-        aid = '-'.join(bid.split('-')[:-1])        
-        if aid not in patients:
-            patients[aid] = Patient(aid, (aid in hc))
             
-        # loop through the antibodies in the BID
-        for antibody in os.listdir(bid_d):
-            antibody_d = os.path.join(bid_d, antibody)
-            if not os.path.isdir(antibody_d):
+        # loop through the ROIs in this region
+        for roi in os.listdir(slide_d):
+            roi_d = os.path.join(region_d, roi)
+            if not os.path.isdir(roi_d):
                 continue
-            
-            # loop through the regions in this antibody
-            for region in os.listdir(antibody_d):
-                region_d = os.path.join(antibody_d, region)
-                if not os.path.isdir(region_d):
-                    continue
-                
-                # loop through the ROIs in this region
-                for roi in os.listdir(region_d):
-                    roi_d = os.path.join(region_d, roi)
-                    if not os.path.isdir(roi_d):
-                        continue
 
-                    # load the data in this ROI
-                    try:
-                        entry = Entry(roi_d, hemisphere_data)
-                    except (DirectoryIncompleteError, SubregionNameError):
-                        continue
+            # load the data in this ROI
+            try:
+                entry = Entry(patients, roi_d, hemisphere_data, hc)
+            except (DirectoryIncompleteError, SubregionNameError):
+                print(e)
+                continue
                     
-                    # add this ROI's data to the patient                    
-                    patients[aid].add_data(entry)
-
-                    if entry.antibody_name not in antibodies:
-                        antibodies.append(entry.antibody_name)
-                #
-                # end of rois loop
-            #
-            # end of regions loop
+            if entry.antibody_name not in antibodies:
+                antibodies.append(entry.antibody_name)
         #
-        # end of antibodies loop
+        # end of rois loop
     #
-    # end of BIDs loop
+    # end of slides loop
 
     return patients, antibodies
 #
@@ -614,16 +602,13 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                                     )
                                 }
                             
-                            # grab the antibody, ready to write some data
-                            antibody = subregion.antibodies[antibody_name]
-                                                
                             # write the ROI data, this is the most specific data
                             for roi_name in sorted(antibody.rois.keys()):
                                 x = antibody.rois[roi_name].get_ao_data(measurement)
                                 z = z_score(
                                     x, subregion_models[subregion_name]['model'])
                                 write_row(
-                                    roi_fps, aid, bid,
+                                    roi_fps, slide_name, aid, bid,
                                     hemisphere_name, region_name, subregion_name, roi_name,
                                     antibody_name, measurement, x, z,
                                 )
@@ -635,7 +620,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                             z = z_score(
                                 x, subregion_models[subregion_name]['model'])
                             write_row(
-                                subregion_fps, aid, bid,
+                                subregion_fps, slide_name, aid, bid,
                                 hemisphere_name, region_name, subregion_name, 'AVG',
                                 antibody_name, measurement, x, z,
                             )
@@ -646,7 +631,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                         x = region.collapse_ao(antibody_name, measurement)
                         z = z_score(x, region_models[region_name]['model'])
                         write_row(
-                            region_fps, aid, bid,
+                            region_fps, slide_name, aid, bid,
                             hemisphere_name, region_name, 'AVG', 'AVG',
                             antibody_name, measurement, x, z,
                         )
@@ -657,7 +642,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                         #                            subregions=['a24a', 'a24b', 'a24c'])
                         #     z = z_score(x, region_models[region_name]['model'])
                         #     write_row(
-                        #         region_fps, aid, bid,
+                        #         region_fps, slide_name, aid, bid,
                         #         hemisphere_name, region_name, 'a24abc', 'AVG',
                         #         antibody_name, measurement, x, z,
                         #     )
@@ -668,7 +653,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                     x = hemisphere.collapse_ao(antibody_name, measurement)
                     z = z_score(x, hemisphere_models[hemisphere_name]['model'])
                     write_row(
-                        hemisphere_fps, aid, bid,
+                        hemisphere_fps, slide_name, aid, bid,
                         hemisphere_name, 'AVG', 'AVG', 'AVG',
                         antibody_name, measurement, x, z,
                     )
@@ -679,7 +664,7 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                 x = patient.collapse_ao(antibody_name, measurement)
                 z = z_score(x, patient_model)
                 write_row(
-                    patient_fps, aid, bid,
+                    patient_fps, slide_name, aid, bid,
                     'AVG', 'AVG', 'AVG', 'AVG',
                     antibody_name, measurement, x, z,
                 )
@@ -741,18 +726,18 @@ def write_model_row(fp, hemisphere_name, region_name, subregion_name, roi_name,
 #
 # end of write_model_row
 
-def write_row(fps, aid, bid,
+def write_row(fps, slide_name, aid, bid,
               hemisphere_name, region_name, subregion_name, roi_name,
               antibody_name, measurement, x, z):
     long_fp, wide_fp = fps
     for i in range(len(x)):
         long_fp.write(
             LONG_LINE % \
-            (aid, bid, hemisphere_name, region_name, subregion_name, roi_name,
+            (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name,
              antibody_name, measurement, LAYER_NAMES[i], x[i], z[i]))
     wide_fp.write(
         WIDE_LINE % \
-        (aid, bid, hemisphere_name, region_name, subregion_name, roi_name, antibody_name, measurement,
+        (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name, antibody_name, measurement,
          *tuple(x), *tuple(z)))
 #
 # end of write_row

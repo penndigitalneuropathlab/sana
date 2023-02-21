@@ -31,7 +31,7 @@ class NeuNProcessor(HDABProcessor):
     #
     # end of constructor
 
-    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
+    def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
 
         self.generate_masks(main_roi, sub_rois)
         
@@ -49,7 +49,7 @@ class NeuNProcessor(HDABProcessor):
         self.run_auto_ao(odir, params, scale=1.0, mx=120, open_r=7)
 
         # detect and analyze the neurons in the ROI
-        self.run_neurons(odir, roi_odir, first_run, params, main_roi, debug=False)
+        self.run_neurons(odir, detection_odir, first_run, params, main_roi, debug=False)
         
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -63,7 +63,7 @@ class NeuNProcessor(HDABProcessor):
     #
     # end of run
 
-    def run_neurons(self, odir, roi_odir, first_run, params, main_roi, debug=False):
+    def run_neurons(self, odir, detection_odir, first_run, params, main_roi, debug=False):
         
         # instance segment the neurons
         # TODO: some holes are getting through, is this closing issue or the img_final issue?
@@ -80,7 +80,7 @@ class NeuNProcessor(HDABProcessor):
         
         # write the neuron segmentations
         ofname = sana_io.create_filepath(
-            self.fname, ext='.json', suffix='NEURONS', fpath=roi_odir)
+            self.fname, ext='.json', suffix='NEURONS', fpath=detection_odir)
         neuron_annos = [x.polygon.to_annotation(ofname, 'NEURON') for x in neurons]
         [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],

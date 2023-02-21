@@ -306,22 +306,15 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     # the various AO results
     params = Params()
     
-    # create odir for detection jsons, if needed
-    roi_odir = sana_io.create_odir(args.odir, 'detections')
+    # create the directory for polygon detections
+    detection_odir = sana_io.create_odir(args.odir, 'detections')
     
     # create the output directory path
-    # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-    slide_f = loader.fname    
-    try:
-        bid = sana_io.get_bid(slide_f)
-        antibody = sana_io.get_antibody(slide_f)
-        region = sana_io.get_region(slide_f)
-        odir = sana_io.create_odir(args.odir, bid)
-        odir = sana_io.create_odir(odir, antibody)
-        odir = sana_io.create_odir(odir, region)
-        odir = sana_io.create_odir(odir, roi_id)
-    except:
-        odir = sana_io.create_odir(args.odir, roi_id)
+    # NOTE: output/slide_name/slide_name.*
+    slide_f = loader.fname
+    slide_name = os.path.splitext(os.path.basename(slide_f))[0]
+    odir = sana_io.create_odir(args.odir, slide_name)
+    odir = sana_io.create_odir(odir, roi_id)
     logger.debug('Output directory successfully created: %s' % odir)
 
     # rescale the ROIs to the proper level
@@ -374,7 +367,7 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         return None
 
     # finally, analyze the frame based on the antibody it was stained with
-    processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
+    processor.run(odir, detection_odir, first_run, params, main_roi, sub_rois)
 #
 # end of process
 
