@@ -170,8 +170,11 @@ class PatchDataset(Dataset):
         
         self.manifest = manifest
 
+        # NOTE: assuming standard pyramidal svs storage        
+        self.converter = Converter() 
+        self.label_mask_lvl = 2
+        
         self.root = root
-        self.converter = Converter()
         self.input_size = self.converter.to_int(Point(input_size, input_size, False, 0))
         self.num_classes = num_classes
 
@@ -190,6 +193,8 @@ class PatchDataset(Dataset):
         self.manifest = self.manifest.dropna(subset='img_name')
 
         self.class_dist = self.get_class_dist()
+
+        self.build_label_masks()
     #
     # end __init__        
             
@@ -227,7 +232,74 @@ class PatchDataset(Dataset):
         return img_names
     # 
     # end get_img_names
+
+    def build_label_masks(self):
+
+        # all the slide names in the dataset
+        self.img_names = list(set(self.manifest['img_name']))
+
+        # build the label mask for each slide
+        self.label_masks = {}
+        for img_name in self.img_names:
+
+            # get all annotations in this slide
+            img_df = self.manifest[self.manifest['img_name'] == img_name]
+
+            annos = []
+            mi_x, mi_y, mx_x, mx_y = np.inf, np.inf, 0, 0
+            for row in img_df:
+
+                # get the annotation name
+                patch_id = row['id']
+                anno_label = row['label_name']
+                label_name = [cm['classname'] for cm in self.class_map if anno_label in cm['labels']][0]
+
+                # build the ROI
+                roi = self.roi_from_corners(*row[['x', 'y', 'w', 'h']].values)
+                converter.rescale(roi, self.label_mask_lvl)
+
+                if np.min(roi[:,0]) < mi_x:
+                    mi_x = np.min(roi[:,0])
+                if np.min(roi[:,1]) < mi_y:
+                    mi_y = np.min(roi[:,1])
+                if np.max(roi[:,0]) < mx_x:
+                    mx_x = np.max(roi[:,0])
+                if np.max(roi[:,1]) < mx_y:
+                    mx_y = np.max(roi[:,1])
+                
+                # create an Annotation
+                anno = roi.to_annotation(img_name, label_name)
+                annos.append(anno)
+            #
+            # end of ROI creation
             
+            # generate the blank mask
+            padding = 128
+            mask_size_x = (mx_x - mi_x) + 2*padding
+            mask_size_y = (mx_y - mi_y) + 2*padding
+            label_mask = Frame(np.full((mask_size_y, mask_size_x), self.background_idx), lvl=2, converter=self.converter)
+            # NOTE: this is for when we don't want to assume unlabeled pixels are background
+            # label_mask = Frame(np.full((mask_size_y, mask_size_x), -1), lvl=2, converter=self.converter)     
+
+            # account for the padding in the ROIs
+            # TODO: test this
+            [a.translate(padding) for a in annos]
+
+            # place each annotation in the image
+            for label in self.labels:
+                label_annos = [a for a in annos if a.class_name == label]
+                label_idx = self.labels.index(label)
+                mask = create_mask(label_annos, label_mask.size(), label_mask.lvl, label_mask.converter, x=-1, y=label_idx)
+                label_mask.img[mask.img != -1] = mask.img
+
+            fig, ax = plt.subplots(1,1)
+            ax.imshow(label_mask.img)
+            ax.set_title(img_name)
+            plt.show()
+
+            self.label_masks[img_name] = label_mask
+        #
+        # end of slides loop
     
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
@@ -242,11 +314,32 @@ class PatchDataset(Dataset):
         
         _, height, width = image.size()
         center = Point(width//2, height//2,False,0)
-        
-        roi = self.roi_from_corners(*self.manifest[['x','y','w','h']].values[idx])
-        roi_loc, roi_size = roi.bounding_box()
-        roi.translate(roi_loc-center+roi_size/2)
 
+        # get the ROI for this sample
+        roi = self.roi_from_corners(*self.manifest[['x','y','w','h']].values[idx])
+
+        # transform ROI into the label mask coordinate system
+        self.converter.rescale(roi, self.label_mask_lvl)
+        roi.translate(padding) # TODO: check with the other translation!
+
+        # get the center of the ROI in the label mask coordinates
+        roi_loc, roi_size = roi.bounding_box()
+        roi_center = roi_loc + roi_size//2
+
+        # get the patch size in label mask units
+        img_size = Point(width, height, False, self.label_mask_lvl)
+
+        # get the location of the patch in the label mask
+        patch_loc = self.converter.to_int(roi_center - img_size // 2 )
+        patch_size = self.converter.to_int(img_size)
+
+        # grab the portion of the label mask corresponding to this sample's patch
+        mask = self.label_masks[img_name][patch_loc[1]:patch_loc[1]+patch_size[1], patch_loc[0]:patch_loc[0]+patch_size[0]]
+
+        # resize the label mask back to the sample resolution
+        mask = cv2.resize(mask, tuple(image.shape[:2][::-1]), interpolation=cv2.INTER_NEAREST)
+        mask = transforms.ToTensor()(mask)
+        
         # plt 1
         # fig, ax = plt.subplots(1,1)
         # ax.imshow(image.permute(1,2,0))
@@ -264,35 +357,31 @@ class PatchDataset(Dataset):
                 img_size = (width,height)
             )
             image = transforms.functional.affine(image, *affine_params)
-            
-            loc = affine_params[1]
-            angle = affine_params[0]
-            roi.rotate(center, -angle)
-            roi.translate(-Point(loc[0],loc[1],False,0))
+            mask = transforms.functional.affine(mask, *affine_params)
             
             # plt 2
             # fig, ax = plt.subplots(1,1)
             # ax.imshow(image.permute(1,2,0))
-            # plot_poly(ax,roi)
+            # TODO: plot mask
             
             crop = transforms.CenterCrop((self.input_size[0], self.input_size[1]))
             image = crop.forward(image)
-            
-            crop_loc = center - self.input_size//2
-            roi.translate(crop_loc)
+            mask = crop.forward(mask)
             
             # plt 3
             # fig, ax = plt.subplots(1,1)
             # ax.imshow(image.permute(1,2,0))
-            # plot_poly(ax,roi)
-        
+            # TODO: plot mask
+            
+        # TODO: plot the mask here, with the patch image
+        pass
+            
         # create the mask and the one hot label from the ROI
-        mask = create_mask([roi], self.input_size, 0, self.converter, x=0, y=1)
-        label_idx = self.labels.index(label_name)
-        # print(label_idx,label_name)
-        one_hot_label = torch.zeros([self.num_classes, mask.img.shape[0], mask.img.shape[1]],dtype=int) 
-        one_hot_label[label_idx] = torch.tensor(mask.img.squeeze())
-        one_hot_label[self.background_idx] = torch.tensor(1-mask.img.squeeze())
+        # TODO: do we want non-labeled pixels as "ambiguous" aka [0,0,0,0] instead of assuming it's background
+        one_hot_label = torch.zeros([self.num_classes, mask.shape[0], mask.shape[1]],dtype=int)
+        for label_name in self.labels:
+            label_idx = self.labels.index(label_name)
+            one_hot_label[label_idx] = torch.tensor(mask == label_idx)
         one_hot_label = torchvision.transforms.Resize((112,112))(one_hot_label)
 
         # apply other transformations such as rotations, normalizations, colorjitter, etc.
