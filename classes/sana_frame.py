@@ -7,6 +7,7 @@ from copy import copy
 # installed packages
 import cv2
 import numpy as np
+import nibabel as nib
 from scipy import ndimage
 from PIL import Image, ImageDraw
 Image.MAX_IMAGE_PIXELS = None
@@ -53,7 +54,10 @@ class Frame:
 
     # checks if the image array has 3 channels
     def is_rgb(self):
-        return self.img.shape[2] == 3
+        if len(self.img.shape) == 2:
+            return False
+        else:
+            return self.img.shape[2] == 3
     #
     # end of is_rgb
 
@@ -165,12 +169,17 @@ class Frame:
     # end of crop
 
     # scales an array to a new size given a scaling factor
-    def scale(self, ds, interpolation=cv2.INTER_CUBIC, size=None):
-        if size is None:
-            size = self.size().astype(float) / ds
-            if ds[0] > 1:
-                size = np.ceil(size)
-            size = self.converter.to_int(size)
+    def scale(self, ds, interpolation=cv2.INTER_CUBIC):
+        size = self.size().astype(float) / ds
+        if ds[0] > 1:
+            size = np.ceil(size)
+        self.resize(size, interpolation=interpolation)
+    #
+    # end of scale
+
+    # TODO: add checks for uint8
+    def resize(self, size, interpolation=cv2.INTER_CUBIC):
+        size = self.converter.to_int(size)
         self.img = cv2.resize(self.img, dsize=(size[0], size[1]),
                               interpolation=interpolation)
         if len(self.img.shape) == 2:
@@ -199,11 +208,13 @@ class Frame:
 
         return M, nw, nh
 
-    def warp_affine(self, M, nw, nh):
+    def warp_affine(self, M, nw, nh, inverse=False):
         if self.is_rgb():
             border_val = (255,255,255)
         else:
             border_val = 0
+            if inverse:
+                M = cv2.invertAffineTransform(M)
         self.img = cv2.warpAffine(self.img, M, (nw, nh), borderValue=border_val)
         if self.img.ndim == 2:
             self.img = self.img[:,:,None]
@@ -240,19 +251,43 @@ class Frame:
     # writes the image array to a file
     # NOTE: if the array is floating point, the image will be written as a
     #        numpy data file, else as whatever datatype is given
-    def save(self, fname):
-        if self.is_float():
-            np.save(fname.split('.')[0]+'.npy', self.img)
+    def save(self, fname, invert_sform=False):
+        if fname.endswith('.nii.gz'):
+            self.save_nifti(fname, invert_sform)
         else:
-            im = self.img
-            if not self.is_rgb():
-                im = im[:, :, 0]
-            if self.is_binary():
-                im = 255 * im
-            im = Image.fromarray(im)
-            im.save(fname)
+            if self.is_float():
+                np.save(fname.split('.')[0]+'.npy', self.img)
+            else:
+                im = self.img
+                if not self.is_rgb():
+                    im = im[:, :, 0]
+                if self.is_binary():
+                    im = 255 * im
+                im = Image.fromarray(im)
+                im.save(fname)
     #
     # end of save
+
+    def save_nifti(self, fname, invert_sform=False, spacing=None):
+        pix = self.img.astype(np.uint8)
+        pix = np.expand_dims(pix, (2))
+        if spacing is None:
+            spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000) for d in (0,1)]
+        if pix.shape[-1] == 3:
+            rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
+            pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
+        else:
+            pix = pix[:,:,:,0]
+        nii = nib.Nifti1Image(pix, np.diag([spacing[0], spacing[1], 1.0, 1.0]))
+        if invert_sform:
+            nii.set_sform([
+                [-spacing[0], 0, 0, 0],
+                [0, -spacing[1], 0, 0],
+                [0, 0, 1, 0],
+            ])
+        nib.save(nii, fname)
+    #
+    # end of save_nifti
 
     # calculates the background color as the most common color
     #  in the grayscale space
@@ -265,8 +300,8 @@ class Frame:
 
     # apply a binary mask to the image
     def mask(self, mask, value=0):
-        if self.is_float():
-            raise TypeException('Cannot apply mask to floating point image')
+        # if self.is_float():
+        #     raise TypeException('Cannot apply mask to floating point image')
         if self.is_rgb() and value is int:
             value = (value, value, value)
         self.img[mask.img[:,:,0] == 0] = value
@@ -622,6 +657,12 @@ class Contour:
 #
 # end of Detection
 
+def frame_like(frame, img):
+    return Frame(img, frame.lvl, frame.converter,
+                 frame.csf_threshold, frame.slide_color, frame.padding)
+#
+# end of frame_like
+
 # this function looks at the frames of data surrounding the segmentation boundaries
 # and finds which boundary is associated with the tissue boundary
 def get_tissue_orientation(frame, roi, angle, logger):
@@ -633,13 +674,6 @@ def get_tissue_orientation(frame, roi, angle, logger):
     else:
         top, bot = s0, s1
     
-    if logger.plots:
-        fig, ax = plt.subplots(1,1)
-        ax.imshow(frame.img)
-        plot_poly(ax, s0, color='red')
-        plot_poly(ax, s1, color='blue')
-        fig.show()
-
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()
@@ -661,7 +695,7 @@ def get_tissue_orientation(frame, roi, angle, logger):
 #  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: vals defining the negative and positive values in the mask
-def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
+def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_only=False):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
@@ -682,7 +716,10 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[]):
     size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
     for poly in polys:
-        ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)
+        if outlines_only:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=0)
+        else:
+            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)            
     for h in hs:
         ImageDraw.Draw(mask).polygon(h, outline=x, fill=x)
     return Frame(np.array(mask)[:, :, None], lvl, converter)
@@ -781,7 +818,7 @@ def get_csf_threshold(frame):
     frame.gauss_blur(5)
 
     # perform kittler thresholding
-    return kittler(frame.histogram()[:, 0], mi=0, mx=255)[0]
+    return kittler(frame.histogram()[:, 0], mi=128, mx=255)[0]
 #
 # end of get_csf_threshold
 

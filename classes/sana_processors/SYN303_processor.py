@@ -42,10 +42,21 @@ class SYN303Processor(HDABProcessor):
 
         self.generate_masks(main_roi, sub_rois)
 
-        self.run_lb_detection(odir, roi_odir, first_run, params, 0.60)
+        # either use the cmdl input value or a pre-defined value from before
+        # NOTE: this pre-defined value was picked from analyzing multiple slides
+        #        in QuPath w/ varying intensities and pathology severity
+        if not hasattr(self, 'manual_dab_threshold'):
+            self.manual_dab_threshold = 94
 
+        # generate the manually curated AO results
+        self.run_manual_ao(odir, params, save_images=False)
+        
         # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=1.0, mx=90)
+        self.run_auto_ao(odir, params, scale=1.0, mx=90, save_images=False)
+
+        # self.run_lb_detection(odir, roi_odir, first_run, params, 0.60)
+
+        self.save_params(odir, params)        
     #
     # end of run
 
