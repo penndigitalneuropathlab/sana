@@ -13,6 +13,10 @@ class SMI32Processor(HDABProcessor):
     def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
 
         self.generate_masks(main_roi, sub_rois)
+
+        # save the original frame
+        if self.save_images:
+            self.save_frame(odir, self.frame, 'ORIG')
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
@@ -28,13 +32,6 @@ class SMI32Processor(HDABProcessor):
         # TODO: do we want to run some opening filter?
         self.run_auto_ao(odir, params, scale=0.7)
 
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
-
-        # save the DAB and HEM images
-        self.save_frame(odir, self.dab, 'DAB')
-        self.save_frame(odir, self.hem, 'HEM')
-        
         # save the params IO to a file
         self.save_params(odir, params)
     #

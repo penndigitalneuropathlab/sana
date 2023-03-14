@@ -28,19 +28,25 @@ from sana_geo import plot_poly
 class NeuNProcessor(HDABProcessor):
     def __init__(self, fname, frame, logger, **kwargs):
         super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
+
+        self.run_neuron_analysis = False
     #
     # end of constructor
 
     def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
 
         self.generate_masks(main_roi, sub_rois)
+
+        # save the original frame
+        if self.save_images:
+            self.save_frame(odir, self.frame, 'ORIG')
         
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
         # NOTE: original value was DAB_OD = 0.3 in QuPath, this
         #       value is calculated from that
         self.manual_dab_threshold = 94
-        
+
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)
 
@@ -49,14 +55,8 @@ class NeuNProcessor(HDABProcessor):
         self.run_auto_ao(odir, params, scale=1.0, mx=120, open_r=7)
 
         # detect and analyze the neurons in the ROI
-        self.run_neurons(odir, detection_odir, first_run, params, main_roi, debug=False)
-        
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
-
-        # save the DAB and HEM images
-        self.save_frame(odir, self.dab, 'DAB')
-        self.save_frame(odir, self.hem, 'HEM')
+        if self.run_neuron_analysis:
+            self.run_neurons(odir, detection_odir, first_run, params, main_roi, debug=False)
         
         # save the params IO to a file
         self.save_params(odir, params)

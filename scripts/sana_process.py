@@ -30,6 +30,7 @@ from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
 from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
+from sana_processors.TDP43MP_processor import TDP43MPProcessor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
 from sana_processors.SYN303_processor import SYN303Processor
@@ -56,6 +57,8 @@ def get_processor(fname, frame, logger, **kwargs):
         'SMI35': SMI35Processor,
         'MEGURO': MeguroProcessor,
         'AT8': AT8Processor,
+        'TDP43MP': TDP43MPProcessor,
+        'TDP43': TDP43MPProcessor,         # TODO: is this right?
         'IBA1': IBA1Processor,
         'R13': R13Processor,
         'MJFR13': R13Processor,
@@ -208,7 +211,7 @@ def process_rois(args, slides, logger):
     # loop through the slides
     rois_to_process = []
     for slide_f in slides:
-
+        logger.info('Setting up %s' % slide_f)
         anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
         if anno_f is None:
             continue
@@ -219,7 +222,7 @@ def process_rois(args, slides, logger):
         
         # load the main roi(s) from the json file
         main_rois = load_rois(logger, anno_f, args.main_class, args.main_name)
-        
+
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
 
@@ -327,17 +330,17 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         # rotate/translate the coord. system to retrieve the frame from
         # the slide. the frame will be orthogonalized such that CSF is
         # at the top and WM is at the bottom of the image.
-        frame = loader.load_gm_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_gm_frame(logger, params, main_roi, padding=args.padding)
         
     elif args.mode == 'GMZONE':
 
         # same rotation goal as above, except we have to test all
         #  4 sides of the input ROI to find the CSF
-        frame = loader.load_gm_zone_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_gm_zone_frame(logger, params, main_roi, padding=args.padding)
         
     else:
         # just translates the coord. system, no rotating or cropping
-        frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_roi_frame(logger, params, main_roi, padding=args.padding)
 
     # transform the ROIs to the Frame's coord. system
     transform_poly(
@@ -410,12 +413,13 @@ def main(argv):
 
     # setup the logger
     logger = SANALogger.get_sana_logger(args.debug_level)
-    
+
     # get all the slide files to process
     slides = get_slides(logger, args.lists, args.skip)
     if len(slides) == 0:
-        parser.print_usage()
-
+        logger.error('No files found in lists: %s' % str(args.lists))
+        exit()
+        
     # get the ROIs within the slides to process
     logger.info('Number of slides found: %d' % len(slides))
     if args.reprocess:    
@@ -434,35 +438,35 @@ def main(argv):
         # join and wait until all jobs are finished        
         [job.join() for job in jobs]        
         
-    # TODO: put sana_results here
+    # # TODO: put sana_results here
     
-    # TODO: put the SLIDESCAN aggregation here
-    for slide_f in slides:
+    # # TODO: put the SLIDESCAN aggregation here
+    # for slide_f in slides:
 
-        loader = get_loader(logger, slide_f, args.lvl)
-        if loader is None:
-            continue
+    #     loader = get_loader(logger, slide_f, args.lvl)
+    #     if loader is None:
+    #         continue
 
-        size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
-        framer = Framer(loader, size)
+    #     size = Point(args.frame_size, args.frame_size, is_micron=False, lvl=args.lvl)
+    #     framer = Framer(loader, size)
         
-        heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
-        heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
+    #     heatmap_measures = ['auto_ao', 'lb_wc_ao', 'lb_poly_ao']        
+    #     heatmap = np.zeros(len(heatmap_measures), framer.locs.shape)
         
-        d = sana_io.get_slide_odir(args.odir, slide_f)
-        roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
-        for roi_dir in roi_dirs:
-            x, y = map(int, roi_dir.split('_')[:-2])
+    #     d = sana_io.get_slide_odir(args.odir, slide_f)
+    #     roi_dirs = [x for x in os.listdir(d) if os.isdir(x)]
+    #     for roi_dir in roi_dirs:
+    #         x, y = map(int, roi_dir.split('_')[:-2])
 
-            params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
-            params = Params(params_f)
-            for measure_i, measure in enumerate(heatmap_measures):
-                heatmap[measure_i, x, y] = params.data[measure]
+    #         params_f = os.path.join(roi_dir, os.path.basename(slide_f).replace('.svs', '.csv'))
+    #         params = Params(params_f)
+    #         for measure_i, measure in enumerate(heatmap_measures):
+    #             heatmap[measure_i, x, y] = params.data[measure]
 
-    fig, axs = plt.subplots(2, heatmap.shape[0])
-    for i in range(heatmap.shape[0]):
-        axs[0,i].imshow(heatmap[i])
-        axs[1,i].imshow(interp_heatmap[i])
+    # fig, axs = plt.subplots(2, heatmap.shape[0])
+    # for i in range(heatmap.shape[0]):
+    #     axs[0,i].imshow(heatmap[i])
+    #     axs[1,i].imshow(interp_heatmap[i])
 #
 # end of main
 
