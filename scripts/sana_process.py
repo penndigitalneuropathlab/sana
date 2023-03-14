@@ -30,6 +30,7 @@ from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
 from sana_processors.meguro_processor import MeguroProcessor
 from sana_processors.AT8_processor import AT8Processor
+from sana_processors.TDP43MP_processor import TDP43MPProcessor
 from sana_processors.IBA1_processor import IBA1Processor
 from sana_processors.R13_processor import R13Processor
 from sana_processors.SYN303_processor import SYN303Processor
@@ -56,6 +57,8 @@ def get_processor(fname, frame, logger, **kwargs):
         'SMI35': SMI35Processor,
         'MEGURO': MeguroProcessor,
         'AT8': AT8Processor,
+        'TDP43MP': TDP43MPProcessor,
+        'TDP43': TDP43MPProcessor,         # TODO: is this right?
         'IBA1': IBA1Processor,
         'R13': R13Processor,
         'MJFR13': R13Processor,
@@ -206,9 +209,9 @@ def process_rois(args, slides, logger):
     
     # loop through the slides
     rois_to_process = []
-    for slide_f in tqdm(slides):
-        logger.debug('Processing Slide: %s' % slide_f)
-        
+    for slide_f in slides:
+        logger.info('Setting up %s' % slide_f)
+
         anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
         if anno_f is None:
             continue
@@ -219,7 +222,7 @@ def process_rois(args, slides, logger):
         
         # load the main roi(s) from the json file
         main_rois = load_rois(logger, anno_f, args.main_class, args.main_name)
-        
+
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
 
@@ -292,22 +295,15 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     # the various AO results
     params = Params()
     
-    # create odir for detection jsons, if needed
-    roi_odir = sana_io.create_odir(args.odir, 'detections')
+    # create the directory for polygon detections
+    detection_odir = sana_io.create_odir(args.odir, 'detections')
     
     # create the output directory path
-    # NOTE: XXXX-XXX-XXX/antibody/region/ROI_0/
-    slide_f = loader.fname    
-    try:
-        bid = sana_io.get_bid(slide_f)
-        antibody = sana_io.get_antibody(slide_f)
-        region = sana_io.get_region(slide_f)
-        odir = sana_io.create_odir(args.odir, bid)
-        odir = sana_io.create_odir(odir, antibody)
-        odir = sana_io.create_odir(odir, region)
-        odir = sana_io.create_odir(odir, roi_id)
-    except:
-        odir = sana_io.create_odir(args.odir, roi_id)
+    # NOTE: output/slide_name/slide_name.*
+    slide_f = loader.fname
+    slide_name = os.path.splitext(os.path.basename(slide_f))[0]
+    odir = sana_io.create_odir(args.odir, slide_name)
+    odir = sana_io.create_odir(odir, roi_id)
     logger.debug('Output directory successfully created: %s' % odir)
 
     # generate a quick plot of the thumbnail, and the main/sub ROIs we loaded in
@@ -334,17 +330,17 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         # rotate/translate the coord. system to retrieve the frame from
         # the slide. the frame will be orthogonalized such that CSF is
         # at the top and WM is at the bottom of the image.
-        frame = loader.load_gm_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_gm_frame(logger, params, main_roi, padding=args.padding)
         
     elif args.mode == 'GMZONE':
 
         # same rotation goal as above, except we have to test all
         #  4 sides of the input ROI to find the CSF
-        frame = loader.load_gm_zone_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_gm_zone_frame(logger, params, main_roi, padding=args.padding)
         
     else:
         # just translates the coord. system, no rotating or cropping
-        frame = loader.load_roi_frame(params, main_roi, padding=args.padding, logger=logger)
+        frame = loader.load_roi_frame(logger, params, main_roi, padding=args.padding)
 
     # transform the ROIs to the Frame's coord. system
     transform_poly(
@@ -374,7 +370,7 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         return None
 
     # finally, analyze the frame based on the antibody it was stained with
-    processor.run(odir, roi_odir, first_run, params, main_roi, sub_rois)
+    processor.run(odir, detection_odir, first_run, params, main_roi, sub_rois)
 #
 # end of process
 
@@ -417,12 +413,13 @@ def main(argv):
 
     # setup the logger
     logger = SANALogger.get_sana_logger(args.debug_level)
-    
+
     # get all the slide files to process
     slides = get_slides(logger, args.lists, args.skip)
     if len(slides) == 0:
-        parser.print_usage()
-
+        logger.error('No files found in lists: %s' % str(args.lists))
+        exit()
+        
     # get the ROIs within the slides to process
     logger.info('Number of slides found: %d' % len(slides))
     if args.reprocess:    
@@ -441,7 +438,7 @@ def main(argv):
         # join and wait until all jobs are finished        
         [job.join() for job in jobs]        
         
-    # TODO: put sana_results here
+    # # TODO: put sana_results here
     
     # # TODO: put the SLIDESCAN aggregation here
     # for slide_f in slides:

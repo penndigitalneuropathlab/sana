@@ -14,6 +14,12 @@ import geojson
 # sana packages
 from sana_geo import Polygon, Point, Annotation
 
+class SlideNameException(Exception):
+    def __init__(self, fname, message='ERROR: Cannot parse slide file: %s'):
+        self.message = message % fname
+        super().__init__(self.message)
+    
+
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
 #  e.g. ./data/x.svs -> /Users/yourname/data/x.svs
@@ -85,8 +91,8 @@ def get_slide_name(fname):
 
 def get_slide_parts(fname):
     if not is_slide(fname):
-        print('ERROR: Cannot parse slide parts from file: %s' % fname)
-        exit()
+        raise SlideNameException(fname)
+
     fname = ntpath.basename(fname)
     parts = fname.split('_')
     if len(parts) == 7:
@@ -208,7 +214,8 @@ def get_slides_from_lists(lists):
     # concatenate all slide lists
     slides = []
     for f in lists:
-        slides += read_list_file(f)
+        if os.path.exists(f):
+            slides += read_list_file(f)
     return slides
 #
 # end of get_slides_from_lists

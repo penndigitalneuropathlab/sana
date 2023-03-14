@@ -147,7 +147,7 @@ class Loader(openslide.OpenSlide):
     # end of load_frame
 
     # this function uses the bounding box of an ROI to load a frame of data
-    def load_roi_frame(self, params, orig_roi, padding=None, copy=True, logger=None):
+    def load_roi_frame(self, logger, params, orig_roi, padding=None, copy=True):
         
         # create a copy to not disturb the original data
         if copy:
@@ -208,13 +208,13 @@ class Loader(openslide.OpenSlide):
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
     # TODO: need to pad the segmentation somehow to provide context for tiling
-    def load_gm_frame(self, params, orig_roi, padding=None, logger=None):
+    def load_gm_frame(self, logger, params, orig_roi, padding=None):
 
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
         # load the frame from the ROI
-        frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
+        frame = self.load_roi_frame(logger, params, roi, padding, copy=False)
 
         if logger.plots:
             fig, axs = plt.subplots(2,2)
@@ -285,13 +285,13 @@ class Loader(openslide.OpenSlide):
 
     # this function loads a frame of slide data using a given
     # GM Greatest samping zone ROI, which is 4 points 
-    def load_gm_zone_frame(self, params, orig_roi, padding=None, logger=None):
+    def load_gm_zone_frame(self, logger, params, orig_roi, padding=None):
 
         # create a copy to not disturb the original data
         roi = orig_roi.copy()
 
         # load the frame from the ROI
-        frame = self.load_roi_frame(params, roi, padding, copy=False, logger=logger)
+        frame = self.load_roi_frame(logger, params, roi, padding, copy=False)
 
         if logger.plots:
             fig, axs = plt.subplots(1,3)
