@@ -46,6 +46,7 @@ ANTIBODY_MEASUREMENTS = {
     'AT8': ['manual', 'auto'],
     'TDP43': ['manual', 'auto'],
     'TDP43MP': ['manual', 'auto'],
+
 }
 
 class DirectoryIncompleteError(Exception):

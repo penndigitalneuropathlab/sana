@@ -184,13 +184,26 @@ class Loader(openslide.OpenSlide):
             fig, axs = plt.subplots(1,1)
             axs.imshow(frame.img)
             plot_poly(axs, roi, color='red')
-            fig.suptitle('load_roi_frame')
+            fig.suptitle('Main ROI in slide coordinate system')
             plt.show()
 
         return frame
     #
     # end of load_roi_frame
 
+    def load_from_params(self, params):
+        frame = self.load_frame(params.data['loc'], params.data['size'], frame_padding=params.data['padding'])
+        
+        M, nw, nh = frame.get_rotation_mat(params.data['angle1'])
+        frame.warp_affine(M, nw, nh)
+
+        frame.crop(params.data['crop_loc'], params.data['crop_size'])
+
+        M, nw, nh = frame.get_rotation_mat(params.data['angle2'])
+        frame.warp_affine(M, nw, nh)
+
+        return frame
+    
     # this function loads a frame of slide data using a given GM segmentation
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
@@ -208,6 +221,7 @@ class Loader(openslide.OpenSlide):
             axs = axs.ravel()
             axs[0].imshow(frame.img)
             plot_poly(axs[0], roi, color='red')
+            axs[0].set_title('Original Frame')
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
@@ -221,6 +235,7 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
+            axs[1].set_title('Rotated to tissue')
 
         # crop the frame/ROI to remove borders
         # TODO: this might affect the amount of slide that is found near boundaries
@@ -232,6 +247,7 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
+            axs[2].set_title('Cropped to ROI')
 
         # figure out if the image is oriented with CSF on top
         # TODO: make sure get_tissue_orientation is good
@@ -249,7 +265,8 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
-            fig.suptitle('load_gm_frame')
+            axs[3].set_title('Ensured CSF is on top')
+            fig.suptitle('Frame orthogonalized to the tissue')
             plt.show()
 
         # store the values used during loading the frame
@@ -339,7 +356,7 @@ class Loader(openslide.OpenSlide):
             w = np.max(l[0][:,0])-np.min(l[0][:,0])
             l[0].rotate(c, -angle)
         else:
-            w = 3000 # TODO: make this a args parameter
+            w = 6000 # TODO: make this a args parameter
 
         # sort the vector by the y values
         v = v[np.argsort(v[:,1])]
