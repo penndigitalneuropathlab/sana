@@ -253,21 +253,32 @@ class HDABProcessor(Processor):
     def run_segment(self, odir, params, landmarks, padding=0):
 
         hem = self.hem.copy()
-        hem.anisodiff() # TODO: test if we need this?
+        hem.rescale(0, 1) # HOTFIX: included to allow better thresholding
+        hem.anisodiff() # HOTFIX: this is most likely needed
         
         # detect the the hematoxylin cells
         # TODO: try hem - dab??? some faint HEM comes from the dark DAB
         # TODO: try 2 iterations
-        disk_r = 5
-        sigma = 3
-        n_iterations = 1
-        close_r = 9
-        open_r = 7
-        clean_r = 5
+        disk_r = 5 # HOTFIX: anything smaller and we'll detect everything
+        sigma = 5 # HOTFIX: helps to smooth interior of cells, but worried about borders
+        n_iterations = 1 # HOTFIX: >1 does not work
+        close_r = 5 # HOTFIX: 9 was used previously for dendrites in NeuN
+        open_r = 7 
+        clean_r = 9 # HOTFIX: this helps to remove vessels
+
         hem_hist = hem.histogram()
-        scale = 0.7
-        mx = 150
-        hem_threshold = max_dev(hem_hist, scale=scale, mx=mx)
+        
+        # HOTFIX: first get the csf threshold, this gets a better HEM threshold, NOTE not tested yet on larger data
+        csf_threshold = max_dev(hem_hist, scale=1.0, mx=100, debug=self.logger.plots)
+
+        # TODO: need a test to make sure the csf threshold was correctly identified, maybe look for CSF in the original image?
+        hem_hist[:csf_threshold] = 0
+
+        # HOTFIX: this needs to be tested on large data
+        scale = 1.0
+        mx = 100     
+        hem_threshold = max_dev(hem_hist, scale=scale, mx=mx, debug=self.logger.plots)
+        
         self.main_mask = None
         hem_cells = self.segment_cells(
             hem, hem_threshold, disk_r, sigma, n_iterations,
@@ -284,21 +295,13 @@ class HDABProcessor(Processor):
 
         # tile size and step for the convolution operation to calculate feats
         tsize = Point(400, 300, True)
-        tstep = Point(15, 15, True)
+        tstep = Point(100, 100, True) # HOTFIX: 15 was way too low!
 
         # calculate features from the cell detections
         # TODO: include other pixel features other than intensity
-        heatmap = Heatmap(self.hem, hem_cells, tsize, tstep, min_area=0, debug=True)
+        heatmap = Heatmap(self.hem, hem_cells, tsize, tstep, min_area=0)
         feats = heatmap.run([heatmap.density, heatmap.intensity, heatmap.area])
         feats_labels = ['DENSITY', 'INTENSITY', 'AREA']
-
-        # # calculate the %AO of the cells
-        # cell_mask = create_mask(
-        #     hem_cells, self.frame.size(), self.frame.lvl, self.frame.converter)
-        # hm = Heatmap(cell_mask, hem_cells, tsize, tstep)
-        # ao = hm.ao
-        # feats = np.concatenate([feats, [ao]], axis=0)
-        # feats_labels.append('AO')
 
         # standardize the feats so that they all contribute equally to the fitness calculation
         feats[feats==np.nan] = 0
@@ -324,13 +327,17 @@ class HDABProcessor(Processor):
         self.logger.info('Fitting CSF Boundary')
         landmarks[0,1] = 0.0
 
-        # TODO: should be 1 instead of 2!
-        csf_gm = self.fit_boundary(gray, gray_ds[1], landmarks[0,1], landmarks[2,1], debug=self.logger.plots)
+        # detect the CSF to GM boundary with the grayscale feature
+        csf_gm_score = self.get_score_matrix(
+            gray[0], gray_ds[1], landmarks[0,1], landmarks[1,1])
+        csf_gm = np.argmax(csf_gm_score, axis=0)
         
         # detect the GM to WM boundary with the cell features
         feats_ds = heatmap.tiler.ds
         self.logger.info('Fitting GM Boundary')        
-        gm_wm, feat_ind = self.fit_boundary_on_feat(feats, feats_ds[1], landmarks[1,1], landmarks[2,1], debug=self.logger.plots)
+        gm_wm_score, feat_ind = self.get_score_matrix_on_feat(
+            feats, heatmap.tiler.ds[1], landmarks[1,1], landmarks[2,1])
+        gm_wm = np.argmax(gm_wm_score, axis=0)
 
         # get the x arrays for the boundaries
         csf_gm_x = np.linspace(0, feats.shape[2], csf_gm.shape[0])
@@ -356,46 +363,30 @@ class HDABProcessor(Processor):
                 axs[i+3].plot(new_x, csf_gm_y, color='red')
                 axs[i+3].plot(new_x, gm_wm_y, color='blue')
                 axs[i+3].plot(landmarks[:,0]/feats_ds[0], landmarks[:,1]/feats_ds[1], 'x', color='purple')
-            
-        # smooth the boundaries with a moving average filter
-        # TODO: this is not really how to do it, theres too much large spikes
-        #       that the script attaches to. really want to do waht paul said
-        #       the general density of the layer shouldn't change that much
-        Mfilt = 17
-        #csf_gm_y = convolve1d(csf_gm_y, np.ones(Mfilt)/Mfilt, mode='reflect')
-        #gm_wm_y = convolve1d(gm_wm_y, np.ones(Mfilt)/Mfilt, mode='reflect')
-        #csf_gm_y = medfilt(csf_gm_y, Mfilt)
-        #gm_wm_y = medfilt(gm_wm_y, Mfilt)
 
-        # scale back to the original resolution
-        new_x *= heatmap.tiler.ds[0]
-        csf_gm_y *= feats_ds[1]
-        gm_wm_y *= feats_ds[1]
+        # generate the Line annotations
+        csf_gm = sana_geo.Line(new_x, csf_gm_y, False, frame.lvl).to_annotation(ofname, 'CSF_BOUNDARY', connect=False)
+        gm_wm = sana_geo.Line(new_x, gm_wm_y, False, frame.lvl).to_annotation(ofname, 'GM_WM_BOUNDARY', connect=False)
 
-        # convert the GM/WM boundary to a straight line
-        #gm_wm_line = Line(new_x, gm_wm_y, False, self.frame.lvl)
-        #m, b = gm_wm_line.linear_regression()
-        #gm_wm_y = new_x * m + b
+        # scale back to original resolution
+        csf_gm[:,0] *= feats_ds[0]
+        gm_wm[:,0] *= feats_ds[0]
+        csf_gm[:,1] *= feats_ds[1]
+        gm_wm[:,1] *= feats_ds[1]
         
         if self.logger.plots:
             fig, ax = plt.subplots(1,1)
             ax.imshow(self.frame.img)
-            ax.plot(new_x, csf_gm_y, color='black')
-            ax.plot(new_x, gm_wm_y, color='black')
+            ax.plot(new_x, csf_gm, color='black')
+            ax.plot(new_x, gm_wm, color='black')
             plt.show()
 
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='GM', fpath=odir)
-
-        # generate and store the annotations
-        csf_gm = Polygon(new_x, csf_gm_y, False, self.frame.lvl).to_annotation(ofname, 'CSF_BOUNDARY')
-        gm_wm = Polygon(new_x, gm_wm_y, False, self.frame.lvl).to_annotation(ofname, 'GM_WM_BOUNDARY')
         boundaries = [csf_gm, gm_wm]
         
         # inverse transform the annotations
-        [transform_inv_poly(
-            x, params.data['loc'], params.data['crop_loc'],
-            params.data['M1'], params.data['M2']) for x in boundaries]
+        [transform_poly_with_params(x, params, inverse=True) for x in boundaries]
 
         # finally, write the predicted boundaries
         sana_io.write_annotations(ofname, boundaries)
@@ -404,315 +395,90 @@ class HDABProcessor(Processor):
         for i in range(feats.shape[0]):
             self.save_array(odir, feats[i], feats_labels[i])
 
+        # save all parameters used to load and transform the frame
         self.save_params(odir, params)            
     #
     # end of run_segment
 
-    # this fits a step function to each column in the img
-    # TODO: the values of step function are set by the max of the row, is this good?
-    def fit_boundary(self, feats, ds, st, en, v0=None, v1=None, debug=False):
-
-        # scale the st/en boundaries to the feature array
-        st = int(round(st / ds))
-        en = int(round(en / ds))
-        if st < 0:
-            st = 0
-        if en > feats.shape[1]-1:
-            en = feats.shape[1]-1
-
-        sigs_img = np.zeros_like(feats)
-        score_img = np.zeros_like(feats[0])
-            
-        # calculate the boundary at each column
-        boundary = np.zeros(feats.shape[2])
-        for j in tqdm(range(feats.shape[2])):
-
-            # extract the signal column
-            sig = feats[:, st:en, j]
-            n = sig.shape[1]
-
-            if n == 0:
-                boundary[j] = st
-                continue
-
-            # get the 2 extreme values for the step function
-            if v0 is None:
-                v0 = np.mean(feats[:,st,:], axis=1)[:, None]
-            if v1 is None:
-                v1 = np.mean(feats[:,en,:], axis=1)[:, None]
-
-            # calculate the distance score for each possible index in the signal
-            mi_x0 = 2
-            best_score = 0
-            best_x0 = mi_x0
-            for x0 in range(mi_x0, sig.shape[1]-1):
-
-                # create the template signal to compare to the original signal
-                template = np.zeros_like(sig)
-                template[:, :x0] = v0
-                template[:, x0:] = v1
-
-                # calculate the distance between the signals
-                corr = []
-                for i in range(feats.shape[0]):
-                    x, y = sig[i], template[i]
-                    corr.append(np.mean((x-np.mean(x))*(y-np.mean(y))) / (np.std(x)*np.std(y)))
-                if len(corr) == 1:
-                    score = corr[0]
-                else:
-                    score = np.mean(corr)
-                score_img[st+x0,j] = score
-                if score > best_score:
-                    best_score = score
-                    sigs_img[:,st:en,j] = template
-                    best_x0 = x0
-            #
-            # end of score calculation
-
-            # the boundary val at this column is the min distance index
-            boundary[j] = st + best_x0
-        #
-        # end of boundary detection
-
-        if debug:
-            fig, axs = plt.subplots(2, feats.shape[0]+1)
-            for i in range(feats.shape[0]):
-                axs[0,i].imshow(feats[i])
-                axs[1,i].imshow(sigs_img[i])
-            axs[0,-1].imshow(score_img)
-            axs[1,-1].imshow(score_img)
-            for ax in axs.ravel():
-                ax.set_aspect(feats.shape[2] / feats.shape[1])
-        
-        return boundary
+    # creates a simple step function
+    # TODO: make more sophisticated templates
+    def get_step_template(N, v0, v1, x0):
+        template = np.zeros(N)
+        template[:x0] = v0
+        template[x0:] = v1
+        return template
     #
-    # end of fit_boundary
+    # end of get_step_template
+    
+    # gets the correlation score between the feat signal and various templates
+    def get_boundary_scores(sig, v0, v1, pad_st, pad_en):
 
-    # this finds the "best" feature to segment on by looking at the difference
-    #  between the values at each landmark
-    def fit_boundary_on_feat(self, feats, ds, st, en, debug=False):
+        # for stability, don't start at 0
+        mi_x0 = 2
+        score = np.zeros(sig.shape[0])
 
-        # scale the st/en boundaries to the feature array
-        st = int(round(st / ds))
-        en = int(round(en / ds))
-        if st < 0:
-            st = 0
-        if en > feats.shape[1]-1:
-            en = feats.shape[1]-1
+        # loop through all possible boundary locations
+        for x0 in range(mi_x0, score.shape[0]-mi_x0):
+
+            # get the template for this boundary decision
+            template = get_step_template(sig.shape[0], v0, v1, x0)
+
+            # calculate the score for this boundary
+            x, y = sig, template
+            score[x0] = np.mean((x-np.mean(x))*(y-np.mean(y)) / \
+                                (np.std(x)*np.std(y)))
+            
+        score = np.pad(score, (pad_st, pad_en))
         
-        # get the 2 extreme values for the step function
-        v0 = np.mean(feats[:, st,:], axis=1)[:, None]
-        v1 = np.mean(feats[:, en,:], axis=1)[:, None]
+        return score
+    #
+    # end of get_boundary_scores
+
+    def get_score_matrix(feat, ds, st, en):
+
+        # y extrema from the vector to use as cutoff points
+        st = np.clip(int(round(st / ds)), 0, None)
+        en = np.clip(int(round(en / ds)), None, feat.shape[0]-1)
+
+        # calculate the feat values at each extrema
+        # TODO: maybe shouldn't average across entire row? maybe a 3x3 pixel box or something?
+        v0 = np.mean(feat[st,:])
+        v1 = np.mean(feat[en,:])
+
+        pad_st = st
+        pad_en = feat.shape[0] - en
+
+        # loop through each column where we must make a boundary decision
+        score = np.zeros(feat.shape)
+        for ind in tqdm(range(feat.shape[1])):
+
+            # calculate the score for each boundary decision in this column
+            sig = feat[st:en, ind]
+            score[:,ind] = get_score(sig, v0, v1, pad_st, pad_en)
+            
+        return score
+
+    # finds the feature in the feats matrix with the highest disparity, then uses it to generate the score matrix
+    def get_score_matrix_on_feat(self, feats, ds, st, en):
+        
+        # y extrema from the vector to use as cutoff points
+        st = np.clip(int(round(st / ds)), 0, None)
+        en = np.clip(int(round(en / ds)), None, feat.shape[0]-1)
+
+        # calculate the feat values at each extrema
+        # TODO: maybe shouldn't average across entire row? maybe a 3x3 pixel box or something?
+        v0 = np.mean(feat[st,:])
+        v1 = np.mean(feat[en,:])
 
         # find the feat with the largest disparity
         feat_ind = np.argmax(np.abs((v0-v1)/v0))
-
         feats = feats[feat_ind][None, ...]
-        boundary = self.fit_boundary(feats, 1, st, en, debug)
-        return boundary, feat_ind
 
-    # this fits a sloped pulse function to each column in the img
-    # TODO: the values of pulse function are set by the max of the row, is this good?
-    def fit_boundaries(self, feats, st, en):
-
-        # get the 3 extreme values for the pulse function
-        v0 = np.mean(feats[:, st, :], axis=1)[:,None]
-        v1 = np.max(np.max(feats[:, st:en, :], axis=1), axis=1)[:,None]
-        v2 = np.mean(feats[:, en, :], axis=1)[:,None]
-
-        # find the feat with the largest disparity
-        # feat_ind = np.argmax(np.abs((v0-v1)/v0) + np.abs((v1-v2)/v2))
-        # feats = feats[feat_ind][None, ...]
-        # v0 = np.mean(feats[:, st, :], axis=1)[:,None]
-        # v1 = np.max(np.max(feats[:, st:en, :], axis=1), axis=1)[:,None]
-        # v2 = np.mean(feats[:, en, :], axis=1)[:,None]
-
-        # calculate the width the pulse that is flat
-        # TODO: make this a parameter!
-        flat_percent = 0.6
-        incline_percent = (1 - flat_percent) / 2
-
-        # calculate the boundaries at each column
-        boundary0, boundary1 = np.zeros(feats.shape[2]), np.zeros(feats.shape[2])
-        for j in range(feats.shape[2]):
-
-            # extract the signal column
-            sig = feats[:, st:en, j]
-            n = sig.shape[1]
-
-            # calculate the distance score for each possible combination of indices
-            score = np.zeros((sig.shape[1], sig.shape[1]), dtype=float)
-            for x0 in range(1, sig.shape[1]):
-                for x1 in range(x0+4, sig.shape[1]):
-
-                    x0p = int((x1-x0)*incline_percent) + x0
-                    x1p = x1 - int((x1-x0)*incline_percent)
-
-                    v01 = np.linspace(v0[:,0], v1[:,0], x0p-x0).T
-                    v12 = np.linspace(v1[:,0], v2[:,0], x1-x1p).T
-
-                    # create the template signal to compare to the original signal
-                    template = np.zeros_like(sig)
-                    template[:, :x0] = v0
-                    template[:, x0:x0p] = v01
-                    template[:, x0p:x1p] = v1
-                    template[:, x1p:x1] = v12
-                    template[:, x1:] = v2
-
-                    # calculate the distance between the signals
-                    corr = []
-                    for i in range(feats.shape[0]):
-                        x, y = sig[i], template[i]
-                        corr.append(np.mean((x-np.mean(x))*(y-np.mean(y))) / (np.std(x)*np.std(y)))
-                    score[x0][x1] = np.mean(corr)
-            #
-            # end of score calculation
-
-            # the boundary vals at this column are the min distance indices
-            inds = np.unravel_index(np.argmax(score), score.shape)
-            boundary0[j] = inds[0] + st
-            boundary1[j] = inds[1] + st
-        #
-        # end of boundary detection
-
-        return boundary0, boundary1
+        score = get_score_matrix(feats, ds, st, en)
+        
+        return score, feat_ind
     #
-    # end of fit_boundaries
-
-    def detect_hem_cells(self, params,
-                         disk_r, sigma, n_iterations, close_r, open_r):
-
-        # smooth the image
-        # self.hem.anisodiff()
-
-        self.hem_hist = self.hem.histogram()
-        self.hem_threshold = max_dev(self.hem_hist, mx=110)
-
-        # get the image array
-        img = self.hem.img.copy()[:,:,0]
-
-        # do some thresholding and morph filters to
-        # 1) remove faint objects (ambiguous)
-        # 2) delete tiny objects (too small/fragments)
-        # 3) close holes in center of faint neurons
-        thresh_img = img.copy()
-        thresh_img = np.where(thresh_img < self.hem_threshold, 0, 255)
-        thresh_img = thresh_img.astype(np.uint8)
-        close_kern = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (close_r, close_r))
-        thresh_img = cv2.morphologyEx(thresh_img, cv2.MORPH_CLOSE, close_kern)
-        open_kern = cv2.getStructuringElement(
-            cv2.MORPH_ELLIPSE, (open_r, open_r))
-        thresh_img = cv2.morphologyEx(thresh_img, cv2.MORPH_OPEN, open_kern)
-
-        # mask out all unwanted data as described above
-        img[thresh_img == 0] = 0
-
-        # define the sure background, anything 0 and not close in prox. to data
-        dil_kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        sure_bg = cv2.dilate(thresh_img, dil_kern, iterations=3)
-
-        # perform the min-max filtering to maximize centers of cells
-        # TODO: inverse this filter
-        img_minmax = minmax_filter(255-img, disk_r, sigma, n_iterations)
-
-        # define the sure foreground, small circles at minimums of filter output
-        candidates = np.where((img_minmax == -1) & (img != 0))
-        r0 = 3
-        sure_fg = np.zeros_like(img, dtype=np.uint8)
-        for i in range(len(candidates[0])):
-            sure_fg = cv2.circle(sure_fg,
-                                 (candidates[1][i], candidates[0][i]),
-                                 r0, color=255, thickness=-1)
-
-        # get the unknown areas of the image, not defined by sure bg or fg
-        unknown = cv2.subtract(sure_bg, sure_fg)
-
-        # run the watershed algo
-        ret, markers = cv2.connectedComponents(sure_fg)
-        markers += 1
-        markers[unknown == 255] = 0
-        rgb_hem = np.stack((self.hem.img[:,:,0],)*3, axis=-1)
-        markers = cv2.watershed(rgb_hem, markers)
-        markers[markers==1] = 0
-        markers[:,0] = 0
-        markers[:,-1] = 0
-        markers[0,:] = 0
-        markers[-1,:] = 0
-
-        # cells = []
-        # for i in tqdm(range(2, np.max(markers))):
-        #     points = np.where(markers == i)
-        #     points = np.vstack([points[1], points[0]]).T
-        #     ch = ConvexHull(points)
-        #     xy = points[ch.vertices]
-        #     cells.append(Polygon(xy[:,0], xy[:,1], False, 0))
-        #     #cells.append(hull_to_poly(ch, points))
-
-        # TODO: this method doesn't separate some touching cells, but its fast
-        mframe = self.frame.copy()
-        mframe.img = np.where(markers <= 1, 0, 1).astype(np.uint8)
-        mframe.get_contours()
-        mframe.filter_contours()
-
-        cells = [c.polygon for c in mframe.get_body_contours()]
-
-        if self.logger.plots:
-            rgb_markers = np.zeros_like(rgb_hem)
-            colors = [(np.random.randint(10, 255),
-                       np.random.randint(10, 255),
-                       np.random.randint(10, 255)) \
-                      for _ in range(1,np.max(markers))]
-            colors = [(0,0,0)] + colors + [(80,80,80)]
-            for j in tqdm(range(rgb_markers.shape[0])):
-                for i in range(rgb_markers.shape[1]):
-                    rgb_markers[j,i] = colors[markers[j,i]]
-
-            fig, axs = plt.subplots(1, 5, sharex=True, sharey=True)
-            axs[0].imshow(self.frame.img)
-            axs[0].set_title('orig')
-            #axs[1].imshow(img, vmin=vmi, vmax=vmx)
-            axs[1].imshow(img)
-            axs[1].set_title('preprocess')
-            axs[2].imshow(img_minmax)
-            axs[2].plot(candidates[1], candidates[0], '+', color='red', markersize=3)
-            axs[2].set_title('min-max filter')
-            axs[3].imshow(rgb_markers)
-            axs[3].set_title('segmented cells')
-            axs[4].imshow(self.frame.img)
-            axs[4].plot(candidates[1], candidates[0], '+', color='green', markersize=4)
-            axs[4].set_title('candidate locs')
-            plt.show()
-
-        if self.logger.plots:
-            gray = self.frame.copy()
-            gray.to_gray()
-
-            cell_eccs = np.array([cell.eccentricity() for cell in cells])
-            cell_ints = np.array([np.mean(gray.get_tile(*cell.bounding_box())) \
-                                  for cell in cells])
-            cell_dabs = np.array([np.mean(self.dab.get_tile(*cell.bounding_box())) \
-                                  for cell in cells])
-            cell_sizes = np.array([cell.area() for cell in cells])
-
-
-            fig, axs = plt.subplots(1,4)
-            axs[0].hist(cell_eccs, bins=100, range=(0,1))
-            axs[0].set_xlabel('eccentricity')
-            axs[1].hist(cell_ints, bins=255, range=(0,255))
-            axs[1].set_xlabel('grayscale intensity')
-            axs[2].hist(cell_dabs, bins=255, range=(0,255))
-            axs[2].set_xlabel('dab intensity')
-            axs[3].hist(cell_sizes, bins=100)
-            axs[3].set_xlabel('area')
-            fig.suptitle('histograms for detected cells')
-            plt.show()
-        #
-        # end of debugging
-
-        return cells
-    #
-    # end of detect_hem_cells
+    # end of get_score_matrix_on_feat
 #
 # end of HDABProcessor
 

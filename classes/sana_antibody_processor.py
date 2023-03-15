@@ -117,10 +117,7 @@ class Processor:
         img_objs = self.get_thresh(frame.img, threshold, self.main_mask, close_r, clean_r)
 
         # run the distance transforms to find parts of circular objects far away from background
-        # TODO: this normalize is a little dangerous, think about blank images
-        # TODO: don't really need to normalize, minmax handles all that since its relateive to the disk
         img_dist = cv2.distanceTransform(img_objs, cv2.DIST_L2, 3)
-        img_dist = cv2.normalize(img_dist, 0, 255, cv2.NORM_MINMAX)
 
         # run the minmax filter to find the centers of the cells
         img_minmax = minmax_filter(img_dist, disk_r, sigma, n_iterations)
@@ -133,6 +130,7 @@ class Processor:
         for i in range(len(candidates[0])):
             sure_fg = cv2.circle(sure_fg, (candidates[1][i], candidates[0][i]),
                                  r0, color=255, thickness=-1)
+        sure_fg = sure_fg[:,:,0][:,:,None] # HOTFIX: this converts the 3D to 1D
 
         # threshold the frame for all cell parts using smaller kernel for segmentation
         img_thresh = self.get_thresh(frame.img, threshold, self.main_mask, close_r, open_r)
@@ -149,27 +147,53 @@ class Processor:
         ret, markers = cv2.connectedComponents(sure_fg)
         markers += 1
         markers[unknown == 255] = 0
-        #img_thresh_rgb = np.stack((img_thresh,)*3, axis=-1)
-        img_thresh_rgb = np.stack((np.rint(frame.img[:,:,0]).astype(np.uint8),)*3, axis=-1)
-        #img_thresh_rgb = self.frame.img
-        markers = cv2.watershed(img_thresh_rgb, markers)
+        hem_rgb = np.concatenate([hem.img, hem.img, hem.img], axis=-1) # HOTFIX: running watershed on the hem channel
+        markers = cv2.watershed(hem_rgb, markers)
         markers[markers <= 1] = 0
 
-        # generate Polygons from the instance segmented markers image
-        # TODO: store the mu/sg intensity w/ the polygon!
-        cells = []
-        z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
-        o = z.copy() + 1
-        self.logger.info('Generating Cell Detection Polygons')
-        for val in tqdm(range(1, np.max(markers)+1)):
-            x = np.where(markers == val, o, z)
-            f = Frame(x, frame.lvl, frame.converter)
-            f.get_contours()
-            f.filter_contours()
-            bodies = f.get_body_contours()
-            if len(bodies) != 0:
-                cells.append(bodies[0].polygon.connect())
+        njobs = 8
+        cells = self.markers_to_cells(markers, njobs)
 
+    def markers_to_cells(markers, njobs):
+        
+        # get the the height of each section of the frame to split into
+        step = int(self.frame.size()[1]/njobs)
+        args_list = []
+        for n in range(njobs):
+            st = n*step
+            en = st+step
+            args_list.append(
+                {
+                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
+                    'lvl': self.frame.lvl,
+                    'converter': copy(self.frame.converter),
+                    'st': st,
+                    'en': en,
+                }
+            )
+        manager = Manager()
+        ret = manager.dict()
+        jobs = []
+        for pid in range(njobs):
+            p = Process(target=run_segment_markers,
+                        args=(pid, ret, args_list[pid]))
+            jobs.append(p)
+        [p.start() for p in jobs]
+        [p.join() for p in jobs]
+
+        cells = []
+        for pid in ret:
+            cells += ret[pid]
+        cells = [x for x in cells if not x is None]
+
+        # TODO: this is related to the issue in sana_process where pickling loses these attributes
+        for cell in cells:
+            cell.is_micron = False
+            cell.lvl = self.frame.lvl
+            cell.order = 1
+            
+        return cells
+        
         if self.logger.plots:
             self.logger.debug('Recoloring Cell Markers')
             rgb_markers = np.zeros_like(self.frame.img)
@@ -202,9 +226,6 @@ class Processor:
             axs[6].plot(candidates[1], candidates[0], 'x', color='red')
             axs[7].matshow(rgb_markers, cmap='rainbow')
             axs[7].set_title('Instance Segmented Cells')
-            # axs[6].matshow(255-sure_bg, cmap='gray')
-            # axs[6].set_title('Sure Background Data')
-            
             fig.tight_layout()
         #
         # end of debugging plots
@@ -308,6 +329,31 @@ class Processor:
     # end of save_params
 #
 # end of Processor
+
+def run_segment_markers(pid, ret, args):
+    ret[pid] = segment_markers(**args)
+    
+def segment_markers(markers, lvl, converter, st, en):
+    #markers = markers[:, st:en].copy()
+    cells = []
+    z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
+    o = z.copy() + 1
+    st_val = np.min(markers[markers != 0])
+    if st_val == 0:
+        st_val = 1
+    en_val = np.max(markers)+1
+    print(st, st_val, en_val)
+    for val in tqdm(range(st_val, en_val)):
+        x = np.where(markers == val, o, z)
+        f = Frame(x, lvl, converter)
+        f.get_contours()
+        f.filter_contours()
+        bodies = f.get_body_contours()
+        if len(bodies) != 0:
+            cell = bodies[0].polygon.connect()
+            cell[:,1] += st
+            cells.append(cell)
+    return cells
 
 #
 # end of file

@@ -61,6 +61,15 @@ class Frame:
     #
     # end of is_rgb
 
+    # checks if the image array has 3 channels
+    def is_rgba(self):
+        if len(self.img.shape) == 2:
+            return False
+        else:
+            return self.img.shape[2] == 4
+    #
+    # end of is_rgba
+    
     # checks to see if the image array is a 1 channel, 1 byte, 0 to 1 image
     def is_binary(self):
         if self.is_rgb():
@@ -122,7 +131,7 @@ class Frame:
             mi = np.min(self.img)
         if mx is None:
             mx = np.max(self.img)
-
+        self.img = self.img.clip(mi, mx)
         self.img = 255 * (self.img.astype(float) - mi) / (mx - mi)
         self.round()
 
@@ -259,7 +268,7 @@ class Frame:
                 np.save(fname.split('.')[0]+'.npy', self.img)
             else:
                 im = self.img
-                if not self.is_rgb():
+                if len(im.shape) > 3 and im.shape[2] == 1:
                     im = im[:, :, 0]
                 if self.is_binary():
                     im = 255 * im

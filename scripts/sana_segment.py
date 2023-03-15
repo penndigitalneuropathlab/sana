@@ -36,7 +36,7 @@ from sana_processors.HDAB_processor import HDABProcessor
 from sana_processors.HE_processor import HEProcessor
 
 # instantiates a Processor object based on the antibody of the svs slide
-# TODO: where to put this
+# TODO: make a sana_processors.py file so that no other file needs to import from sana_processors.*
 def get_processor(fname, frame, logger, **kwargs):
     try:
         antibody = sana_io.get_antibody(fname)
@@ -92,10 +92,10 @@ def main(argv):
         if not os.path.exists(landmarks_f):
             continue
         vectors = sana_io.read_annotations(landmarks_f, class_name=args.vector_class)
-        for vector_i, v in enumerate(vectors):
+        for vector_i, v_anno in enumerate(vectors):
 
             # convert the array to a Line array
-            v = Line(v[:,0], v[:,1], False, 0)
+            v = Line(v_anno[:,0], v_anno[:,1], False, 0)
             layers = None
 
             # initialize the loader
@@ -114,10 +114,10 @@ def main(argv):
             params = Params()
         
             # load the frame into memory
-            # TODO: clean this up!
+            # TODO: rewrite this function
             print('Loading the Frame', flush=True)
             frame, v, layers, M, orig_frame = loader.from_vector(
-                params, v, layers, padding=args.padding)
+                params, v, layers, args.length, padding=args.padding)
 
             # get the processor object
             kwargs = {
@@ -126,10 +126,12 @@ def main(argv):
             }
             processor = get_processor(slide_f, frame, logger, **kwargs)
 
-            odir = os.path.join(args.odir, os.path.basename(slide_f).replace('.svs', '_'+str(vector_i)))
-            if not os.path.exists(odir):
-                os.makedirs(odir)
-                
+            # TODO: also account for anno_name eventually
+            roi_id = '%s_%s' % (v_anno.class_name, str(vector_i))
+            slide_name = os.path.splitext(os.path.basename(slide_f))[0]
+            odir = sana_io.create_odir(args.odir, slide_name)
+            odir = sana_io.create_odir(odir, roi_id)
+            
             # run the GM segmentation algorithm!
             processor.run_segment(odir, params, v, padding=args.padding)
     #
@@ -152,6 +154,8 @@ def cmdl_parser(argv):
                         help='class name of the landmark vector to process')
     parser.add_argument('-padding', type=int, default=0,
                         help="amount of padding to add to the frame")
+    parser.add_argument('-length', type=int, default=1000,
+                        help="length along the cortex to segment")
     parser.add_argument(
         '-debug_level', type=str, default='normal',
         help="Logging debug level", choices=['full', 'debug', 'normal', 'quiet'])

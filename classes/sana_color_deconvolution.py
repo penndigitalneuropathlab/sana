@@ -125,9 +125,8 @@ class StainSeparator:
         od = self.to_od(rgb)
         stains = od @ v
 
-        # TODO: we used to clip to 0, however i don't think it's necessary
-        return stains        
-        #return np.clip(stains, 0, None)
+        # clip the data so that we don't underflow later
+        return np.clip(stains, 0, None)
 
     # converts the stain separated image back to an rgb image using the stain vector
     def combine_stains(self, stain):

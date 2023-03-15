@@ -754,9 +754,22 @@ class Line(Polygon):
         b = np.mean(y) - m * np.mean(x)
         return m, b
 
+    # convert the Line to a LineString Annotation to prepare for file io
+    def to_annotation(self, file_name, class_name,
+                      anno_name="", confidence=1.0, connect=True):
+        if connect:
+            x, y = self.connect().get_xy()
+        else:
+            x, y = self.get_xy()
+        return Annotation(None, file_name, class_name, anno_name,
+                          confidence=confidence, is_micron=self.is_micron,
+                          lvl=self.lvl, order=self.order, x=x, y=y, object_type='LineString')
+    #
+    # end of Line.to_annotation
+    
 class Annotation(Polygon):
     def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
-                is_micron=True, lvl=0, order=1, x=None, y=None):
+                is_micron=True, lvl=0, order=1, x=None, y=None, object_type='Polygon'):
 
         # initalize the array using the geometry
         if x is None or y is None:
@@ -768,6 +781,7 @@ class Annotation(Polygon):
         obj.class_name = class_name
         obj.name = anno_name
         obj.confidence = confidence
+        obj.object_type = object_type
     
         return obj
 
@@ -780,6 +794,7 @@ class Annotation(Polygon):
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
         self.order = getattr(obj, 'order', None)
+        self.object_type = getattr(obj, 'object_type', None)
     #
     # end of constructor
 
@@ -821,19 +836,23 @@ class Annotation(Polygon):
         verts = []
         for i in range(self.shape[0]):
             verts.append([self[i][0], self[i][1]])
-
+        if self.object_type == 'Polygon':
+            verts = [verts]
+            
         # create the JSON format, using the given class and name
         annotation = {
             "type": "Feature",
             "id": "PathAnnotationObject",
             "geometry": {
-                "type": "Polygon",
-                "coordinates": [verts]
+                "type": self.object_type,
+                "coordinates": verts,
             },
             "properties": {
                 "name": self.name,
+                "objectType": "annotation",
                 "classification": {
                     "name": self.class_name,
+                    "color": [255, 0, 0],
                 },
                 "confidence": self.confidence,
             }
