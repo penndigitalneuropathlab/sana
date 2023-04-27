@@ -71,11 +71,10 @@ class Processor:
         frame.mask(self.main_mask)
 
         # get the total area of the roi
-        # TODO: don't just divide by 255, make sure to check first!!
-        area = np.sum(self.main_mask.img / 255)
+        area = np.sum(self.main_mask.img / np.max(self.main_mask.img))
 
         # get the pos. area in the frame
-        pos = np.sum(frame.img / 255)
+        pos = np.sum(frame.img / np.max(frame.img))
 
         # calculate %AO of the main roi
         ao = pos / area
@@ -89,8 +88,8 @@ class Processor:
             else:
                 tmp_frame = frame.copy()
                 tmp_frame.mask(sub_mask)
-                sub_area = np.sum(sub_mask.img / 255)
-                sub_pos = np.sum(tmp_frame.img / 255)
+                sub_area = np.sum(sub_mask.img / np.max(sub_mask.img))
+                sub_pos = np.sum(tmp_frame.img / np.max(tmp_frame.img))
                 sub_ao = sub_pos / sub_area
                 sub_aos.append(sub_ao)
                 sub_areas.append(sub_area)

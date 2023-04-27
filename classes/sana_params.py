@@ -87,6 +87,7 @@ class Params:
 
     # loops through the stored key value pairs and writes them to the file
     def write_data(self, fname):
+        self.fname = fname
         fp = open(fname, 'w')
         for key in KEYS:
             if key in self.data:

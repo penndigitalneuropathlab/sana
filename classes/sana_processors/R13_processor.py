@@ -18,6 +18,7 @@ from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
 from wildcat.pixel_classifiers import R13Classifier
 from sana_loader import Loader
+from sana_params import Params
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -30,14 +31,19 @@ class R13Processor(HDABProcessor):
 
     def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
         self.logger.info('Running R13 Processor...')
-
+        
         self.generate_masks(main_roi, sub_rois)
 
+        # save the original frame
+        if self.save_images:
+            self.save_frame(odir, self.frame, 'ORIG')
+        
         if self.run_wildcat:
             self.run_lb_detection(odir, roi_odir, first_run, params, 0.85)
 
         # generate the auto AO results
         # TODO: define a minimum threshold value!
+        self.run_auto_ao(odir, params, scale=1.0, mx=90)
         self.run_auto_ao(odir, params, scale=1.0, mx=90)
 
         # either use the cmdl input value or a pre-defined value from before
@@ -48,9 +54,6 @@ class R13Processor(HDABProcessor):
         
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)
-
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
 
         # save the params IO to a file
         self.save_params(odir, params)
@@ -126,17 +129,29 @@ class R13Processor(HDABProcessor):
         lb_activation = wc_activation[2,:,:]
         lb_softmax = wc_probs[2,:,:]
 
-        # Calculate hyp annos
-        # store DAB 
-        lb_activation = Frame(lb_activation,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_activation.img = cv2.resize(lb_activation.img, relevant_lb_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
+        tup_size = self.frame.size()
+        tup_size = (tup_size[0], tup_size[1])
+        lb_threshold = 0.4        
+        lb_mask = (lb_softmax > lb_threshold).astype(np.uint8)
+        lb_mask = cv2.resize(lb_mask, tup_size, interpolation=cv2.INTER_NEAREST)
+        lb_mask = frame_like(self.frame, lb_mask)
+        results = self.run_ao(lb_mask)
+        params.data['lb_wc_ao'] = results['ao']
+        params.data['lb_wc_sub_aos'] = results['sub_aos']
         
-        lb_softmax = Frame(lb_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
-        lb_softmax.img = cv2.resize(lb_softmax.img, relevant_lb_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
+        # # Calculate hyp annos
+        # # store DAB 
+        # lb_activation = Frame(lb_activation,lvl=self.dab.lvl,converter=self.dab.converter)
+        # tup_size = relevant_dab_msk.size()
+        # tup_size = (tup_size[0], tup_size[1])
+        # lb_activation.img = cv2.resize(lb_activation.img, tup_size, interpolation=cv2.INTER_NEAREST)
+        
+        # lb_softmax = Frame(lb_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
+        # lb_softmax.img = cv2.resize(lb_softmax.img, tup_size, interpolation=cv2.INTER_NEAREST)     
 
-        # threshold probs img at LB prob and store in a Frame
-        lb_msk = np.where(lb_softmax.img >= softmax_prob_thresh, relevant_lb_dab_msk.img[:,:,0], np.zeros_like(relevant_lb_dab_msk.img[:,:,0]))
-        lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
+        # # threshold probs img at LB prob and store in a Frame
+        # lb_msk = np.where(lb_softmax.img >= softmax_prob_thresh, relevant_dab_msk.img[:,:,0], np.zeros_like(relevant_dab_msk.img[:,:,0]))
+        # lb_msk = Frame(lb_msk, lvl=self.dab.lvl, converter=self.dab.converter)
 
         # generate WC predictions for %AO
         wc_preds = frame_like(self.frame, (wc_probs[2] > softmax_prob_thresh).astype(np.uint8))
@@ -167,81 +182,81 @@ class R13Processor(HDABProcessor):
         #     # print('Saving local DAB...')
         #     # print(odir,'\n')
             
-        #     local_dab.img = 255*(np.log(local_dab.img[:,:,0],where=local_dab.img[:,:,0]!=0)/np.log(255))
+        # #     local_dab.img = 255*(np.log(local_dab.img[:,:,0],where=local_dab.img[:,:,0]!=0)/np.log(255))
             
-        #     # Chan-Vese Segmentation Method
-        #     # phi and energies used for testing/debugging chan_vese()
-        #     segmentation_msk, phi, energies = chan_vese(local_dab.img,
-        #         mu=0.2,
-        #         lambda1=20,
-        #         lambda2=40,
-        #         dt=2.5,
-        #         tol=1e-7,
-        #         max_num_iter=8,
-        #         init_level_set='checkerboard',
-        #         extended_output=True
-        #     )
+        # #     # Chan-Vese Segmentation Method
+        # #     # phi and energies used for testing/debugging chan_vese()
+        # #     segmentation_msk, phi, energies = chan_vese(local_dab.img,
+        # #         mu=0.2,
+        # #         lambda1=20,
+        # #         lambda2=40,
+        # #         dt=2.5,
+        # #         tol=1e-7,
+        # #         max_num_iter=8,
+        # #         init_level_set='checkerboard',
+        # #         extended_output=True
+        # #     )
 
-        #     # send segmentation img to a Frame obj
-        #     local_lb_msk = Frame(segmentation_msk.copy().astype(np.uint8),lvl=self.dab.lvl,converter=self.dab.converter)
+        # #     # send segmentation img to a Frame obj
+        # #     local_lb_msk = Frame(segmentation_msk.copy().astype(np.uint8),lvl=self.dab.lvl,converter=self.dab.converter)
 
-        #     if self.logger.plots:
-        #         # Plot outputs from Chan-Vese
-        #         # fig, axs = plt.subplots(2,2)
-        #         # fig.suptitle('Chan-Vese Segmentation of Processed DAB')
-        #         # axs = axs.ravel()
-        #         # axs[0].set_title('Orig. Local DAB')            
-        #         # axs[0].imshow(local_dab.img,cmap='gray')
-        #         # axs[1].set_title('Segmentation')
-        #         # axs[1].imshow(segmentation_msk,cmap='gray')
-        #         # axs[2].set_title('Level Set')
-        #         # axs[2].imshow(phi,cmap='gray')
-        #         # axs[3].set_title('Energy/iter. (to be minimized)')
-        #         # axs[3].plot(energies)
-        #         # fig.tight_layout()
+        # #     if self.logger.plots:
+        # #         # Plot outputs from Chan-Vese
+        # #         # fig, axs = plt.subplots(2,2)
+        # #         # fig.suptitle('Chan-Vese Segmentation of Processed DAB')
+        # #         # axs = axs.ravel()
+        # #         # axs[0].set_title('Orig. Local DAB')            
+        # #         # axs[0].imshow(local_dab.img,cmap='gray')
+        # #         # axs[1].set_title('Segmentation')
+        # #         # axs[1].imshow(segmentation_msk,cmap='gray')
+        # #         # axs[2].set_title('Level Set')
+        # #         # axs[2].imshow(phi,cmap='gray')
+        # #         # axs[3].set_title('Energy/iter. (to be minimized)')
+        # #         # axs[3].plot(energies)
+        # #         # fig.tight_layout()
 
-        #         # Plot outputs and compare to old method
-        #         fig, axs = plt.subplots(2,2)
-        #         fig.suptitle('Chan-Vese Segmentation of Processed DAB')
-        #         axs = axs.ravel()
-        #         axs[0].set_title('Orig. Local DAB')            
-        #         axs[0].imshow(local_dab.img,cmap='gray')
-        #         axs[1].set_title('Segmentation')
-        #         axs[1].imshow(segmentation_msk,cmap='gray')
-        #         axs[2].set_title('Old LB Mask')
-        #         axs[2].imshow(lb_msk_c.img,cmap='gray')
-        #         axs[3].set_title('LB Mask')
-        #         axs[3].imshow(local_lb_msk.img)
-        #         fig.tight_layout()
-        #         # plt.show()
+        # #         # Plot outputs and compare to old method
+        # #         fig, axs = plt.subplots(2,2)
+        # #         fig.suptitle('Chan-Vese Segmentation of Processed DAB')
+        # #         axs = axs.ravel()
+        # #         axs[0].set_title('Orig. Local DAB')            
+        # #         axs[0].imshow(local_dab.img,cmap='gray')
+        # #         axs[1].set_title('Segmentation')
+        # #         axs[1].imshow(segmentation_msk,cmap='gray')
+        # #         axs[2].set_title('Old LB Mask')
+        # #         axs[2].imshow(lb_msk_c.img,cmap='gray')
+        # #         axs[3].set_title('LB Mask')
+        # #         axs[3].imshow(local_lb_msk.img)
+        # #         fig.tight_layout()
+        # #         # plt.show()
 
-        #     # - find contours on that thresholded image surrounding the LB polygon
-        #     local_lb_msk.get_contours()
-        #     local_lb_msk.filter_contours(min_body_area=10/self.dab.converter.mpp) #default: 20/mpp
-        #     lb_contour = local_lb_msk.get_body_contours()
-        #     new_lbs = [c.polygon for c in lb_contour]
-        #     # new_lbs = [transform_inv_poly(x, loc, params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in new_polys]
-        #     lb.translate(loc)
+        # #     # - find contours on that thresholded image surrounding the LB polygon
+        # #     local_lb_msk.get_contours()
+        # #     local_lb_msk.filter_contours(min_body_area=10/self.dab.converter.mpp) #default: 20/mpp
+        # #     lb_contour = local_lb_msk.get_body_contours()
+        # #     new_lbs = [c.polygon for c in lb_contour]
+        # #     # new_lbs = [transform_inv_poly(x, loc, params.data['crop_loc'], params.data['M1'], params.data['M2']) for x in new_polys]
+        # #     lb.translate(loc)
 
-        #     # Plot the new LBs on the DAB and Orig img
-        #     if self.logger.plots:
-        #         local_frame = self.frame.copy()
-        #         local_frame.crop(loc,size)
-        #         fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
-        #         fig.suptitle('Comparison of Orig LB Poly vs Chan-Vese LB Poly')
-        #         axs[0].set_title('Before CV')
-        #         axs[0].imshow(local_frame.img)
-        #         plot_poly(axs[0],lb,color='red')
-        #         axs[1].set_title('After CV')
-        #         axs[1].imshow(local_frame.img)
-        #         axs[2].set_title('After EFD')
-        #         axs[2].imshow(local_frame.img)
-        #         for i, new_lb in enumerate(new_lbs):
-        #             plot_poly(axs[1],new_lb,color='red')
-        #         plt.show()
+        # #     # Plot the new LBs on the DAB and Orig img
+        # #     if self.logger.plots:
+        # #         local_frame = self.frame.copy()
+        # #         local_frame.crop(loc,size)
+        # #         fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
+        # #         fig.suptitle('Comparison of Orig LB Poly vs Chan-Vese LB Poly')
+        # #         axs[0].set_title('Before CV')
+        # #         axs[0].imshow(local_frame.img)
+        # #         plot_poly(axs[0],lb,color='red')
+        # #         axs[1].set_title('After CV')
+        # #         axs[1].imshow(local_frame.img)
+        # #         axs[2].set_title('After EFD')
+        # #         axs[2].imshow(local_frame.img)
+        # #         for i, new_lb in enumerate(new_lbs):
+        # #             plot_poly(axs[1],new_lb,color='red')
+        # #         plt.show()
             
-        #     # translate before saving
-        #     [p.translate(-loc) for p in new_lbs]
+        # #     # translate before saving
+        # #     [p.translate(-loc) for p in new_lbs]
 
         #     # - replace the LB polygon w/ this contour 
         #     if new_lbs:
@@ -249,7 +264,7 @@ class R13Processor(HDABProcessor):
         #
         # end of Chan-Vese loop
 
-        #     # * done before saving the LB annotations in run_lb_detections
+        # #     # * done before saving the LB annotations in run_lb_detections
 
         # convert polygons to annotations and calculate confidence
         bid, antibody, region, roi_name = odir.split('/')[-4:]
@@ -258,14 +273,14 @@ class R13Processor(HDABProcessor):
         lb_annos = []
         for lb in lbs:
 
-            # confidence is the average LB activation inside the polygon
-            conf = self.get_confidence(lb, lb_activation)
+        #     # confidence is the average LB activation inside the polygon
+        #     conf = self.get_confidence(lb, lb_activation)
             
-            fname = bid+'_'+antibody+'_'+region+'_'+tile
-            lb_anno = lb.to_annotation(
-                fname, class_name='LB detection', confidence=conf
-            )
-            lb_annos.append(lb_anno)
+        #     fname = bid+'_'+antibody+'_'+region+'_'+tile
+        #     lb_anno = lb.to_annotation(
+        #         fname, class_name='LB detection', confidence=conf
+        #     )
+        #     lb_annos.append(lb_anno)
 
         # ln_annos = []
         # for ln in lns:
@@ -303,50 +318,50 @@ class R13Processor(HDABProcessor):
         # if not results['signals'] is None:
         #     self.save_signals(odir, results['signals']['main_deform'], 'LN_POLY')
 
-        # TODO: this is broken
-        # if len(lb_annos)>0 and self.logger.plots:
-        #     fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
-        #     fig.suptitle('Debugging Plot of an LB Detection')
-        #     axs = axs.ravel()
+        # # TODO: this is broken
+        # # if len(lb_annos)>0 and self.logger.plots:
+        # #     fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
+        # #     fig.suptitle('Debugging Plot of an LB Detection')
+        # #     axs = axs.ravel()
 
-        #     # plot the original image
-        #     axs[0].imshow(self.frame.img) 
-        #     axs[0].set_title('Orig. Img')
+        # #     # plot the original image
+        # #     axs[0].imshow(self.frame.img) 
+        # #     axs[0].set_title('Orig. Img')
 
-        #     # plot the strong DAB in the image
-        #     axs[1].imshow(relevant_lb_dab_msk.img)
-        #     axs[1].set_title('DAB mask')
+        # #     # plot the strong DAB in the image
+        # #     axs[1].imshow(relevant_dab_msk.img)
+        # #     axs[1].set_title('DAB mask')
 
-        #     alpha = 0.4
-        #     lb_preds = frame_like(self.frame, wc_probs[2] > softmax_prob_thresh)
-        #     ln_preds = frame_like(self.frame, wc_probs[3] > softmax_prob_thresh)
-        #     overlay = overlay_thresh(self.frame, lb_preds, alpha=alpha, color='red')
-        #     overlay = overlay_thresh(overlay, ln_preds, alpha=alpha, color='blue')
-        #     axs[2].imshow(overlay.img)
-        #     axs[2].set_title('WC Pixel Predictions')
-        #     [plot_poly(axs[2], lb, color='black') for lb in lbs]
-        #     [plot_poly(axs[2], lb, color='yellow') for lb in lns]            
+        # #     alpha = 0.4
+        # #     lb_preds = frame_like(self.frame, wc_probs[2] > softmax_prob_thresh)
+        # #     ln_preds = frame_like(self.frame, wc_probs[3] > softmax_prob_thresh)
+        # #     overlay = overlay_thresh(self.frame, lb_preds, alpha=alpha, color='red')
+        # #     overlay = overlay_thresh(overlay, ln_preds, alpha=alpha, color='blue')
+        # #     axs[2].imshow(overlay.img)
+        # #     axs[2].set_title('WC Pixel Predictions')
+        # #     [plot_poly(axs[2], lb, color='black') for lb in lbs]
+        # #     [plot_poly(axs[2], lb, color='yellow') for lb in lns]            
 
-        #     fig, axs = plt.subplots(1,3)
-        #     axs[0].imshow(wc_probs[0])
-        #     axs[1].imshow(wc_probs[1])
-        #     axs[2].imshow(wc_probs[2])
+        # #     fig, axs = plt.subplots(1,3)
+        # #     axs[0].imshow(wc_probs[0])
+        # #     axs[1].imshow(wc_probs[1])
+        # #     axs[2].imshow(wc_probs[2])
             
-        #     plt.show()
-        # #
-        # # end of debugging
+        # #     plt.show()
+        # # #
+        # # # end of debugging
 
-        # set pixel lvl to 0
-        [self.dab.converter.rescale(x, 0) for x in lb_annos]        
+        # # set pixel lvl to 0
+        # [self.dab.converter.rescale(x, 0) for x in lb_annos]        
 
-        # finally, write the annoations to a file
-        afile = os.path.basename(self.fname).replace('.svs','.json')
-        anno_fname = roi_odir+'/'+afile
-        if not os.path.exists(anno_fname) or first_run:
-            sana_io.write_annotations(anno_fname, lb_annos)
-            first_run = False
-        else:
-            sana_io.append_annotations(anno_fname, lb_annos)
+        # # finally, write the annoations to a file
+        # afile = os.path.basename(self.fname).replace('.svs','.json')
+        # anno_fname = roi_odir+'/'+afile
+        # if not os.path.exists(anno_fname) or first_run:
+        #     sana_io.write_annotations(anno_fname, lb_annos)
+        #     first_run = False
+        # else:
+        #     sana_io.append_annotations(anno_fname, lb_annos)
         
     # 
     # end of run_lb_detection

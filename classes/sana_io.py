@@ -15,6 +15,12 @@ import pandas as pd
 # sana packages
 from sana_geo import Polygon, Point, Annotation
 
+class SlideNameException(Exception):
+    def __init__(self, fname, message='ERROR: Cannot parse slide file: %s'):
+        self.message = message % fname
+        super().__init__(self.message)
+    
+
 # resolves relative filepaths and ~
 #  e.g. ~/data/x.svs -> /Users/yourname/data/x.svs
 #  e.g. ./data/x.svs -> /Users/yourname/data/x.svs
@@ -91,10 +97,13 @@ def is_anno(f):
 def get_slide_id(fname):
     return fname.split('_')[0]
 
+def get_slide_name(fname):
+    return os.path.splitext(os.path.basename(fname))[0]
+
 def get_slide_parts(fname):
     if not is_slide(fname):
-        print('ERROR: Cannot get antibody from file: %s' % fname)
-        exit()
+        raise SlideNameException(fname)
+
     fname = ntpath.basename(fname)
     parts = fname.split('_')
     if len(parts) == 7:
@@ -189,6 +198,9 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
 def get_slide_odir(odir, slide):
     return os.path.join(odir, get_bid(slide), get_antibody(slide), get_region(slide))
 
+def get_params_file(odir, slide_name):
+    return os.path.join(odir, slide_name+'.csv')
+
 # creates a subdirectory for the ith ROI in a given json file
 def create_odir(odir, s):
     odir = '%s/%s' % (odir, s)
@@ -213,7 +225,8 @@ def get_slides_from_lists(lists):
     # concatenate all slide lists
     slides = []
     for f in lists:
-        slides += read_list_file(f)
+        if os.path.exists(f):
+            slides += read_list_file(f)
     return slides
 #
 # end of get_slides_from_lists

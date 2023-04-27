@@ -674,13 +674,6 @@ def get_tissue_orientation(frame, roi, angle, logger):
     else:
         top, bot = s0, s1
     
-    if logger.plots:
-        fig, ax = plt.subplots(1,1)
-        ax.imshow(frame.img)
-        plot_poly(ax, s0, color='red')
-        plot_poly(ax, s1, color='blue')
-        fig.show()
-
     # get the amount of tissue found near each of the boundaries
     top = Frame(frame.img[0:int(np.max(top[:,1])), :], frame.lvl, frame.converter, frame.csf_threshold)
     top.to_gray()

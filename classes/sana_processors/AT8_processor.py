@@ -29,7 +29,7 @@ class AT8Processor(HDABProcessor):
     #
     # end of constructor
 
-    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
+    def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
         self.logger.info('Running AT8 Processor...')
 
 
@@ -49,12 +49,7 @@ class AT8Processor(HDABProcessor):
         self.run_manual_ao(odir, params)
 
         # generate the auto AO results
-        self.run_auto_ao(odir, params, 
-            scale=1.0, 
-            mx=90, 
-            open_r=0, 
-            close_r=0, 
-            )
+        self.run_auto_ao(odir, params, scale=1.0, mx=90, open_r=0, close_r=0)
         
         if self.run_wildcat:
             
@@ -68,7 +63,7 @@ class AT8Processor(HDABProcessor):
             self.run_tangle_detection(odir, roi_odir, first_run, params, 0.3)
 
 
-        # TODO: this should run for all HDAB processors
+        # # TODO: this should run for all HDAB processors
         # self.frame.to_gray()
         # self.frame.img = 255 - self.frame.img
 

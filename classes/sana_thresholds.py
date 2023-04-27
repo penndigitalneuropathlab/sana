@@ -154,6 +154,9 @@ def max_dev(hist, scale=1.0, debug=False, mx=255, show_debug=False):
         fig.suptitle('max_dev')
         ax.plot(hist_norm)
         ax.plot([x0, x1], [y0, y1], '--', color='blue')
+        ax.set_xlabel('Grayscale intensity')
+        ax.set_ylabel('Counts')
+        ax.set_title('Histogram of grayscale image, auto-thresholded based on max. deviation')
     
     mx_dist = 0
     thresh = 0
@@ -168,7 +171,7 @@ def max_dev(hist, scale=1.0, debug=False, mx=255, show_debug=False):
         xj = (A[1]*B[2] - B[1]*A[2]) / (A[0]*B[1] - B[0]*A[1])
         yj = (A[2]*B[0] - B[2]*A[0]) / (A[0]*B[1] - B[0]*A[1])
 
-        if xi % 10 == 0 and debug:
+        if xi % 5 == 0 and debug:
             ax.plot([xi, xj], [yi, yj], color='red')
         
         dist = np.sqrt(((xi-xj)**2 + (yi-yj)**2))
