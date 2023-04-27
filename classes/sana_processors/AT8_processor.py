@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from PIL import Image
 from scipy.special import softmax
+from scipy.special import expit as sigmoid
 
 # custom modules
 import sana_io
@@ -17,7 +18,7 @@ from sana_frame import Frame, frame_like, create_mask, overlay_thresh
 from sana_loader import Loader
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
-from wildcat.pixel_classifiers import MulticlassClassifier, TangleClassifier, HIPTangleClassifier
+from wildcat.pixel_classifiers import MulticlassClassifier, TangleClassifier, HIPTangleClassifier, CorticalTangleClassifier
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -64,7 +65,7 @@ class AT8Processor(HDABProcessor):
             # self.run_tangle(odir, params)
 
             # generate tangle detector
-            self.run_tangle_detection(odir, roi_odir, first_run, params, 0.5)
+            self.run_tangle_detection(odir, roi_odir, first_run, params, 0.3)
 
 
         # TODO: this should run for all HDAB processors
@@ -92,57 +93,125 @@ class AT8Processor(HDABProcessor):
     # gets the avg value within the polygon
     def get_confidence(self, poly, frame):
         msk = create_mask([poly],frame.size(),lvl=frame.lvl,converter=frame.converter)
-        return np.mean(frame.img[msk.img[:,:,0]==1])
+        return np.mean(frame.img[msk.img[:,:,0]==1]), np.std(frame.img[msk.img[:,:,0]==1])
     #
     # end of get_confidence
- 
+
+    
     def run_tangle_detection(self, odir, roi_odir, first_run, params, softmax_prob_thresh=0.5):   
-        self.logger.info('Running GM Tangle detections...')
+        self.logger.info('Running Tangle detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
+        
+        roi_class = odir.split('/')[-1].split('_')[0]
+        if roi_class in ['GM']:
+            self.logger.debug('Deploying Cortical AT8 Tangle Classifier...')
+            model = CorticalTangleClassifier(self.frame)
+        elif roi_class in ['CA1', 'CA2', 'CA3', 'CA4', 'Subiculum', 'DG']:
+            self.logger.debug('Deploying HIP AT8 Tangle Classifier...')
+            model = HIPTangleClassifier(self.frame)
+        else:
+            self.logger.info('No AT8 classifier found...')
+            return
+
+            
 
         # decode the model to get activations of each class
-        model = HIPTangleClassifier(self.frame)
         wc_activation = model.run()
+        # self.logger.debug('Shape of model output: %s',str(wc_activation.shape))
+        # print(self.frame.img.shape)
         wc_probs = softmax(wc_activation, axis=0)
-        
+    
         # save the output probabilities
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_PROBS.npy'))
         np.save(ofname, wc_activation)
 
+        # [2,:,:] to select Tangle predictions from model output
+        tangle_activation = wc_activation[2,:,:]
+        tangle_softmax = wc_probs[2,:,:]
+
+        # tangle_activation = cv2.resize(tangle_activation, self.dab.img[:,:,0].shape,interpolation=cv2.INTER_NEAREST)            
+        # tangle_activation = 255*softmax(tangle_activation)
+        # tangle_activation = 255*((tangle_activation - np.min(tangle_activation))/(np.max(tangle_activation) - np.min(tangle_activation)))
+        # normed_dab = ((self.dab.img[:,:,0] - np.min(self.dab.img[:,:,0])) * (1/(np.max(self.dab.img[:,:,0]) - np.min(self.dab.img[:,:,0])) * 255))
+        # dab_scaled_activation = Frame((normed_dab*tangle_activation),lvl=self.dab.lvl,converter=self.dab.converter)
+        # # print(np.min(dab_scaled_activation.img),np.max(dab_scaled_activation.img))
+        # dab_scaled_activation.img = ((dab_scaled_activation.img - np.min(dab_scaled_activation.img)) * (1/(np.max(dab_scaled_activation.img) - np.min(dab_scaled_activation.img)) * 255))
+
         if self.logger.plots:
             # frame resizing 
-            orig_img = cv2.resize(self.frame.img, wc_activation[2,:,:].shape, interpolation=cv2.INTER_NEAREST)
-            
+            # orig_img = cv2.resize(self.frame.img, tangle_activation.shape, interpolation=cv2.INTER_NEAREST)
+            # print(self.frame.img.shape)
+            # print(wc_activation[2,:,:].shape)
             # make this into a function --> visual_wc_probs(class_dict)
             # debug WC activations for each of the classes
             class_dict = {
                 0: 'Background',
                 1: 'GM NP',
                 2: 'GM Tangle',
+                3: 'GM Thread'
             }
+            # fig, ax = plt.subplots(1,1)
+            # ax.imshow(orig_img)
+            # ax.set_title('Orig. Frame')
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             axs = axs.ravel()
-            axs[0].imshow(orig_img)
+            axs[0].imshow(self.frame.img)
             axs[0].set_title('Orig. Frame')
             for i in range(len(axs)-1):
-                axs[i+1].imshow(wc_probs[i,:,:])
+                # axs[i+1].imshow(wc_probs[i,:,:])
+                resized_activation = cv2.resize(wc_probs[i,:,:],self.frame.img[:,:,0].shape,interpolation=cv2.INTER_NEAREST)
+                axs[i+1].imshow(resized_activation)
                 axs[i+1].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
-            # print(np.min(wc_activation[3,:,:]),np.max(wc_activation[3,:,:]))
+            
+            # fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
+            # fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
+            # axs = axs.ravel()
+            # axs[0].imshow(orig_img)
+            # axs[0].set_title('Orig. Frame')
+            # for i in range(len(axs)):
+            #     axs[i].imshow(sigmoid(wc_activation[i,:,:]))
+            #     axs[i].set_title(class_dict[i])
+            # fig.suptitle('WildCat Class Activation Maps')
+            # plt.tight_layout()
+
+            # create new processing image (scale DAB intensity by tangle activation)
+
+            # print(tangle_activation.shape)
+            # print(self.dab.img[:,:,0].shape)
+            
+            # print('tangle activation min/max:',np.min(tangle_activation),np.max(tangle_activation))
+            # print('DAB img min/max:',np.min(self.dab.img),np.max(self.dab.img))
+            # print('tangle*DAB img min/max:',np.min(dab_scaled_activation.img),np.max(dab_scaled_activation.img))
+
+            # plot new processing image
+            # fig, axs = plt.subplots(2,2)
+            # axs = axs.ravel()
+            # axs[0].imshow(self.dab.img)
+            # axs[0].set_title('DAB img')
+            # axs[1].imshow(normed_dab)
+            # axs[1].set_title('norm DAB img')
+            # axs[2].imshow(tangle_activation)
+            # axs[2].set_title('Tangle Activations')
+            # axs[3].imshow(dab_scaled_activation.img)
+            # axs[3].set_title('DAB * Tangle Activations')
+
             plt.show()
+        # end self.logger.plots
         
         relevant_tangle_dab_msk, dab_thresh = self.process_dab(
             self.dab,
             run_normalize = True,
             scale = 1.0,
             mx = 90, #default: 90, experiment w/ mx = 100-110
-            close_r = 4,
             open_r = 7, #always an odd number (7 < open_r < 13)
-            mask = self.main_mask,
+            close_r = 4,
+            # mask = self.main_mask,
             debug = self.logger.plots
         )
+        
         
         # relevant_ln_dab_msk, dab_thresh = self.process_dab(
         #     self.dab,
@@ -157,18 +226,17 @@ class AT8Processor(HDABProcessor):
         
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
-        # [3,:,:] to select Tangle predictions from model output
-        tangle_activation = wc_activation[2,:,:]
-        tangle_softmax = wc_probs[2,:,:]
-
         # Calculate hyp annos
         # store DAB 
         tangle_activation = Frame(tangle_activation,lvl=self.dab.lvl,converter=self.dab.converter)
         tangle_activation.img = cv2.resize(tangle_activation.img, relevant_tangle_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
-        
+
+        tangle_dab = Frame(self.dab.img[:,:,None],lvl=self.dab.lvl,converter=self.dab.converter)
+        tangle_dab.img = cv2.resize(tangle_dab.img, relevant_tangle_dab_msk.size(),interpolation=cv2.INTER_NEAREST)
+                
         tangle_softmax = Frame(tangle_softmax,lvl=self.dab.lvl,converter=self.dab.converter)
         tangle_softmax.img = cv2.resize(tangle_softmax.img, relevant_tangle_dab_msk.size(),interpolation=cv2.INTER_NEAREST)     
-
+       
         # threshold probs img at tangle prob and store in a Frame
         tangle_msk = np.where(tangle_softmax.img >= softmax_prob_thresh, relevant_tangle_dab_msk.img[:,:,0], np.zeros_like(relevant_tangle_dab_msk.img[:,:,0]))
         tangle_msk = Frame(tangle_msk, lvl=self.dab.lvl, converter=self.dab.converter)
@@ -179,7 +247,7 @@ class AT8Processor(HDABProcessor):
 
         # get the contours/polygons from the tangle mask
         tangle_msk.get_contours()
-        tangle_msk.filter_contours(min_body_area=50/self.dab.converter.mpp) #default: 20/mpp
+        tangle_msk.filter_contours(min_body_area=35/self.dab.converter.mpp) #default: 20/mpp
         tangle_contours = tangle_msk.get_body_contours()
         tangles = [contour.polygon for contour in tangle_contours]
         
@@ -293,14 +361,18 @@ class AT8Processor(HDABProcessor):
         tangle_annos = []
         for tangle in tangles:
                 
-            # confidence is the average tangle activation inside the polygon
-            # conf = self.get_confidence(tangle, tangle_activation)
-            alpha = 0.5
-            beta = 0.5
-            plaque_probs = wc_probs[1,:,:]
-            DAB_INTENSITY = cv2.resize(self.dab.img.copy(), plaque_probs.shape, interpolation=cv2.INTER_NEAREST)
-            conf_img = Frame(alpha*DAB_INTENSITY + beta*(1-plaque_probs),lvl=self.dab.lvl,converter=self.dab.converter)
-            conf = np.mean(conf_img.img)
+            # confidence is the average tangle activation within the polygon
+            conf, conf_std = self.get_confidence(tangle, tangle_activation)
+
+            # confidence is average value of the DAB intensity within the polygon
+            dab_conf, dab_std = self.get_confidence(tangle, tangle_dab)
+
+            # alpha = 0.5
+            # beta = 0.5
+            # plaque_probs = wc_probs[1,:,:]
+            # DAB_INTENSITY = cv2.resize(self.dab.img.copy(), plaque_probs.shape, interpolation=cv2.INTER_NEAREST)
+            # conf_img = Frame(alpha*DAB_INTENSITY + beta*(1-plaque_probs),lvl=self.dab.lvl,converter=self.dab.converter)
+            # conf = np.mean(conf_img.img)
 
             # fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             # axs = axs.ravel()
@@ -320,7 +392,12 @@ class AT8Processor(HDABProcessor):
 
             fname = bid+'_'+antibody+'_'+region+'_'+roi_name
             tangle_anno = tangle.to_annotation(
-                fname, class_name='tangle detection', confidence=conf
+                fname, 
+                class_name='tangle detection', 
+                confidence=conf,
+                confidence_std=conf_std,
+                dab_confidence=dab_conf,
+                dab_std=dab_std,
             )
             tangle_annos.append(tangle_anno)
 
@@ -363,6 +440,7 @@ class AT8Processor(HDABProcessor):
         if len(tangle_annos)>0 and self.logger.plots:
             # frame resizing 
             orig_img = cv2.resize(self.frame.img.copy(), wc_probs[2,:,:].shape, interpolation=cv2.INTER_NEAREST)
+            orig_img = cv2.rotate(orig_img,cv2.ROTATE_90_CLOCKWISE)
             orig_frame = Frame(orig_img,lvl=self.frame.lvl,converter=self.frame.converter)
 
             # debug WC activations for each of the classes
@@ -371,12 +449,13 @@ class AT8Processor(HDABProcessor):
                 1: 'GM NP',
                 2: 'GM Tangle',
             }
-            fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
+            [ax.set_axis_off() for ax in axs]
             axs[0].imshow(orig_img)
             axs[0].set_title('Orig. Frame')
             for i in range(len(axs)-1):
-                axs[i+1].imshow(wc_probs[i,:,:])
+                axs[i+1].imshow(wc_activation[i,:,:])
                 axs[i+1].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
@@ -384,6 +463,7 @@ class AT8Processor(HDABProcessor):
             # Plot polygons against DAB image and activation map
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
+            [ax.set_axis_off() for ax in axs]
             fig.suptitle('Debugging Plot of a GM Tangle Detection')
 
             # plot the original image
@@ -396,15 +476,17 @@ class AT8Processor(HDABProcessor):
             axs[1].set_title('DAB mask')
 
             alpha = 0.4
-            tangle_preds = frame_like(orig_frame, wc_probs[2] > softmax_prob_thresh)
+            tangle_preds = frame_like(orig_frame, wc_activation[2] > softmax_prob_thresh)
             overlay = overlay_thresh(orig_frame, tangle_preds, alpha=alpha, color='red')
             overlay.img = cv2.resize(overlay.img, self.frame.size(), interpolation=cv2.INTER_NEAREST)
             axs[2].imshow(overlay.img)
             axs[2].set_title('WC Pixel Predictions')
 
+            if self.save_images:
+                self.save_frame(odir, overlay, 'TANGLE_QC')
 
-            axs[3].imshow(cv2.resize(wc_probs[2,:,:],self.frame.size()))
-            axs[3].set_title('Polygons on WC Activation Map | Poly. Count: %d' %len(tangles))
+            axs[3].imshow(cv2.resize(wc_activation[2,:,:],self.frame.size()))
+            axs[3].set_title('Polygons on WC Activation Map')
             [plot_poly(axs[3], tangle, color='red') for tangle in tangles]
 
             plt.show()
@@ -431,7 +513,7 @@ class AT8Processor(HDABProcessor):
         # debugging
         # loads in anno file that was just written
         if len(tangle_annos) > 0 and self.logger.plots:
-            slides = sana_io.read_list_file('C:/Users/eteun/dev/data/AD_tangle/lists/all.list')
+            slides = sana_io.read_list_file('C:/Users/eteun/dev/data/AD_tangle/lists/test.list')
             img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
 
             # initialize loader, this will allow us to load slide data into memory
@@ -445,7 +527,7 @@ class AT8Processor(HDABProcessor):
             refclass = ['Mature Tangle']
             hypclass = ['tangle detection']
 
-            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/AD_tangle/annotations/')
+            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/AD_tangle/annotations/sanaz_all_v2/')
 
             ROIS = []
             for roi_name in roiname:
@@ -474,21 +556,21 @@ class AT8Processor(HDABProcessor):
                 if HYP_ANNO.lvl != self.frame.lvl:
                     self.dab.converter.rescale(HYP_ANNO, self.frame.lvl)
             
-            # create new plot w/ zoom in of ROI (self.frame)
-            fig, axs = plt.subplots(1,2,sharex=True,sharey=True)
-            for ROI in ROIS:
-                 # Plotting the processed frame and processed frame with clusters
-                axs[0].imshow(self.frame.img, cmap='gray')
-                axs[0].set_title('Ref. Annos')
-                for REF_ANNO in REF_ANNOS:
-                    # REF_ANNO.translate(params.data['loc'])
-                    plot_poly(axs[0], REF_ANNO, color='red')
+            # # create new plot w/ zoom in of ROI (self.frame)
+            # fig, axs = plt.subplots(1,2,sharex=True,sharey=True)
+            # for ROI in ROIS:
+            #      # Plotting the processed frame and processed frame with clusters
+            #     axs[0].imshow(self.frame.img, cmap='gray')
+            #     axs[0].set_title('Ref. Annos')
+            #     for REF_ANNO in REF_ANNOS:
+            #         # REF_ANNO.translate(params.data['loc'])
+            #         plot_poly(axs[0], REF_ANNO, color='red')
 
-                axs[1].imshow(self.frame.img, cmap='gray')
-                axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
-                for HYP_ANNO in HYP_ANNOS:
-                    # HYP_ANNO.translate(params.data['loc'])
-                    plot_poly(axs[1], HYP_ANNO, color='blue')
+            #     axs[1].imshow(self.frame.img, cmap='gray')
+            #     axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
+            #     for HYP_ANNO in HYP_ANNOS:
+            #         # HYP_ANNO.translate(params.data['loc'])
+            #         plot_poly(axs[1], HYP_ANNO, color='blue')
 
 
             # rescale the ROI annotations to the given pixel resolution
@@ -512,7 +594,7 @@ class AT8Processor(HDABProcessor):
             for ROI in ROIS:
                 # Plotting the processed frame and processed frame with clusters
                 axs[0].imshow(thumb_frame.img, cmap='gray')
-                axs[0].set_title('Ref. Annos')
+                axs[0].set_title('Ref. Annos | Poly Count: %d' %len(REF_ANNOS))
                 for REF_ANNO in REF_ANNOS:
                     # REF_ANNO.translate(params.data['loc'])
                     plot_poly(axs[0], REF_ANNO, color='red')
@@ -528,7 +610,7 @@ class AT8Processor(HDABProcessor):
     # 
     # end of run_tangle_detection
 
-
+ 
     # TODO: don't want to create the model everytime, should be it's own class maybe?
     def run_tangle(self, odir, params):
 

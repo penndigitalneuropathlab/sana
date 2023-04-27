@@ -56,6 +56,9 @@ def get_processor(fname, frame, logger, **kwargs):
         'SMI35': SMI35Processor,
         'MEGURO': MeguroProcessor,
         'AT8': AT8Processor,
+        'TauC3': AT8Processor,
+        'C3': AT8Processor,
+        'MC1': AT8Processor,
         'IBA1': IBA1Processor,
         'R13': R13Processor,
         'MJFR13': R13Processor,
@@ -113,11 +116,16 @@ def get_loader(logger, slide_f, lvl):
 # end of get_loader
 
 def load_rois(logger, anno_f, main_class, main_name):
+    # logger.debug('Loading main_rois from %s' %os.path.basename(anno_f))
     main_rois = sana_io.read_annotations(anno_f, class_name=main_class, name=main_name)
     logger.debug('Number of main_rois found: %d' % len(main_rois))
     if len(main_rois) == 0:
-        logger.debug('No ROIs found for processing...possible Annotation Classes are [%s]' % \
-                     ', '.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
+        logger.debug('No ROIs found: %s' %os.path.basename(anno_f))
+        # logger.debug('Input main_class/main_name: %s/%s' %(main_class,main_name))
+        # logger.debug('No ROIs found for processing...possible Annotation Class Names are [%s]' % \
+        #              ', '.join(set([x.class_name for x in sana_io.read_annotations(anno_f)])))
+        # logger.debug('No ROIs found for processing...possible Annotation Main Names are [%s]' % \
+        #              ', '.join(set([x.main_name for x in sana_io.read_annotations(anno_f)])))
     return main_rois
 #
 # end of load_main_rois

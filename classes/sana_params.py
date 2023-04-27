@@ -42,6 +42,7 @@ FLOAT_KEYS = [
     'vert_fibers_ao', 'horz_fibers_ao',
     'grn_ao', 'pyr_ao', 'tot_ao',
     'lb_wc_ao', 'lb_poly_ao', 'ln_wc_ao', 'lb_poly_ao',
+    'tangle_wc_ao', 'tangle_poly_ao',
 ]
 LIST_KEYS = [
     'sub_areas',

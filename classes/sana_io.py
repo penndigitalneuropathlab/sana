@@ -10,6 +10,7 @@ import fnmatch
 # installed packages
 import numpy as np
 import geojson
+import pandas as pd
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
@@ -60,6 +61,16 @@ def get_anno_files(d,recurse=False):
     return [file for file in f if is_anno(file)]
 #
 # end of get_anno_files
+
+def load_class_mapping(class_map_fname):
+    return json.loads(open(class_map_fname, 'r').read())
+# 
+# end load_class_mapping
+
+def load_manifest(manifest_fname):
+    return pd.read_csv(manifest_fname)
+#
+# end load_manifest
 
 # returns True if Loader can handle the given file
 def is_slide(f):

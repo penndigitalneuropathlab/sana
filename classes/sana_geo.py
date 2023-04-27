@@ -274,7 +274,6 @@ def transform_inv_poly(x, loc, crop_loc, M1, M2):
         x.transform_inv(M1)
     if not loc is None:
         x.translate(-loc)
-
     return x
 #
 # end of transform_inv_poly
@@ -669,13 +668,13 @@ class Polygon(Array):
 
     # convert the Array to a Annotation to prepare for file io
     def to_annotation(self, file_name, class_name,
-                      anno_name="", confidence=1.0, connect=True):
+                      anno_name="", confidence=1.0, dab_confidence=1.0, connect=True, confidence_std=None, dab_std=None):
         if connect:
             x, y = self.connect().get_xy()
         else:
             x, y = self.get_xy()
         return Annotation(None, file_name, class_name, anno_name,
-                          confidence=confidence, is_micron=self.is_micron,
+                          confidence=confidence, dab_confidence=dab_confidence, confidence_std=None, dab_std=None, is_micron=self.is_micron,
                           lvl=self.lvl, order=self.order, x=x, y=y)
     #
     # end of to_annotation
@@ -732,8 +731,8 @@ class Line(Polygon):
         return m, b
 
 class Annotation(Polygon):
-    def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
-                is_micron=True, lvl=0, order=1, x=None, y=None):
+    def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0, dab_confidence=1.0, 
+                confidence_std=None, dab_std=None, is_micron=True, lvl=0, order=1, x=None, y=None):
 
         # initalize the array using the geometry
         if x is None or y is None:
@@ -745,6 +744,9 @@ class Annotation(Polygon):
         obj.class_name = class_name
         obj.name = anno_name
         obj.confidence = confidence
+        obj.dab_confidence = dab_confidence
+        obj.confidence_std = confidence_std
+        obj.dab_std = dab_std
     
         return obj
 
@@ -754,6 +756,9 @@ class Annotation(Polygon):
         self.class_name = getattr(obj, 'class_name', None)
         self.name = getattr(obj, 'name', None)
         self.confidence = getattr(obj, 'confidence', None)
+        self.confidence_std = getattr(obj, 'confidence_std', None)
+        self.dab_confidence = getattr(obj, 'dab_confidence', None)
+        self.dab_std = getattr(obj, 'dab_std', None)
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
         self.order = getattr(obj, 'order', None)

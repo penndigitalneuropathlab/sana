@@ -191,12 +191,17 @@ class TangleClassifier(Model):
 
 class HIPTangleClassifier(Model):
     def __init__(self, frame):
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'tangle_dice_3class.dat')
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'AD_HIP_3class_5epoch_16batch_dice_lr001_v1.dat')
+        super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+
+class CorticalTangleClassifier(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'AD_cortical_3class_5epoch_16batch_dice_lr001_v2.dat')
         super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
 
 class MicrogliaClassifier(Model):
     def __init__(self, frame):
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'microglia.dat')
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'IBA1_microglia_6class_10epoch_16batch_dice_lr01_v0.dat')
         super().__init__(model_path, frame, 6, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
 
 class R13Classifier(Model):

@@ -23,12 +23,13 @@ from matplotlib import pyplot as plt
 # TODO: Fine-tune for IBA1 antibody
 
 class IBA1Processor(HDABProcessor):
-    def __init__(self, fname, frame, debug=False):
-        super(IBA1Processor, self).__init__(fname, frame, debug)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(IBA1Processor, self).__init__(fname, frame, logger, **kwargs)
     #
     # end of constructor
 
-    def run(self, odir, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
+        self.logger.info('Running IBA1 Processor...')
         # generate the neuronal and glial severity results
         self.run_microglia(odir, params)
 
@@ -60,13 +61,13 @@ class IBA1Processor(HDABProcessor):
     # end of run
 
     def run_microglia(self, odir, params):
-        model = MicrogliaModel(self.frame)
+        model = MicrogliaClassifier(self.frame)
         probs = model.run()
         # save the output probabilities
         ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_MICROGLIA.npy'))
         np.save(ofname, probs)
 
-        if self.debug:
+        if self.logger.plots:
             fig, axs = plt.subplots(1,len(probs))
             for i in range(len(probs)):
                 axs[0,i].imshow(probs[i], cmap='coolwarm')
