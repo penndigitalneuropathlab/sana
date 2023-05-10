@@ -43,7 +43,7 @@ ANTIBODY_MEASUREMENTS = {
     'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
     'SMI35': ['manual', 'auto'],
     'MJFR13': ['manual', 'auto', 'lb_wc'],
-    'AT8': ['manual', 'auto'],
+    'AT8': ['manual', 'auto','tangle_wc','tangle_poly'],
     'TDP43': ['manual', 'auto'],
     'TDP43MP': ['manual', 'auto'],
     'SYN303': ['auto', 'lb_wc', 'ln_wc'],
@@ -159,6 +159,7 @@ class Region:
         ],
         'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
         'SMTC': [],
+        'HIP' : ['CA1', 'CA2', 'CA3', 'CA4', 'DG', 'Subiculum']
     }
     for region_name in region_mapping:
         region_mapping[region_name] += ['ROI', 'Greatest GM Sampling zone_*']
@@ -448,14 +449,12 @@ def collect_patients(idir, hc, hemi):
             except (DirectoryIncompleteError, SubregionNameError) as e:
                 print(e)
                 continue
-                    
             if entry.antibody_name not in antibodies:
                 antibodies.append(entry.antibody_name)
         #
         # end of rois loop
     #
     # end of slides loop
-
     return patients, antibodies
 #
 # end of collect_patients
@@ -616,7 +615,6 @@ def generate_spreadsheets(odir, patients, available_antibodies):
                         # loop through subregions in this region
                         for subregion_name in sorted(region.subregions.keys()):
                             subregion = region.subregions[subregion_name]
-
                             # antibody not found in this subregion, we skip
                             if not antibody_name in subregion.antibodies:
                                 continue

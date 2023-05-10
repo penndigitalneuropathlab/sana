@@ -273,14 +273,14 @@ class R13Processor(HDABProcessor):
         lb_annos = []
         for lb in lbs:
 
-        #     # confidence is the average LB activation inside the polygon
-        #     conf = self.get_confidence(lb, lb_activation)
+            # confidence is the average LB activation inside the polygon
+            conf = self.get_confidence(lb, lb_activation)
             
-        #     fname = bid+'_'+antibody+'_'+region+'_'+tile
-        #     lb_anno = lb.to_annotation(
-        #         fname, class_name='LB detection', confidence=conf
-        #     )
-        #     lb_annos.append(lb_anno)
+            fname = bid+'_'+antibody+'_'+region+'_'+tile
+            lb_anno = lb.to_annotation(
+                fname, class_name='LB detection', confidence=conf
+            )
+            lb_annos.append(lb_anno)
 
         # ln_annos = []
         # for ln in lns:
@@ -289,7 +289,7 @@ class R13Processor(HDABProcessor):
         #     conf = self.get_confidence(ln, ln_activation)
 
         #     fname = bid+'_'+antibody+'_'+region+'_'+tile
-        #     ln_anno = ln.to_annotation(
+            # ln_anno = ln.to_annotation(
         #         fname, class_name='LN detection', confidence=conf
         #     )
         #     ln_annos.append(ln_anno)

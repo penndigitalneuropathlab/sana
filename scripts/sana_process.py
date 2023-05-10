@@ -171,7 +171,7 @@ def process_slides(args, slides, logger):
 
             # check if we want to actually process this frame            
             if slide_mask is None:
-                do_process = True
+                do_process = False
             else:
 
                 # grab the corresponding portion of the slide_mask
@@ -190,7 +190,7 @@ def process_slides(args, slides, logger):
                 x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
                 y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
                 main_roi = Polygon(x, y, is_micron=False, lvl=args.lvl)
-                main_roi = main_roi.to_annotation(slide_f, sana_io.get_antibody(slide_f)+'_ROI')
+                main_roi = main_roi.to_annotation(slide_f, sana_io.get_antibody(slide_f)+'_'+rois[0].class_name+'_ROI')                
                 sub_rois = []
                 roi_id = '%s_%d_%d' % (main_roi.class_name, i, j)
 

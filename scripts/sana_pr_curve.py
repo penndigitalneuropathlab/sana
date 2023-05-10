@@ -170,7 +170,7 @@ def get_annos(args,load_subregion=None):
 
                 
                 if len(ra) == 0:
-                    print('Could not read REF annos...%s' %os.path.basename(ra))
+                    print('Could not read REF annos...%s' %os.path.basename(rf))
                
 
                 # load the hyp annotations and confidences with a given hyp class
@@ -186,7 +186,7 @@ def get_annos(args,load_subregion=None):
                 # print('len(loaded hyp):',len(ha))
 
                 if len(ha) == 0:
-                    print('Could not read HYP annos...%s' %os.path.basename(ha))
+                    print('Could not read HYP annos...%s' %os.path.basename(hf))
 
                 # keep only the annotations within a given roi
                 
@@ -305,16 +305,23 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
         }
 
         for slide_name in all_slides:
-            print(slide_name)
+            print(slide_name.replace('.svs',''))
             # slide_name = 2012-116-30F_R_MFC_R13_25K_05-23-19_DC.svs
 
             # build path name to get _Tile *'s
             # TODO: move this to a sana_io.get_output_file(slide_name,odir,suffix='_ORIG',extension='.json')
             bid = sana_io.get_bid(slide_name)
-            region = sana_io.get_region(slide_name)
             antibody = sana_io.get_antibody(slide_name)
-            odir = os.path.join(args.hypdir, bid, antibody, region)
-            main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() ]
+            region = sana_io.get_region(slide_name)
+            # odir = os.path.join(args.hypdir, bid, antibody, region)
+            odir = os.path.join(args.hypdir,slide_name.replace('.svs',''))
+            # f_list = os.scandir(odir)
+            # for f in f_list:
+            #     if f.name.split('_')[1] in args.refclass:
+                    # print(args.refclass,'+',f.name.split('_')[1])
+            # exit()
+            main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() and f.name.split('_')[1] in args.refclass ]
+            # print('main_roi check:',main_roi_dirs)
 
             anno_fname = args.refdir+slide_name.replace('.svs','.json')
             # load the ref rois, if given
@@ -350,12 +357,17 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
             for i, main_roi_dir in enumerate(main_roi_dirs):
                 main_roi_name = os.path.split(main_roi_dir)[1]
                 tile_class, tile_name = main_roi_name.split('_',1)
-                # print(tile_class, '|' ,tile_name)
+                antibody, subregion, roi_id = main_roi_name.split('_',2)
+                tile_class = subregion
+                # print('Main ROI:',tile_class, '|' ,tile_name)
+                print('Main ROI:',antibody, '|', subregion, '|', roi_id)
+                # print('Main ROI:',main_roi_name)
                 
                 # ex. tile_name = Tile 52
                 
                 # fetch main_roi based on class names and tile names (if exists)
-                main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
+                # main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
+                main_roi = [x for x in main_rois if (x.class_name == tile_class)]
                 # filter by subregion if doing subregion analysis
                 if not load_subregion is None:
                     main_roi = [x for x in main_roi if x.class_name == load_subregion]
@@ -374,6 +386,12 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
                 params = Params(params_fname)
                 padding = params.data['padding']
 
+                w, h = params.data['size']
+                x = params.data['loc'][0]
+                y = params.data['loc'][1]
+                roi_sq = np.array([[x,y],[x+w,y],[x+w,y+h],[x,y+h]])
+                main_roi = Polygon(roi_sq[:,0],roi_sq[:,1],is_micron=False,lvl=main_roi.lvl)
+                
                 roi_plot = main_roi.copy()
                 roi_plot.translate(params.data['loc'])
                 
@@ -518,33 +536,35 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
         # end of slide_name loop
 
         # TODO: error_analyze PR curve
-        error_precision = np.array(total_error_pr['precision'])
-        error_recall = np.array(total_error_pr['recall'])
-        midpoints = (error_precision[1:] + error_precision[:-1]) / 2
-        widths = error_recall[1:] - error_recall[:-1]
-        total_error_pr['auc'] = np.sum(midpoints * widths)
-         
-        fig, ax = plt.subplots(1,1)
-        ax.plot(error_recall,error_precision,label='IOU = %.2f -- AuC = %.2f' % (iou_threshold, total_error_pr['auc']))
-        ax.set_title(args.title+' | error_analyze\nRef Count: %d | Hyp Count: %d' %(len(seen),len(results)))
-        ax.set_ylabel('Precision')
-        ax.set_xlabel('Recall')
-        ax.set_xlim([0, 1.1])
-        ax.set_ylim([0, 1.1])
-        plt.legend(loc='lower right')
-        if not load_subregion is None:
-            error_pr_curve_fname = os.path.join(args.odir,'Subregions','error_analysis','error_pr_curve.png') 
-        else:
-            error_pr_curve_fname = os.path.join(args.odir,'IoUs','error_analysis','error_pr_curve.png') 
-        sana_io.create_directory(error_pr_curve_fname)
-        plt.savefig(error_pr_curve_fname, dpi=500)
-        print('PNG saved:',error_pr_curve_fname)
+        if not results is None and not seen is None:
 
-        if os.path.exists(inside_annos_df_fname):
-            inside_annos_df.to_csv(inside_annos_df_fname, mode='a', index=False, header=False)
-        else:
-            sana_io.create_directory(inside_annos_df_fname)
-            inside_annos_df.to_csv(inside_annos_df_fname, mode='w', index=False, header=True)
+            # error_precision = np.array(total_error_pr['precision'])
+            # error_recall = np.array(total_error_pr['recall'])
+            # midpoints = (error_precision[1:] + error_precision[:-1]) / 2
+            # widths = error_recall[1:] - error_recall[:-1]
+            # total_error_pr['auc'] = np.sum(midpoints * widths)
+            
+            # fig, ax = plt.subplots(1,1)
+            # ax.plot(error_recall,error_precision,label='IOU = %.2f -- AuC = %.2f' % (iou_threshold, total_error_pr['auc']))
+            # ax.set_title(args.title+' | error_analyze\nRef Count: %d | Hyp Count: %d' %(len(seen),len(results)))
+            # ax.set_ylabel('Precision')
+            # ax.set_xlabel('Recall')
+            # ax.set_xlim([0, 1.1])
+            # ax.set_ylim([0, 1.1])
+            # plt.legend(loc='lower right')
+            # if not load_subregion is None:
+            #     error_pr_curve_fname = os.path.join(args.odir,'Subregions','error_analysis','error_pr_curve.png') 
+            # else:
+            #     error_pr_curve_fname = os.path.join(args.odir,'IoUs','error_analysis','error_pr_curve.png') 
+            # sana_io.create_directory(error_pr_curve_fname)
+            # plt.savefig(error_pr_curve_fname, dpi=500)
+            # print('PNG saved:',error_pr_curve_fname)
+
+            if os.path.exists(inside_annos_df_fname):
+                inside_annos_df.to_csv(inside_annos_df_fname, mode='a', index=False, header=False)
+            else:
+                sana_io.create_directory(inside_annos_df_fname)
+                inside_annos_df.to_csv(inside_annos_df_fname, mode='w', index=False, header=True)
         print('Error analysis performed...')
     else:
         print('Error analysis NOT performed...')
@@ -679,12 +699,12 @@ def get_iou_pr(args,logger=None):
     fig, ax = plt.subplots(1,1)
     fig.suptitle('Total Tangle Count vs Tangle Size')
     n, bins, patches = ax.hist(ref_sizes,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
-    prob_density = stats.gaussian_kde(ref_sizes)
-    ax.plot(bins,prob_density(bins),color='blue')
+    # prob_density = stats.gaussian_kde(ref_sizes)
+    # ax.plot(bins,prob_density(bins),color='blue')
 
     n, bins, patches = ax.hist(hyp_sizes,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
-    prob_density = stats.gaussian_kde(hyp_sizes)
-    ax.plot(bins,prob_density(bins),color='green')
+    # prob_density = stats.gaussian_kde(hyp_sizes)
+    # ax.plot(bins,prob_density(bins),color='green')
     ax.set_xlabel('Tangle Size (microns)')
     ax.set_ylabel('Tangle Count')
     fig.suptitle('Distribution of Tangle Area')
@@ -700,12 +720,12 @@ def get_iou_pr(args,logger=None):
     fig, ax = plt.subplots(1,1)
     fig.suptitle('Total Tangle Count vs Tangle Eccentricity')
     n, bins, patches = ax.hist(ref_eccs,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
-    prob_density = stats.gaussian_kde(ref_eccs)
-    ax.plot(bins,prob_density(bins),color='blue')
+    # prob_density = stats.gaussian_kde(ref_eccs)
+    # ax.plot(bins,prob_density(bins),color='blue')
 
     n, bins, patches = ax.hist(hyp_eccs,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
-    prob_density = stats.gaussian_kde(hyp_eccs)
-    ax.plot(bins,prob_density(bins),color='green')
+    # prob_density = stats.gaussian_kde(hyp_eccs)
+    # ax.plot(bins,prob_density(bins),color='green')
     ax.set_xlabel('Tangle Ecc.')
     ax.set_ylabel('Tangle Count')
     fig.suptitle('Distribution of Tangle Eccentricity')

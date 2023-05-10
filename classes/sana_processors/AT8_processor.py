@@ -60,7 +60,7 @@ class AT8Processor(HDABProcessor):
             # self.run_tangle(odir, params)
 
             # generate tangle detector
-            self.run_tangle_detection(odir, roi_odir, first_run, params, 0.3)
+            self.run_tangle_detection(odir, detection_odir, first_run, params, 0.3)
 
 
         # # TODO: this should run for all HDAB processors
@@ -97,7 +97,7 @@ class AT8Processor(HDABProcessor):
         self.logger.info('Running Tangle detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
         
-        roi_class = odir.split('/')[-1].split('_')[0]
+        roi_class = odir.split('/')[-1].split('_')[1]
         if roi_class in ['GM']:
             self.logger.debug('Deploying Cortical AT8 Tangle Classifier...')
             model = CorticalTangleClassifier(self.frame)
@@ -105,7 +105,7 @@ class AT8Processor(HDABProcessor):
             self.logger.debug('Deploying HIP AT8 Tangle Classifier...')
             model = HIPTangleClassifier(self.frame)
         else:
-            self.logger.info('No AT8 classifier found...')
+            self.logger.info('No AT8 classifier found for ROI class: %s' %roi_class)
             return
 
             
@@ -134,7 +134,7 @@ class AT8Processor(HDABProcessor):
 
         if self.logger.plots:
             # frame resizing 
-            # orig_img = cv2.resize(self.frame.img, tangle_activation.shape, interpolation=cv2.INTER_NEAREST)
+            orig_img = cv2.resize(self.frame.img, tangle_activation.shape, interpolation=cv2.INTER_NEAREST)
             # print(self.frame.img.shape)
             # print(wc_activation[2,:,:].shape)
             # make this into a function --> visual_wc_probs(class_dict)
@@ -151,12 +151,10 @@ class AT8Processor(HDABProcessor):
             fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             axs = axs.ravel()
-            axs[0].imshow(self.frame.img)
+            axs[0].imshow(orig_img)
             axs[0].set_title('Orig. Frame')
             for i in range(len(axs)-1):
-                # axs[i+1].imshow(wc_probs[i,:,:])
-                resized_activation = cv2.resize(wc_probs[i,:,:],self.frame.img[:,:,0].shape,interpolation=cv2.INTER_NEAREST)
-                axs[i+1].imshow(resized_activation)
+                axs[i+1].imshow(wc_probs[i,:,:])
                 axs[i+1].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
@@ -435,7 +433,6 @@ class AT8Processor(HDABProcessor):
         if len(tangle_annos)>0 and self.logger.plots:
             # frame resizing 
             orig_img = cv2.resize(self.frame.img.copy(), wc_probs[2,:,:].shape, interpolation=cv2.INTER_NEAREST)
-            orig_img = cv2.rotate(orig_img,cv2.ROTATE_90_CLOCKWISE)
             orig_frame = Frame(orig_img,lvl=self.frame.lvl,converter=self.frame.converter)
 
             # debug WC activations for each of the classes
@@ -507,7 +504,8 @@ class AT8Processor(HDABProcessor):
 
         # debugging
         # loads in anno file that was just written
-        if len(tangle_annos) > 0 and self.logger.plots:
+        # if len(tangle_annos) > 0 and self.logger.plots:
+        if False:
             slides = sana_io.read_list_file('C:/Users/eteun/dev/data/AD_tangle/lists/test.list')
             img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
 
