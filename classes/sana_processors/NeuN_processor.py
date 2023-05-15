@@ -10,6 +10,7 @@ from tqdm import tqdm
 from PIL import Image
 from scipy.ndimage import convolve1d
 from sklearn.cluster import KMeans
+from skimage import feature
 
 # custom modules
 import sana_io
@@ -30,8 +31,44 @@ class NeuNProcessor(HDABProcessor):
         super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
 
         self.run_neuron_analysis = False
+        self.feature_dict = self.get_feature_dict()
     #
     # end of constructor
+
+    def generate_features(self,neuron):
+        feature_dict = {}
+
+        graycom = feature.greycomatrix(self.dab.img[:,:,0], [1], [0, np.pi/4, np.pi/2, 3*np.pi/4], levels=256)
+
+        # Find the GLCM properties
+        contrast = feature.greycoprops(graycom, 'contrast')
+        dissimilarity = feature.greycoprops(graycom, 'dissimilarity')
+        homogeneity = feature.greycoprops(graycom, 'homogeneity')
+        energy = feature.greycoprops(graycom, 'energy')
+        correlation = feature.greycoprops(graycom, 'correlation')
+        ASM = feature.greycoprops(graycom, 'ASM')
+
+        feature_dict = {
+            'contrast': contrast,
+            'dissimilarity': dissimilarity,
+            'homogeneity': homogeneity,
+            'energy': energy,
+            'correlation': correlation,
+            'ASM': ASM
+        }
+
+        # find which layer the neuron is in, if the annotations are given
+        if len(self.sub_masks) == 0:
+            feature_dict['layer'] = -1
+        else:
+            cx, cy = np.rint(np.mean(neuron, axis=0)).astype(int)
+            for i, sub_mask in enumerate(self.sub_masks):
+                if sub_mask[cy,cx] != 0:
+                    feature_dict['layer'] = i
+
+        neuron.feature_dict = feature_dict
+    #
+    # end of generate_features
 
     def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
 
@@ -78,10 +115,14 @@ class NeuNProcessor(HDABProcessor):
 
         neurons = [Neuron(cell, self.fname, main_roi, confidence=1.0) for cell in cells]
         
+        [self.generate_features(neuron) for neuron in neurons]
+
         # write the neuron segmentations
         ofname = sana_io.create_filepath(
             self.fname, ext='.json', suffix='NEURONS', fpath=detection_odir)
-        neuron_annos = [x.polygon.to_annotation(ofname, 'NEURON') for x in neurons]
+
+        neuron_annos = [x.polygon.to_annotation(ofname, class_name='NEURON', feature_dict=x.feature_dict) for x in neurons]
+
         [transform_inv_poly(
             x, params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']) for x in neuron_annos]

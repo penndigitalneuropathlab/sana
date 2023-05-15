@@ -521,9 +521,11 @@ class Point(Array):
 #  -x: (N, 1) array
 #  -y: (N, 1) array
 class Polygon(Array):
-    def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
+    def __new__(cls, x, y, is_micron=True, lvl=0, order=1, feature_dict=None):
         arr = np.array((x, y), dtype=np.float).T
         obj = Array(arr, is_micron, lvl, order).view(cls)
+        if not feature_dict is None:
+            obj.feature_dict = feature_dict
         return obj
 
     # separates the Polygon into x and y arrays
@@ -690,15 +692,16 @@ class Polygon(Array):
     # end of to_shapely
 
     # convert the Array to a Annotation to prepare for file io
-    def to_annotation(self, file_name, class_name,
-                      anno_name="", confidence=1.0, dab_confidence=1.0, connect=True, confidence_std=None, dab_std=None):
+    def to_annotation(self, file_name, class_name, anno_name="", 
+                      confidence=1.0, dab_confidence=1.0, connect=True, 
+                      confidence_std=None, dab_std=None, feature_dict=None):
         if connect:
             x, y = self.connect().get_xy()
         else:
             x, y = self.get_xy()
         return Annotation(None, file_name, class_name, anno_name,
-                          confidence=confidence, dab_confidence=dab_confidence, confidence_std=None, dab_std=None, is_micron=self.is_micron,
-                          lvl=self.lvl, order=self.order, x=x, y=y)
+                          confidence=confidence, dab_confidence=dab_confidence, confidence_std=None, dab_std=None, is_micron=self.is_micron, 
+                          feature_dict=feature_dict, lvl=self.lvl, order=self.order, x=x, y=y)
     #
     # end of to_annotation
 
@@ -754,7 +757,7 @@ class Line(Polygon):
         return m, b
 
 class Annotation(Polygon):
-    def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0, dab_confidence=1.0, 
+    def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0, dab_confidence=1.0, feature_dict=None,
                 confidence_std=None, dab_std=None, is_micron=True, lvl=0, order=1, x=None, y=None):
 
         # initalize the array using the geometry
@@ -770,6 +773,7 @@ class Annotation(Polygon):
         obj.dab_confidence = dab_confidence
         obj.confidence_std = confidence_std
         obj.dab_std = dab_std
+        obj.feature_dict = feature_dict
     
         return obj
 
@@ -785,6 +789,7 @@ class Annotation(Polygon):
         self.is_micron = getattr(obj, 'is_micron', None)
         self.lvl = getattr(obj, 'lvl', None)
         self.order = getattr(obj, 'order', None)
+        self.feature_dict = getattr(obj, 'feature_dict', None)
     #
     # end of constructor
 
@@ -841,6 +846,7 @@ class Annotation(Polygon):
                     "name": self.class_name,
                 },
                 "confidence": self.confidence,
+                "feature_dict": self.feature_dict,
             }
         }
         return annotation

@@ -305,10 +305,18 @@ def read_annotations(ifile, class_name=None, name=None):
         #
         # end of confidence reading
 
+        # get the feature_dict, if exists
+        if 'feature_dict' not in annotation['properties']:
+            feature_dict = {}
+        else:
+            feature_dict = annotation['properties']['feature_dict']
+        #
+        # end of feature_dict reading
+
         # create and store the annotation object
         annotations.append(
             Annotation(geo, ifile, cname, aname,
-                       confidence=confidence, is_micron=False, lvl=0))
+                       confidence=confidence, feature_dict=feature_dict, is_micron=False, lvl=0))
     #
     # end of annotation loop
 
