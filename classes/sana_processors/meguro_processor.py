@@ -1,4 +1,4 @@
-
+ 
 # system modules
 import os
 
@@ -27,7 +27,7 @@ class MeguroProcessor(HDABProcessor):
             self.save_frame(odir, self.frame, 'ORIG')
         
         # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=1.0, mx=50)
+        self.run_auto_ao(odir, params, scale=0.5, mx=255)
 
         # save the original frame
         self.save_frame(odir, self.frame, 'ORIG')
@@ -44,24 +44,24 @@ class MeguroProcessor(HDABProcessor):
         # save the params IO to a file
         self.save_params(odir, params)
 
-        # TODO: plot the curves!
-        slide_name = os.path.splitext(os.path.basename(self.fname))[0]
-        signal = np.load(os.path.join(odir, slide_name+'_AUTO_MAIN_DEFORM.npy'))[0][0]
-        ao = params.data['auto_ao']
-        depth = np.linspace(0, self.frame.img.shape[0], signal.shape[0])
+        # # TODO: plot the curves!
+        # slide_name = os.path.splitext(os.path.basename(self.fname))[0]
+        # signal = np.load(os.path.join(odir, slide_name+'_AUTO_MAIN_DEFORM.npy'))[0][0]
+        # ao = params.data['auto_ao']
+        # depth = np.linspace(0, self.frame.img.shape[0], signal.shape[0])
         
-        fig, axs = plt.subplots(1,2, sharey=True, figsize=(16,9), gridspec_kw={'width_ratios': [3,1]})
-        axs[0].imshow(self.frame.img)
-        axs[1].axvline(100*ao, linestyle='--', color='gray')        
-        axs[1].plot(100*signal, depth, color='red')
-        axs[0].set_ylabel(r'Pixels (1 pixel per 0.5045 $\mu$m)')
-        axs[1].set_xlabel('%Area Occupied')
-        plt.subplots_adjust(left=0.1,
-                            bottom=0.1,
-                            right=0.9,
-                            top=0.9,
-                            wspace=0.01,
-                            hspace=0.4)        
+        # fig, axs = plt.subplots(1,2, sharey=True, figsize=(16,9), gridspec_kw={'width_ratios': [3,1]})
+        # axs[0].imshow(self.frame.img)
+        # axs[1].axvline(100*ao, linestyle='--', color='gray')        
+        # axs[1].plot(100*signal, depth, color='red')
+        # axs[0].set_ylabel(r'Pixels (1 pixel per 0.5045 $\mu$m)')
+        # axs[1].set_xlabel('%Area Occupied')
+        # plt.subplots_adjust(left=0.1,
+        #                     bottom=0.1,
+        #                     right=0.9,
+        #                     top=0.9,
+        #                     wspace=0.01,
+        #                     hspace=0.4)        
         
         # fig, axs = plt.subplots(2,1, sharex=True, figsize=(16,9), gridspec_kw={'height_ratios': [3,1]})
         # axs[0].imshow(self.frame.img.transpose(1,0,2))
@@ -72,7 +72,7 @@ class MeguroProcessor(HDABProcessor):
         #                     top=0.9,
         #                     wspace=0.4,
         #                     hspace=0.01)        
-        plt.show()
+        # plt.show()
     #
     # end of run
 #

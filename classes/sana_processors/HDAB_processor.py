@@ -17,7 +17,7 @@ from sana_thresholds import max_dev, kittler
 from sana_antibody_processor import Processor
 from sana_filters import minmax_filter
 from sana_heatmap import Heatmap
-from sana_geo import Point, Polygon, transform_inv_poly, hull_to_poly, Line
+from sana_geo import Point, Polygon, transform_inv_poly, hull_to_poly, Line, transform_poly_with_params
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -55,12 +55,13 @@ class HDABProcessor(Processor):
         self.stains = self.ss.run(self.frame.img)
         self.hem = Frame(self.stains[:,:,0], frame.lvl, frame.converter)
         self.dab = Frame(self.stains[:,:,1], frame.lvl, frame.converter)
+        self.counter = Frame(self.stains[:,:,0]-self.stains[:,:,1], frame.lvl, frame.converter)
 
         # rescale the OD stains to 8 bit pixel values
         # NOTE: this uses the physical min/max of the stains based
         #       on the stain vector used
         # TODO: this compresses teh digital space, need to scale it back to 0 and 255!
-        self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
+        # self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
         # calculate the manual dab threshold if a qupath threshold was given
@@ -102,13 +103,15 @@ class HDABProcessor(Processor):
         # save the images used in processing
         if self.save_images:
             self.manual_overlay = overlay_thresh(
-                self.frame, self.manual_dab_thresh)
+                self.frame, self.manual_dab_thresh,
+                main_mask=self.main_mask, sub_masks=self.sub_masks,
+                main_roi=self.main_roi, sub_rois=self.sub_rois)
             self.save_frame(odir, self.manual_dab_thresh, 'MANUAL_THRESH')
             self.save_frame(odir, self.manual_overlay, 'MANUAL_QC')
 
         # save the feature signals
-        if self.save_images:
-            signals = results['signals']
+        signals = results['signals']        
+        if signals:
             self.save_signals(odir, signals['normal'], 'MANUAL_NORMAL')
             self.save_signals(odir, signals['main_deform'], 'MANUAL_MAIN_DEFORM')
             if 'sub_deform' in signals:
@@ -118,7 +121,7 @@ class HDABProcessor(Processor):
 
     # TODO: rename scale/max
     # function takes in a DAB Frame object, extracting a DAB thresholded image
-    def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
+    def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, min_background=0, mask = None, debug=False):
         self.logger.info('Processing DAB...')
         if debug and run_normalize:
             fig, axs = plt.subplots(2,3, sharex=True,sharey=True)
@@ -137,12 +140,12 @@ class HDABProcessor(Processor):
         # plot #2
         if debug:
             axs[1].imshow(dab.img)
-            axs[1].set_title('Normalized DAB Img')
+            axs[1].set_title('DAB Img')
             
         if run_normalize:
             # normalize the image
             # TODO: rename mean_normalize --> bckgrnd subtraction (denoising)
-            dab = mean_normalize(dab)
+            dab = mean_normalize(dab, min_background=min_background, debug=debug)
 
             # TODO: run anisodiff
             # smooth the image
@@ -201,11 +204,12 @@ class HDABProcessor(Processor):
     # performs normalization, smoothing, and histogram
     # TODO: rename scale to something better
     # TODO: add switches to turn off/on mean_norm, anisodiff, morph
-    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0):
+    def run_auto_ao(self, odir, params, scale=1.0, mx=255, open_r=0, close_r=0, min_background=0):
         self.auto_dab_thresh_img, self.auto_dab_threshold = \
             self.process_dab(
                 self.dab,
                 run_normalize = True,
+                min_background = 0,
                 scale=scale,
                 mx=mx,
                 close_r=close_r,
@@ -238,14 +242,17 @@ class HDABProcessor(Processor):
                 self.save_signals(odir, signals['sub_deform'], 'AUTO_SUB_DEFORM')
         
         if self.save_images:
-            
             # save the images used in processing
             self.auto_overlay = overlay_thresh(
-                self.frame, self.auto_dab_thresh_img)
-            
+                self.frame, self.auto_dab_thresh_img,
+                main_mask=self.main_mask, sub_masks=self.sub_masks,
+                main_roi=self.main_roi, sub_rois=self.sub_rois)
             self.save_frame(odir, self.auto_dab_thresh_img, 'AUTO_THRESH')
             self.save_frame(odir, self.auto_overlay, 'AUTO_QC')
 
+        # save the compressed boolean array during slidescan mode
+        if self.roi_type == 'SLIDESCAN':
+            self.save_ao_arr(odir, self.auto_dab_thresh_img)
     #
     # end of run_auto_ao
 
@@ -269,7 +276,10 @@ class HDABProcessor(Processor):
         hem_hist = hem.histogram()
         
         # HOTFIX: first get the csf threshold, this gets a better HEM threshold, NOTE not tested yet on larger data
-        csf_threshold = max_dev(hem_hist, scale=1.0, mx=100, debug=self.logger.plots)
+        #csf_threshold = max_dev(hem_hist, scale=1.0, mx=50, debug=self.logger.plots)
+
+        # HOTFIX V2: just remove all low data, this might be more stable since the above line doesn't always find the true csf threshold
+        csf_threshold = 10
 
         # TODO: need a test to make sure the csf threshold was correctly identified, maybe look for CSF in the original image?
         hem_hist[:csf_threshold] = 0
@@ -295,13 +305,15 @@ class HDABProcessor(Processor):
 
         # tile size and step for the convolution operation to calculate feats
         tsize = Point(400, 300, True)
-        tstep = Point(100, 100, True) # HOTFIX: 15 was way too low!
+        tstep = Point(20, 20, True) # HOTFIX: 15 was way too low!
 
         # calculate features from the cell detections
         # TODO: include other pixel features other than intensity
         heatmap = Heatmap(self.hem, hem_cells, tsize, tstep, min_area=0)
-        feats = heatmap.run([heatmap.density, heatmap.intensity, heatmap.area])
-        feats_labels = ['DENSITY', 'INTENSITY', 'AREA']
+        #feats = heatmap.run([heatmap.density, heatmap.intensity, heatmap.area])
+        #feats_labels = ['DENSITY', 'INTENSITY', 'AREA']
+        feats = heatmap.run([heatmap.density, heatmap.area])        
+        feats_labels = ['DENSITY', 'AREA']
 
         # standardize the feats so that they all contribute equally to the fitness calculation
         feats[feats==np.nan] = 0
@@ -338,7 +350,7 @@ class HDABProcessor(Processor):
         gm_wm_score, feat_ind = self.get_score_matrix_on_feat(
             feats, heatmap.tiler.ds[1], landmarks[1,1], landmarks[2,1])
         gm_wm = np.argmax(gm_wm_score, axis=0)
-
+        
         # get the x arrays for the boundaries
         csf_gm_x = np.linspace(0, feats.shape[2], csf_gm.shape[0])
         gm_wm_x = np.linspace(0, feats.shape[2], gm_wm.shape[0])
@@ -365,20 +377,20 @@ class HDABProcessor(Processor):
                 axs[i+3].plot(landmarks[:,0]/feats_ds[0], landmarks[:,1]/feats_ds[1], 'x', color='purple')
 
         # generate the Line annotations
-        csf_gm = sana_geo.Line(new_x, csf_gm_y, False, frame.lvl).to_annotation(ofname, 'CSF_BOUNDARY', connect=False)
-        gm_wm = sana_geo.Line(new_x, gm_wm_y, False, frame.lvl).to_annotation(ofname, 'GM_WM_BOUNDARY', connect=False)
+        csf_gm = Line(new_x, csf_gm_y, False, self.frame.lvl).to_annotation(ofname, 'CSF_BOUNDARY', connect=False)
+        gm_wm = Line(new_x, gm_wm_y, False, self.frame.lvl).to_annotation(ofname, 'GM_WM_BOUNDARY', connect=False)
 
         # scale back to original resolution
         csf_gm[:,0] *= feats_ds[0]
         gm_wm[:,0] *= feats_ds[0]
         csf_gm[:,1] *= feats_ds[1]
         gm_wm[:,1] *= feats_ds[1]
-        
+
         if self.logger.plots:
             fig, ax = plt.subplots(1,1)
             ax.imshow(self.frame.img)
-            ax.plot(new_x, csf_gm, color='black')
-            ax.plot(new_x, gm_wm, color='black')
+            plot_poly(ax, csf_gm, color='black')
+            plot_poly(ax, gm_wm, color='black')            
             plt.show()
 
         ofname = sana_io.create_filepath(
@@ -394,7 +406,8 @@ class HDABProcessor(Processor):
         # save the feature images
         for i in range(feats.shape[0]):
             self.save_array(odir, feats[i], feats_labels[i])
-
+        self.save_array(odir, gray, 'GRAY')
+        
         # save all parameters used to load and transform the frame
         self.save_params(odir, params)            
     #
@@ -402,7 +415,7 @@ class HDABProcessor(Processor):
 
     # creates a simple step function
     # TODO: make more sophisticated templates
-    def get_step_template(N, v0, v1, x0):
+    def get_step_template(self, N, v0, v1, x0):
         template = np.zeros(N)
         template[:x0] = v0
         template[x0:] = v1
@@ -411,7 +424,7 @@ class HDABProcessor(Processor):
     # end of get_step_template
     
     # gets the correlation score between the feat signal and various templates
-    def get_boundary_scores(sig, v0, v1, pad_st, pad_en):
+    def get_boundary_scores(self, sig, v0, v1, pad_st, pad_en):
 
         # for stability, don't start at 0
         mi_x0 = 2
@@ -421,7 +434,7 @@ class HDABProcessor(Processor):
         for x0 in range(mi_x0, score.shape[0]-mi_x0):
 
             # get the template for this boundary decision
-            template = get_step_template(sig.shape[0], v0, v1, x0)
+            template = self.get_step_template(sig.shape[0], v0, v1, x0)
 
             # calculate the score for this boundary
             x, y = sig, template
@@ -434,7 +447,7 @@ class HDABProcessor(Processor):
     #
     # end of get_boundary_scores
 
-    def get_score_matrix(feat, ds, st, en):
+    def get_score_matrix(self, feat, ds, st, en):
 
         # y extrema from the vector to use as cutoff points
         st = np.clip(int(round(st / ds)), 0, None)
@@ -454,27 +467,27 @@ class HDABProcessor(Processor):
 
             # calculate the score for each boundary decision in this column
             sig = feat[st:en, ind]
-            score[:,ind] = get_score(sig, v0, v1, pad_st, pad_en)
+            score[:,ind] = self.get_boundary_scores(sig, v0, v1, pad_st, pad_en)
             
         return score
 
     # finds the feature in the feats matrix with the highest disparity, then uses it to generate the score matrix
-    def get_score_matrix_on_feat(self, feats, ds, st, en):
+    def get_score_matrix_on_feat(self, feats, ds, orig_st, orig_en):
         
         # y extrema from the vector to use as cutoff points
-        st = np.clip(int(round(st / ds)), 0, None)
-        en = np.clip(int(round(en / ds)), None, feat.shape[0]-1)
+        st = np.clip(int(round(orig_st / ds)), 0, None)
+        en = np.clip(int(round(orig_en / ds)), None, feats.shape[1]-1)
 
         # calculate the feat values at each extrema
         # TODO: maybe shouldn't average across entire row? maybe a 3x3 pixel box or something?
-        v0 = np.mean(feat[st,:])
-        v1 = np.mean(feat[en,:])
+        v0 = np.mean(feats[:, st, :], axis=-1)
+        v1 = np.mean(feats[:, en, :], axis=-1)
 
         # find the feat with the largest disparity
         feat_ind = np.argmax(np.abs((v0-v1)/v0))
-        feats = feats[feat_ind][None, ...]
+        feats = feats[feat_ind]
 
-        score = get_score_matrix(feats, ds, st, en)
+        score = self.get_score_matrix(feats, ds, orig_st, orig_en)
         
         return score, feat_ind
     #
