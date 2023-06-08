@@ -1,4 +1,9 @@
 
+# system modules
+import io
+from copy import copy
+from multiprocessing import Manager, Process
+
 # installed modules
 import numpy as np
 import cv2
@@ -21,7 +26,8 @@ TSTEP = Point(50, 50, is_micron=False, lvl=0)
 # functions for generating data from processed Frames
 class Processor:
     def __init__(self, fname, frame, logger, roi_type="", qupath_threshold=None,
-                 save_images=False, run_wildcat=True, stain_vector=None):
+                 save_images=False, run_wildcat=False, run_cells=False,
+                 stain_vector=None):
         self.fname = fname
         self.frame = frame
         self.logger = logger
@@ -29,12 +35,14 @@ class Processor:
         self.qupath_threshold = qupath_threshold
         self.save_images = save_images
         self.run_wildcat = run_wildcat
+        self.run_cells = run_cells
         self.stain_vector = stain_vector
     #
     # end of constructor
 
     def generate_masks(self, main_roi, sub_rois=[]):
         # generate the main mask
+        self.main_roi = main_roi
         self.main_mask = create_mask(
             [main_roi],
             self.frame.size(), self.frame.lvl, self.frame.converter,
@@ -42,9 +50,11 @@ class Processor:
         )
 
         # generate the sub masks
+        self.sub_rois = []
         self.sub_masks = []
         for i in range(len(sub_rois)):
             if sub_rois[i] is None:
+                self.sub_rois.append(None)
                 self.sub_masks.append(None)
             else:
                 mask = create_mask(
@@ -52,6 +62,7 @@ class Processor:
                     self.frame.size(), self.frame.lvl, self.frame.converter,
                     x=0, y=255, holes=[]
                 )
+                self.sub_rois.append(sub_rois[i])
                 self.sub_masks.append(mask)
         #
         # end of sub_masks loop
@@ -79,6 +90,11 @@ class Processor:
         # calculate %AO of the main roi
         ao = pos / area
 
+        if self.logger.plots:
+            fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
+            axs[0].imshow(self.frame.img)
+            axs[1].imshow(frame.img)
+        
         # apply the sub masks and get the %AO of each
         sub_aos, sub_areas = [], []
         for sub_mask in self.sub_masks:
@@ -99,7 +115,7 @@ class Processor:
             signals = self.get_signals(frame, detections)
         else:
             signals = None
-
+           
         # finally, return the results
         ret = {
             'ao': ao, 'area': area,
@@ -130,7 +146,6 @@ class Processor:
         for i in range(len(candidates[0])):
             sure_fg = cv2.circle(sure_fg, (candidates[1][i], candidates[0][i]),
                                  r0, color=255, thickness=-1)
-        sure_fg = sure_fg[:,:,0][:,:,None] # HOTFIX: this converts the 3D to 1D
 
         # threshold the frame for all cell parts using smaller kernel for segmentation
         img_thresh = self.get_thresh(frame.img, threshold, self.main_mask, close_r, open_r)
@@ -147,53 +162,13 @@ class Processor:
         ret, markers = cv2.connectedComponents(sure_fg)
         markers += 1
         markers[unknown == 255] = 0
-        hem_rgb = np.concatenate([hem.img, hem.img, hem.img], axis=-1) # HOTFIX: running watershed on the hem channel
+        hem_rgb = np.concatenate([frame.img, frame.img, frame.img], axis=-1) # HOTFIX: hem or orig?
         markers = cv2.watershed(hem_rgb, markers)
         markers[markers <= 1] = 0
 
         njobs = 8
         cells = self.markers_to_cells(markers, njobs)
 
-    def markers_to_cells(markers, njobs):
-        
-        # get the the height of each section of the frame to split into
-        step = int(self.frame.size()[1]/njobs)
-        args_list = []
-        for n in range(njobs):
-            st = n*step
-            en = st+step
-            args_list.append(
-                {
-                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
-                    'lvl': self.frame.lvl,
-                    'converter': copy(self.frame.converter),
-                    'st': st,
-                    'en': en,
-                }
-            )
-        manager = Manager()
-        ret = manager.dict()
-        jobs = []
-        for pid in range(njobs):
-            p = Process(target=run_segment_markers,
-                        args=(pid, ret, args_list[pid]))
-            jobs.append(p)
-        [p.start() for p in jobs]
-        [p.join() for p in jobs]
-
-        cells = []
-        for pid in ret:
-            cells += ret[pid]
-        cells = [x for x in cells if not x is None]
-
-        # TODO: this is related to the issue in sana_process where pickling loses these attributes
-        for cell in cells:
-            cell.is_micron = False
-            cell.lvl = self.frame.lvl
-            cell.order = 1
-            
-        return cells
-        
         if self.logger.plots:
             self.logger.debug('Recoloring Cell Markers')
             rgb_markers = np.zeros_like(self.frame.img)
@@ -233,6 +208,47 @@ class Processor:
         return cells
     #
     # end of segment_cells
+    def markers_to_cells(self, markers, njobs):
+        
+        # get the the height of each section of the frame to split into
+        step = int(self.frame.size()[1]/njobs)
+        args_list = []
+        for n in range(njobs):
+            st = n*step
+            en = st+step
+            args_list.append(
+                {
+                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
+                    'lvl': self.frame.lvl,
+                    'converter': copy(self.frame.converter),
+                    'st': st,
+                    'en': en,
+                }
+            )
+        manager = Manager()
+        ret = manager.dict()
+        jobs = []
+        for pid in range(njobs):
+            p = Process(target=run_segment_markers,
+                        args=(pid, ret, args_list[pid]))
+            jobs.append(p)
+        [p.start() for p in jobs]
+        [p.join() for p in jobs]
+
+        cells = []
+        for pid in ret:
+            cells += ret[pid]
+        cells = [x for x in cells if not x is None]
+
+        # TODO: this is related to the issue in sana_process where pickling loses these attributes
+        for cell in cells:
+            cell.is_micron = False
+            cell.lvl = self.frame.lvl
+            cell.order = 1
+         
+        return cells
+    #
+    # end of markers_to_cells
 
     def get_thresh(self, img, threshold, mask, close_r, open_r):
         img = img.copy()
@@ -316,9 +332,9 @@ class Processor:
     # end of save_curve
 
     def save_array(self, odir, arr, suffix):
-        arr = (arr - np.min(arr)) / (np.max(arr) - np.min(arr))
-        frame = Frame(np.rint(255*arr).astype(np.uint8))
-        self.save_frame(odir, frame, suffix)
+        fpath = sana_io.create_filepath(
+            self.fname, ext='.png', suffix=suffix, fpath=odir)
+        np.save(fpath, arr)
     #
     # end of save_array
 
@@ -327,6 +343,27 @@ class Processor:
         params.write_data(fpath)
     #
     # end of save_params
+
+    def save_ao_arr(self, odir, frame, suffix=''):
+        fpath = sana_io.create_filepath(
+            self.fname, ext='.dat', suffix=suffix, fpath=odir)
+        
+        # make sure image is a boolean array
+        img = frame.img
+        img[img != 0] = 1
+        img = img.astype(bool)
+        if len(img.shape) == 3:
+            img = img[:,:,0]
+            
+        # pack the bools into bytes (compresses to 1/8 the size)
+        arr = np.packbits(img, axis=-1, bitorder='little')
+
+        # compress and save the array
+        compressed_arr = io.BytesIO()
+        np.savez_compressed(compressed_arr, arr)
+        with open(fpath, 'wb') as fp:
+            fp.write(compressed_arr.getbuffer())
+        
 #
 # end of Processor
 
@@ -334,16 +371,11 @@ def run_segment_markers(pid, ret, args):
     ret[pid] = segment_markers(**args)
     
 def segment_markers(markers, lvl, converter, st, en):
-    #markers = markers[:, st:en].copy()
     cells = []
     z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
     o = z.copy() + 1
-    st_val = np.min(markers[markers != 0])
-    if st_val == 0:
-        st_val = 1
-    en_val = np.max(markers)+1
-    print(st, st_val, en_val)
-    for val in tqdm(range(st_val, en_val)):
+    marker_vals = np.sort(np.unique(markers))[1:]
+    for val in marker_vals:
         x = np.where(markers == val, o, z)
         f = Frame(x, lvl, converter)
         f.get_contours()
