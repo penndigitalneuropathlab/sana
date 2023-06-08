@@ -335,6 +335,21 @@ def fix_polygon(p):
 #
 # end of fix_polygon
 
+def get_overlap(x, y):
+    orig_x = x
+    
+    x = x.copy().to_shapely()
+    y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
+    i = x.intersection(y)
+    if i.is_empty:
+        return None
+    else:
+        return from_shapely(i, orig_x.is_micron, orig_x.lvl, orig_x.order)
+
 # calculates the IOU score of 2 Polygons
 # NOTE: this uses Shapely, converts to shapely objects for easy calculations
 def get_iou(x, y):
@@ -372,17 +387,17 @@ class Converter:
 
     # converts an Array to floating point datatype
     def to_float(self, x):
-        if x.dtype == np.float:
+        if x.dtype == float:
             return x
-        return x.astype(dtype=np.float, copy=False)
+        return x.astype(dtype=float, copy=False)
     #
     # end of to_float
 
     # rounds an Array then converts to integer datatype
     def to_int(self, x):
-        if x.dtype == np.int:
+        if x.dtype == int:
             return x
-        return np.rint(x).astype(np.int)
+        return np.rint(x).astype(int)
     #
     # end of to_int
 
@@ -497,7 +512,7 @@ class Array(np.ndarray):
 # NOTE: shape of this Array is guaranteed to be (2,)
 class Point(Array):
     def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
-        arr = np.array((x, y), dtype=np.float)
+        arr = np.array((x, y), dtype=float)
         obj = Array(arr, is_micron, lvl, order).view(cls)
         return obj
     #
@@ -523,7 +538,7 @@ class Point(Array):
 #  -y: (N, 1) array
 class Polygon(Array):
     def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
-        arr = np.array((x, y), dtype=np.float).T
+        arr = np.array((x, y), dtype=float).T
         obj = Array(arr, is_micron, lvl, order).view(cls)
         return obj
 
@@ -770,7 +785,7 @@ class Line(Polygon):
 class Annotation(Polygon):
     def __new__(cls, geo, file_name, class_name, anno_name, confidence=1.0,
                 is_micron=True, lvl=0, order=1, x=None, y=None, object_type='Polygon'):
-
+    
         # initalize the array using the geometry
         if x is None or y is None:
             x, y = cls.get_vertices(geo)
@@ -819,6 +834,10 @@ class Annotation(Polygon):
             coords = geo['coordinates']
             x = np.array([float(c[0]) for c in coords])
             y = np.array([float(c[1]) for c in coords])
+        elif geo['type'] == 'LineString':
+            coords = geo['coordinates']
+            x = np.array([float(c[0]) for c in coords])
+            y = np.array([float(c[1]) for c in coords])            
         else:
             x = np.array([])
             y = np.array([])

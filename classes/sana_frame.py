@@ -107,7 +107,7 @@ class Frame:
     def to_gray(self):
         if not self.is_rgb():
             return
-        float_img = self.img.astype(np.float64)
+        float_img = self.img.astype(float)
         self.img = np.dot(float_img, [0.2989, 0.5870, 0.1140])[:, :, None]
     #
     # end of to_gray
@@ -268,7 +268,7 @@ class Frame:
                 np.save(fname.split('.')[0]+'.npy', self.img)
             else:
                 im = self.img
-                if len(im.shape) > 3 and im.shape[2] == 1:
+                if len(im.shape) == 3 and im.shape[2] == 1:
                     im = im[:, :, 0]
                 if self.is_binary():
                     im = 255 * im
@@ -584,7 +584,7 @@ class Frame:
         return centers
 
     def detect_cell_sizes(self, centers, plot=False):
-        i = 2*self.img[:, :, 0].astype(np.int) - 255
+        i = 2*self.img[:, :, 0].astype(int) - 255
         mi = 3
         mx = 39
         gap = 5
@@ -700,11 +700,15 @@ def get_tissue_orientation(frame, roi, angle, logger):
 #
 # end of get_tissue_orientation
 
+def create_mask_like(frame, polygons, x=0, y=1, holes=[], outlines_only=False, linewidth=1):
+    return create_mask(polygons, frame.size(), frame.lvl, frame.converter,
+                       x=x, y=y, holes=holes, outlines_only=outlines_only, linewidth=linewidth)
+
 # generates a binary mask based on a list of given Polygons
 #  -polygons: list of polygons to be filled with value y
 #  -size: Point defining the size of the mask initialized with value x
 #  -x, y: vals defining the negative and positive values in the mask
-def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_only=False):
+def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_only=False, linewidth=1):
 
     # convert Polygons to a list of tuples so that ImageDraw read them
     polys = []
@@ -724,13 +728,20 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_onl
     # create a blank image, then draw the polygons onto the image
     size = converter.to_int(size)
     mask = Image.new('L', (size[0], size[1]), x)
+    dr = ImageDraw.Draw(mask)    
     for poly in polys:
         if outlines_only:
-            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=0)
+            if linewidth == 1:
+                dr.polygon(poly, outline=y, fill=0)
+            else:
+                dr.line(poly, fill=y, width=linewidth, joint='curve')
+                # for point in poly:
+                #     dr.ellipse((point[0]-linewidth//2, point[1]-linewidth//2,
+                #                 point[0]+linewidth//2, point[1]+linewidth//2), fill=y)
         else:
-            ImageDraw.Draw(mask).polygon(poly, outline=y, fill=y)            
+            dr.polygon(poly, outline=y, fill=y)
     for h in hs:
-        ImageDraw.Draw(mask).polygon(h, outline=x, fill=x)
+        dr.polygon(h, outline=x, fill=x)
     return Frame(np.array(mask)[:, :, None], lvl, converter)
 #
 # end of create_mask
@@ -739,7 +750,7 @@ def create_mask(polygons, size, lvl, converter, x=0, y=1, holes=[], outlines_onl
 # TODO: there are better methods to do this, ask paul in MRI e.g.
 # this function subtracts background from the frame, by finding the local
 # background intensity throughout the frame
-def mean_normalize(orig_frame):
+def mean_normalize(orig_frame, min_background=0, debug=False):
     frame = orig_frame.copy()
 
     # want to downsample the image to make it run faster, don't need full resolution
@@ -765,7 +776,7 @@ def mean_normalize(orig_frame):
 
             # calculate the local background in the tile
             data = tiles[i][j]
-            data = data[data != 0]
+            data = data[(data != 0) & (data >= min_background)]
             if len(data) == 0:
                 mu = 0
             else:
@@ -774,6 +785,7 @@ def mean_normalize(orig_frame):
     #
     # end of tiles loop
 
+    
     # scale the background frame back to original resolution
     frame_norm = Frame(norm, frame.lvl, frame.converter)
     frame_norm.converter.to_pixels(tsize, lvl)
@@ -787,29 +799,65 @@ def mean_normalize(orig_frame):
 
     # finally, subtract the background
     # NOTE: we are making sure nothing goes below 0 here! this is okay to do since this should all be background
-    frame.img = np.rint(frame.img.astype(np.float) - frame_norm.img)
+    frame.img = np.rint(frame.img.astype(float) - frame_norm.img)
     frame.img[frame.img < 0] = 0
     frame.img = frame.img.astype(np.uint8)
 
+    if debug:
+        fig, axs = plt.subplots(1,3)
+        axs[0].imshow(orig_frame.img)
+        axs[1].imshow(frame_norm.img)
+        axs[2].imshow(frame.img)
+    
     return frame
 #
 # end of mean_normalize
 
 # this function overlays a thresholded image onto the original image
-def overlay_thresh(frame, thresh, alpha=0.5, color='red'):
-
+def overlay_thresh(frame, orig_thresh, alpha=0.5, color='red', main_mask=None, sub_masks=[], main_roi=None, sub_rois=[]):
+    thresh = orig_thresh.copy()
     if type(color) is str:
         color = np.array(name_to_rgb(color))
     else:
         pass
 
+    if not main_mask is None:
+        thresh.img[main_mask.img == 0] = 0
+        
+    full_sub_mask = None
+    for sub_mask in sub_masks:
+        if not sub_mask is None:
+            if full_sub_mask is None:
+                full_sub_mask = np.zeros_like(thresh.img)
+            full_sub_mask += sub_mask.img
+    if not full_sub_mask is None:
+        thresh.img[full_sub_mask == 0] = 0
+
     overlay = frame.copy()
     overlay.img[thresh.img[:,:,0] != 0] = color
     overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
+    
+    if not main_roi is None:
+        main_overlay = create_mask_like(frame, [main_roi], outlines_only=True, linewidth=11)
+        overlay.img[main_overlay.img[:,:,0] == 1] = (0,0,0)
 
+    for sub_roi in sub_rois:
+        if not sub_roi is None:
+            sub_overlay = create_mask_like(frame, [sub_roi], outlines_only=True, linewidth=9)
+            overlay.img[sub_overlay.img[:,:,0] == 1] = (0,0,0)
+    
     return overlay
 #
 # end of overlay_thresh
+
+def load_frame_with_params(loader, params):
+
+    frame = loader.load_frame(params.data['loc'], params.data['size'])
+    frame.rotate(params.data['angle1'])
+    frame.crop(params.data['crop_loc'], params.data['crop_size'])
+    frame.rotate(params.data['angle2'])
+
+    return frame
 
 # calculates the Slide/Tissue intensity threshold
 # NOTE: should only be called by Frame

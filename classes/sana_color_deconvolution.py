@@ -112,7 +112,7 @@ class StainSeparator:
     def to_od(self, rgb):
 
         # scale the data by the max, ensure no zeros
-        rgb = np.clip(rgb.astype(np.float64), 1, 255) / 255
+        rgb = np.clip(rgb.astype(float), 1, 255) / 255
 
         # get the OD, ensure no negatives
         return np.clip(-np.log10(rgb), 0, None)
