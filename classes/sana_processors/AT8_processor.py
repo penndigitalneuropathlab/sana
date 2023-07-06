@@ -27,16 +27,7 @@ class AT8Processor(HDABProcessor):
     #
     # end of constructor
 
-    def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
-
-        self.generate_masks(main_roi, sub_rois)
-
-        # save the original frame
-        if self.save_images:
-            self.save_frame(odir, self.frame, 'ORIG')
-
-        if self.run_cells:
-            self.run_cell_detection(odir, params)
+    def run(self, odir, params, **kwargs):
             
         # either use the cmdl input value or a pre-defined value from before
         # NOTE: this pre-defined value was picked from analyzing multiple slides
@@ -44,13 +35,16 @@ class AT8Processor(HDABProcessor):
         if not hasattr(self, 'manual_dab_threshold'):
             self.manual_dab_threshold = 94
 
-        # generate the manually curated AO results
-        self.run_manual_ao(odir, params)
+        # define the auto AO parameters
+        scale = 1.0
+        mx = 255
+        open_r = 0
+        close_r = 0
+        min_background = 7
 
-        # generate the auto AO results
-        #self.run_auto_ao(odir, params, scale=1.0, mx=90, open_r=0, close_r=0)
-        self.run_auto_ao(odir, params, scale=1.0, mx=255, open_r=0, close_r=0, min_background=7)
         
+        super().run(**kwargs, scale=scale, mx=mx, open_r=open_r, close_r=close_r, min_background=min_background)
+
         if self.run_wildcat:
             
             # generate the neuronal and glial severity results

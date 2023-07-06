@@ -11,7 +11,7 @@ from tqdm import tqdm
 
 # custom modules
 import sana_io
-from sana_frame import Frame, mean_normalize, create_mask, overlay_thresh
+from sana_frame import Frame, mean_normalize, create_mask_like, overlay_thresh
 from sana_heatmap import Heatmap
 from sana_geo import Point
 from sana_filters import minmax_filter
@@ -40,13 +40,24 @@ class Processor:
     #
     # end of constructor
 
-    def generate_masks(self, main_roi, sub_rois=[]):
+    def run(self, odir, params, main_roi, sub_rois=[], ignore_rois=[]):
+
+        self.generate_masks(main_roi, sub_rois, ignore_rois)
+        
+        # save the original frame
+        if self.save_images:
+            self.save_frame(odir, self.frame, 'ORIG')
+    #
+    # end of run
+    
+    def generate_masks(self, main_roi, sub_rois=[], ignore_rois=[]):
+        
         # generate the main mask
         self.main_roi = main_roi
-        self.main_mask = create_mask(
+        self.main_mask = create_mask_like(
+            self.frame, 
             [main_roi],
-            self.frame.size(), self.frame.lvl, self.frame.converter,
-            x=0, y=255, holes=[]
+            x=0, y=255,
         )
 
         # generate the sub masks
@@ -57,15 +68,15 @@ class Processor:
                 self.sub_rois.append(None)
                 self.sub_masks.append(None)
             else:
-                mask = create_mask(
-                    [sub_rois[i]],
-                    self.frame.size(), self.frame.lvl, self.frame.converter,
-                    x=0, y=255, holes=[]
-                )
+                masks = create_mask_like(self.frame, [sub_rois[i]], x=0, y=255)
                 self.sub_rois.append(sub_rois[i])
                 self.sub_masks.append(mask)
         #
         # end of sub_masks loop
+
+        # generate the ignore mask
+        self.ignore_rois = ignore_rois
+        self.ignore_mask = create_mask_like(self.frame, ignore_rois, x=255, y=0, holes=[])
     #
     # end of gen_masks
 
@@ -80,7 +91,8 @@ class Processor:
 
         # apply the mask
         frame.mask(self.main_mask)
-
+        frame.mask(self.ignore_mask)
+        
         # get the total area of the roi
         area = np.sum(self.main_mask.img / np.max(self.main_mask.img))
 

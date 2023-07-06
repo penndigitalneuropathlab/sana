@@ -18,32 +18,21 @@ class MeguroProcessor(HDABProcessor):
     #
     # end of constructor
 
-    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
-
-        self.generate_masks(main_roi, sub_rois)
-
-        # save the original frame
-        if self.save_images:
-            self.save_frame(odir, self.frame, 'ORIG')
-        
-        # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=0.5, mx=255)
-
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
+    def run(self, odir, params, **kwargs):
 
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
         # NOTE: original value was DAB_OD = 0.3 in QuPath, this
         #       value is calculated from that
         self.manual_dab_threshold = 94
-
-        # generate the manually curated AO results
-        self.run_manual_ao(odir, params)
         
-        # save the params IO to a file
-        self.save_params(odir, params)
-
+        kwargs['scale'] = 0.5
+        kwargs['mx'] = 255
+        kwargs['open_r'] = 0
+        kwargs['close_r'] = 0
+        kwargs['min_background'] = 0
+        super().run(odir, params, **kwargs)
+        
         # # TODO: plot the curves!
         # slide_name = os.path.splitext(os.path.basename(self.fname))[0]
         # signal = np.load(os.path.join(odir, slide_name+'_AUTO_MAIN_DEFORM.npy'))[0][0]

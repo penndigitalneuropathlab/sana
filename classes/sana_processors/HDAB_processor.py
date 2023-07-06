@@ -79,6 +79,24 @@ class HDABProcessor(Processor):
     #
     # end of constructor
 
+    def run(self, odir, params, scale, mx, open_r, close_r, min_background, **kwargs):
+        super().run(odir, params, **kwargs)
+        
+        # generate the manually curated AO results
+        self.run_manual_ao(odir, params)
+
+        # generate the auto AO results
+        self.run_auto_ao(odir, params, scale=scale, mx=mx, open_r=open_r, close_r=close_r, min_background=min_background)
+
+        # detect the cells in the HEM counterstain
+        if self.run_cells:
+            self.run_cell_detection(odir, params)
+
+        # save the params IO to a file
+        self.save_params(odir, params)
+    #
+    # end of run
+    
     # performs a simple threshold using a manually selected cut off point
     # then runs the %AO process
     def run_manual_ao(self, odir, params):
@@ -156,8 +174,11 @@ class HDABProcessor(Processor):
                 axs[2].imshow(dab.img)
                 axs[2].set_title('Normalized/Smoothed DAB Img')
 
-        # get the histograms
-        dab_hist = dab.histogram()
+        # get the histogram of only valid data
+        masked_dab = dab.copy()
+        masked_dab.mask(self.main_mask)
+        masked_dab.mask(self.ignore_mask)
+        dab_hist = masked_dab.histogram()
 
         # get the stain threshold
         dab_threshold = max_dev(dab_hist, scale=scale, mx=mx, debug=debug, show_debug=False)
