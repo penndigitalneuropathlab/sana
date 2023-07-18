@@ -241,7 +241,7 @@ class Frame:
     # NOTE: changing the mode affects the GM detection
     #        - 'wrap' causes sharp peaks at edge if the tissue isn't parallel
     #        - 'symmetric' seems to be the best, the edges are very flat
-    def pad(self, pad, alignment='center'):
+    def pad(self, pad, alignment='center', mode='symmetric'):
         if alignment == 'left':
             before = pad
             after = (0,0)
@@ -253,7 +253,7 @@ class Frame:
             after = pad
         self.img = np.pad(self.img,
                           ((before[1], after[1]),
-                           (before[0], after[0]), (0,0)), mode='symmetric')
+                           (before[0], after[0]), (0,0)), mode=mode)
     #
     # end of pad
 
@@ -760,7 +760,7 @@ def mean_normalize(orig_frame, min_background=0, debug=False):
     # prepare the 200x200um tiles, shift 10um
     tsize = Point(200, 200, True, 0)
     tstep = Point(10, 10, True, 0)
-    tiler = Tiler(lvl, frame.converter, tsize, tstep)
+    tiler = Tiler(lvl, frame.converter, tsize, tstep, fpad_mode='constant')
 
     # scale down the original frame to detection background
     frame_ds = frame.copy()
@@ -771,9 +771,15 @@ def mean_normalize(orig_frame, min_background=0, debug=False):
     tiles = tiler.load_tiles()
     tds = tiler.ds
     norm = np.zeros([tiles.shape[0], tiles.shape[1]], dtype=float)
+    print(np.min(frame.img), np.max(frame.img))
     for i in range(tiles.shape[0]):
         for j in range(tiles.shape[1]):
 
+            if i == 0 and j == 0:
+                fig, ax = plt.subplots(1,1)
+                ax.imshow(tiles[0][0])
+
+            # TODO: add gaussian kernel
             # calculate the local background in the tile
             data = tiles[i][j]
             data = data[(data != 0) & (data >= min_background)]
@@ -795,7 +801,7 @@ def mean_normalize(orig_frame, min_background=0, debug=False):
     frame_norm.img = frame_norm.img[:frame.img.shape[0], :frame.img.shape[1], :]
 
     # smooth the background image a bit
-    frame_norm.img = cv2.GaussianBlur(frame.img, ksize=(0,0), sigmaX=tsize[0], sigmaY=tsize[1])[:,:,None]
+    #frame_norm.img = cv2.GaussianBlur(frame.img, ksize=(0,0), sigmaX=tsize[0], sigmaY=tsize[1])[:,:,None]
 
     # finally, subtract the background
     # NOTE: we are making sure nothing goes below 0 here! this is okay to do since this should all be background
@@ -804,7 +810,7 @@ def mean_normalize(orig_frame, min_background=0, debug=False):
     frame.img = frame.img.astype(np.uint8)
 
     if debug:
-        fig, axs = plt.subplots(1,3)
+        fig, axs = plt.subplots(1,3, figsize=(20,20))
         axs[0].imshow(orig_frame.img)
         axs[1].imshow(frame_norm.img)
         axs[2].imshow(frame.img)
