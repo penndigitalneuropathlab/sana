@@ -99,11 +99,11 @@ class StainSeparator:
             v1 = v
 
         # construct the new stain vector
-        stain_v = [
+        stain_v = np.array([
             v1,
             v2,
             [0.0, 0.0, 0.0],
-        ]
+        ])
         self.stain_vector = StainVector(
             self.stain_type, stain_v)
         self.stain_to_rgb = self.stain_vector.v
@@ -112,7 +112,7 @@ class StainSeparator:
     def to_od(self, rgb):
 
         # scale the data by the max, ensure no zeros
-        rgb = np.clip(rgb.astype(np.float64), 1, 255) / 255
+        rgb = np.clip(rgb.astype(float), 1, 255) / 255
 
         # get the OD, ensure no negatives
         return np.clip(-np.log10(rgb), 0, None)
@@ -125,9 +125,8 @@ class StainSeparator:
         od = self.to_od(rgb)
         stains = od @ v
 
-        # TODO: we used to clip to 0, however i don't think it's necessary
-        return stains        
-        #return np.clip(stains, 0, None)
+        # clip the data so that we don't underflow later
+        return np.clip(stains, 0, None)
 
     # converts the stain separated image back to an rgb image using the stain vector
     def combine_stains(self, stain):
@@ -148,17 +147,21 @@ class StainVector:
         
         if self.stain_type == 'H-DAB':
             if stain_vector is None:
-                self.v = stain_v = np.array([
+                self.v = np.array([
                     [0.65, 0.70, 0.29],
                     [0.27, 0.57, 0.78],
                     [0.00, 0.00, 0.00],
                 ])
             else:
-                self.v = np.array([
-                    stain_vector[:3],
-                    stain_vector[3:],
-                    [0.0, 0.0, 0.0],
-                ])
+                print(stain_vector)
+                if len(stain_vector) == 6:
+                    self.v = np.array([
+                        stain_vector[:3],
+                        stain_vector[3:],
+                        [0.0, 0.0, 0.0],
+                    ])
+                else:
+                    self.v = stain_vector
             self.stains = ['HEM', 'DAB', 'RES']
 
         elif self.stain_type == 'HE':

@@ -23,17 +23,25 @@ from matplotlib import pyplot as plt
 # TODO: Fine-tune for IBA1 antibody
 
 class IBA1Processor(HDABProcessor):
-    def __init__(self, fname, frame, debug=False):
-        super(IBA1Processor, self).__init__(fname, frame, debug)
+    def __init__(self, fname, frame, logger, **kwargs):
+        super(IBA1Processor, self).__init__(fname, frame, logger, **kwargs)
     #
     # end of constructor
 
-    def run(self, odir, params, main_roi, sub_rois=[]):
+    def run(self, odir, roi_odir, first_run, params, main_roi, sub_rois=[]):
+        
         # generate the neuronal and glial severity results
-        self.run_microglia(odir, params)
+        #self.run_microglia(odir, params)
 
 
-        self.mask_frame(main_roi, sub_rois)
+        self.generate_masks(main_roi, sub_rois)
+
+        # save the original frame
+        if self.save_images:
+            self.save_frame(odir, self.frame, 'ORIG')
+
+        # generate the auto AO results
+        self.run_auto_ao(odir, params, scale=1.0, mx=255)
 
         # pre-selected threshold value selected by Dan using
         # multiple images in QuPath
@@ -43,17 +51,7 @@ class IBA1Processor(HDABProcessor):
 
         # generate the manually curated AO results
         self.run_manual_ao(odir, params)
-
-        # generate the auto AO results
-        self.run_auto_ao(odir, params, scale=1.0, mx=90)
-
-        # save the original frame
-        self.save_frame(odir, self.frame, 'ORIG')
-
-        # save the DAB and HEM images
-        self.save_frame(odir, self.dab, 'DAB')
-        self.save_frame(odir, self.hem, 'HEM')
-
+        
         # save the params IO to a file
         self.save_params(odir, params)
     #

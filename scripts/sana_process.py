@@ -18,6 +18,7 @@ import sana_io
 from sana_params import Params
 from sana_loader import Loader
 from sana_geo import transform_poly, transform_inv_poly, Point, Polygon
+import sana_geo
 from sana_frame import Frame, create_mask
 from sana_framer import Framer
 from sana_logger import SANALogger
@@ -29,6 +30,8 @@ from sana_processors.MBP_processor import MBPProcessor
 from sana_processors.SMI35_processor import SMI35Processor
 from sana_processors.parvalbumin_processor import parvalbuminProcessor
 from sana_processors.meguro_processor import MeguroProcessor
+from sana_processors.ferritin_processor import FerritinProcessor
+from sana_processors.gfap_processor import GFAPProcessor
 from sana_processors.AT8_processor import AT8Processor
 from sana_processors.TDP43MP_processor import TDP43MPProcessor
 from sana_processors.IBA1_processor import IBA1Processor
@@ -43,19 +46,37 @@ from matplotlib import pyplot as plt
 
 # instantiates a Processor object based on the antibody of the svs slide
 # TODO: where to put this
-def get_processor(fname, frame, logger, **kwargs):
-    try:
-        antibody = sana_io.get_antibody(fname)
-    except:
-        antibody = ''
+def get_processor(fname, frame, logger, forced_antibody, **kwargs):
+    if forced_antibody:
+        antibody = forced_antibody
+    else:
+        try:
+            antibody = sana_io.get_antibody(fname)
+        except:
+            antibody = ''
+            if 'TDP' in fname:
+                antibody = 'TDP43'
+            elif 'AT8' in fname:
+                antibody = 'AT8'
+            elif 'SMI32' in fname or 'SMI-32' in fname:
+                antibody = 'SMI32'
+            elif 'Meguro' in fname:
+                antibody = 'MEGURO'
+            else:
+                antibody = ''
+        
     antibody_map = {
         'NeuN': NeuNProcessor,
         'SMI32': SMI32Processor,
+        'SMI-32': SMI32Processor,        
         'CALR6BC': calretininProcessor,
         'parvalbumin': parvalbuminProcessor,
         'SMI94': MBPProcessor,
         'SMI35': SMI35Processor,
         'MEGURO': MeguroProcessor,
+        'MeguroTriton': MeguroProcessor,
+        'Ferritin': FerritinProcessor,
+        'GFAP': GFAPProcessor,
         'AT8': AT8Processor,
         'TDP43MP': TDP43MPProcessor,
         'TDP43': TDP43MPProcessor,         # TODO: is this right?
@@ -66,12 +87,11 @@ def get_processor(fname, frame, logger, **kwargs):
         'SYN303': SYN303Processor,
         'aSYN': SYN303Processor,
         '': HDABProcessor,
-    }
+    }        
     cls = antibody_map[antibody]
     path = inspect.getfile(cls)
     proc = cls(fname, frame, logger, **kwargs)
     return proc
-
 #
 # end of get_processor
 
@@ -146,13 +166,16 @@ def process_slides(args, slides, logger):
             if anno_f is None:
                 slide_mask = None
             else:
-                rois = load_rois(logger, anno_f,
+                mask_rois = load_rois(logger, anno_f,
                                  args.main_class, args.main_name)
-                if len(rois) == 0:
+                ignore_rois = sana_io.read_annotations(anno_f, args.ignore_class)
+                if len(mask_rois) == 0:
                     slide_mask = None
                 else:
-                    slide_mask = create_mask(rois, loader.thumbnail.size(),
+                    slide_mask = create_mask(mask_rois, loader.thumbnail.size(),
                                              loader.thumbnail.lvl, loader.thumbnail.converter)
+                    for mask_roi in mask_rois:
+                        loader.converter.rescale(mask_roi, args.lvl)
         else:
             slide_mask = None
 
@@ -181,9 +204,30 @@ def process_slides(args, slides, logger):
                 x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
                 y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
                 main_roi = Polygon(x, y, is_micron=False, lvl=args.lvl)
-                main_roi = main_roi.to_annotation(slide_f, sana_io.get_antibody(slide_f)+'_ROI')
+                [x.rescale(args.lvl) for x in ignore_rois]
+                [x.translate(loc) for x in ignore_rois]
+                
+                # crop the ROI to the slide mask so that we are only process annotated tissue
+                if not slide_mask is None:
+                    for mask_roi in mask_rois:
+                        cropped_roi = sana_geo.get_overlap(main_roi, mask_roi)
+                        if cropped_roi is None:
+                            continue
+
+                        if cropped_roi.area() != main_roi.area():
+                            main_roi = cropped_roi
+                
+                main_roi = main_roi.to_annotation(slide_f, 'ROI')
                 sub_rois = []
                 roi_id = '%s_%d_%d' % (main_roi.class_name, i, j)
+                slide_name = os.path.splitext(os.path.basename(slide_f))[0]
+                odir = os.path.join(args.odir, slide_name, roi_id)
+                if os.path.exists(os.path.join(odir, slide_name+'.csv')) and (not args.reprocess):
+                    p = Params(os.path.join(odir, slide_name+'.csv'))
+                    if p.data['auto_ao'] is None or p.data['auto_ao'] == "":
+                        pass
+                    elif not np.isnan(p.data['auto_ao']):
+                        continue
 
                 # store the process arguments
                 rois_to_process.append({
@@ -192,7 +236,9 @@ def process_slides(args, slides, logger):
                     'main_roi': main_roi,
                     'main_roi_dict': main_roi.__dict__,
                     'sub_rois': sub_rois,
-                    'sub_roi_dicts': [sub_roi.__dict__ for sub_roi in sub_rois],
+                    'sub_roi_dicts': [x.__dict__ for x in sub_rois],
+                    'ignore_rois': ignore_rois,
+                    'ignore_roi_dicts': [x.__dict__ for x in ignore_rois],
                     'roi_id': roi_id,
                 })
         #
@@ -201,6 +247,8 @@ def process_slides(args, slides, logger):
     # end of slides loop
 
     # return the list of ROIs we extracted from the list of slides
+    import random
+    random.shuffle(rois_to_process)
     return rois_to_process
 #
 # end of process_slides
@@ -245,6 +293,11 @@ def process_rois(args, slides, logger):
                     sub_rois.append(None)
                     logger.warning('Couldn\'t find the %s sub_roi' % sub_class)
 
+            # load the ignore roi(s), no need to check if inside
+            ignore_rois = []
+            for ignore_class in args.ignore_classes:
+                ignore_rois += sana_io.read_annotations(anno_f, ignore_class)
+                  
             # create the ROI ID
             if not main_roi.name:
                 roi_name = str(main_roi_i)
@@ -252,6 +305,15 @@ def process_rois(args, slides, logger):
                 roi_name = main_roi.name
             roi_id = '%s_%s' % (main_roi.class_name, roi_name)
 
+            slide_name = os.path.splitext(os.path.basename(slide_f))[0]
+            odir = os.path.join(args.odir, slide_name, roi_id)
+            if os.path.exists(os.path.join(odir, slide_name+'.csv')) and (not args.reprocess):
+                p = Params(os.path.join(odir, slide_name+'.csv'))
+                if p.data['auto_ao'] is None or p.data['auto_ao'] == "":
+                    pass
+                elif not np.isnan(p.data['auto_ao']):
+                    continue
+                
             # store the process arguments for this ROI
             rois_to_process.append({
                 'args': args,
@@ -259,7 +321,9 @@ def process_rois(args, slides, logger):
                 'main_roi': main_roi,
                 'main_roi_dict': main_roi.__dict__,
                 'sub_rois': sub_rois,
-                'sub_roi_dicts': [sub_roi.__dict__ if not sub_roi is None else None for sub_roi in sub_rois],
+                'sub_roi_dicts': [x.__dict__ if not x is None else None for x in sub_rois],
+                'ignore_rois': ignore_rois,
+                'ignore_roi_dicts': [x.__dict__ if not x is None else None for x in ignore_rois],
                 'roi_id': roi_id,
             })
         #
@@ -272,7 +336,11 @@ def process_rois(args, slides, logger):
 #
 # end of process_roi
 
-def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_rois=[], sub_roi_dicts=[], roi_id=None):
+def process(args, slide, first_run, roi_i, nrois,
+            main_roi, main_roi_dict,
+            sub_rois=[], sub_roi_dicts=[],
+            ignore_rois=[], ignore_roi_dicts=[],
+            roi_id=None):
     logger = SANALogger.get_sana_logger(args.debug_level)    
     logger.info('Processing Frame (%d/%d)' % (roi_i, nrois))
 
@@ -285,11 +353,11 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
         if not sub_roi_dicts[i] is None:
             for x in sub_roi_dicts[i]:
                 sub_rois[i].__setattr__(x, sub_roi_dicts[i][x])
-
-    loader = get_loader(logger, slide, args.lvl)
-    if loader is None:
-        return None
-    
+    for i in range(len(ignore_rois)):
+        if not ignore_roi_dicts[i] is None:
+            for x in ignore_roi_dicts[i]:
+                ignore_rois[i].__setattr__(x, ignore_roi_dicts[i][x])
+                
     # initialize the Params IO object, this will store parameters
     # relating to the loading/processing of the Frame, as well as
     # the various AO results
@@ -300,29 +368,38 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
     
     # create the output directory path
     # NOTE: output/slide_name/slide_name.*
-    slide_f = loader.fname
+    slide_f = slide
     slide_name = os.path.splitext(os.path.basename(slide_f))[0]
     odir = sana_io.create_odir(args.odir, slide_name)
     odir = sana_io.create_odir(odir, roi_id)
     logger.debug('Output directory successfully created: %s' % odir)
 
+    loader = get_loader(logger, slide, args.lvl)
+    if loader is None:
+        return None
+    
     # generate a quick plot of the thumbnail, and the main/sub ROIs we loaded in
     if logger.plots:
-        logger.debug('Main ROI: %s' % str(main_roi))
-        logger.debug('SHAPE: %s' % str(main_roi.shape))
-        plot_rois = [main_roi.copy()] + [sub_roi.copy() for sub_roi in sub_rois]
-        [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois]
-        colors = ['black', 'red']
+        logger.debug('Main ROI SHAPE: %s' % str(main_roi.shape))
+        plot_rois = [main_roi.copy()] + \
+            [sub_roi.copy() if not sub_roi is None else None for sub_roi in sub_rois] + \
+            [ignore_roi.copy() if not ignore_roi is None else None for ignore_roi in ignore_rois]
+            
+        [loader.converter.rescale(x, loader.thumbnail.lvl) for x in plot_rois if not x is None]
+        colors = ['black']+['red']*len(sub_rois)+['gray']*len(ignore_rois)
                 
         fig, ax = plt.subplots(1,1)
         ax.imshow(loader.thumbnail.img)
-        [plot_poly(ax, x, color='red') for x in plot_rois[1:] if not x is None]
-        plot_poly(ax, plot_rois[0], color='black')
+        ax.set_title(plot_rois[0].class_name)
+        [plot_poly(ax, plot_rois[i], color=colors[i]) \
+         for i in range(len(plot_rois)) if not plot_rois[i] is None]
+
         plt.show()
     
     # rescale the ROIs to the proper level
     loader.converter.rescale(main_roi, loader.lvl)
     [loader.converter.rescale(x, loader.lvl) for x in sub_rois if not x is None]
+    [loader.converter.rescale(x, loader.lvl) for x in ignore_rois if not x is None]    
             
     # load the frame into memory using the main roi
     if args.mode == 'GM':
@@ -355,22 +432,36 @@ def process(args, slide, first_run, roi_i, nrois, main_roi, main_roi_dict, sub_r
             sub_rois[sub_roi_i],
             params.data['loc'], params.data['crop_loc'],
             params.data['M1'], params.data['M2']
+       )
+    for ignore_roi_i in range(len(ignore_rois)):
+        if ignore_rois[ignore_roi_i] is None:
+            continue
+        transform_poly(
+            ignore_rois[ignore_roi_i],
+            params.data['loc'], params.data['crop_loc'],
+            params.data['M1'], params.data['M2']            
         )
-
+        
     # get the processor object
     kwargs = {
         'qupath_threshold': args.qupath_threshold,
         'roi_type': args.mode,
         'save_images': args.save_images,
         'run_wildcat': args.run_wildcat,
+        'run_cells': args.run_cells,
     }
-    processor = get_processor(slide_f, frame, logger, **kwargs)
+    processor = get_processor(slide_f, frame, logger, args.forced_antibody, **kwargs)
     if processor is None:
         logger.warning('No processor found for %s' % slide_f)
         return None
 
     # finally, analyze the frame based on the antibody it was stained with
-    processor.run(odir, detection_odir, first_run, params, main_roi, sub_rois)
+    kwargs = {
+        'main_roi': main_roi,
+        'sub_rois': sub_rois,
+        'ignore_rois': ignore_rois,
+    }
+    processor.run(odir, params, **kwargs)
 #
 # end of process
 
@@ -422,21 +513,20 @@ def main(argv):
         
     # get the ROIs within the slides to process
     logger.info('Number of slides found: %d' % len(slides))
-    if args.reprocess:    
-        if args.mode == 'SLIDESCAN':
+    if args.mode == 'SLIDESCAN':
 
-            # process the entire slide
-            rois_to_process = process_slides(args, slides, logger)
-        else:
+        # process the entire slide
+        rois_to_process = process_slides(args, slides, logger)
+    else:
 
-            # process ROIs based on input annotations
-            rois_to_process = process_rois(args, slides, logger)
+        # process ROIs based on input annotations
+        rois_to_process = process_rois(args, slides, logger)
             
-        # create and start the jobs
-        jobs = dispatch(rois_to_process, args.njobs)
+    # create and start the jobs
+    jobs = dispatch(rois_to_process, args.njobs)
             
-        # join and wait until all jobs are finished        
-        [job.join() for job in jobs]        
+    # join and wait until all jobs are finished        
+    [job.join() for job in jobs]        
         
     # # TODO: put sana_results here
     
@@ -491,6 +581,9 @@ def cmdl_parser(argv):
         '-run_wildcat', action='store_true', default=False,
         help="runs the wildcat model (if available)")
     parser.add_argument(
+        '-run_cells', action='store_true', default=False,
+        help="runs the cell segmenter (if available)")
+    parser.add_argument(
         '-adir', type=str, default="",
         help="directory path containing .json files")
     parser.add_argument(
@@ -518,6 +611,9 @@ def cmdl_parser(argv):
         '-sub_classes', type=str, nargs='*', default=[],
         help="class names of ROIs inside the main ROI to separately process")
     parser.add_argument(
+        '-ignore_classes', type=str, nargs='*', default=[],
+        help="class names of ROIs to exclude")
+    parser.add_argument(
         '-debug_level', type=str, default='normal',
         help="Logging debug level", choices=['full', 'debug', 'normal', 'quiet'])
     parser.add_argument(
@@ -530,6 +626,10 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-stain_vector', type=float, nargs=6, default=None,
         help="Pre-defined stain vector in QuPath to use in Manual %AO"
+    )
+    parser.add_argument(
+        '-forced_antibody', type=str, default=None,
+        help="Force the program to use this antibody processor for all inputted slides"
     )
     parser.add_argument('-skip', type=int, default=0)
 

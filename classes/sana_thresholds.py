@@ -68,7 +68,7 @@ def knn(d, k):
 
     x = d.flatten()[:, None]
     _, labels, (centers) = cv2.kmeans(
-        x.astype(np.float32), k, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
+        x.astype(float32), k, None, criteria, 10, cv2.KMEANS_PP_CENTERS)
     seg = centers[labels.flatten()].reshape(d.shape)
     centers = np.sort(centers[:, 0])
 
@@ -84,8 +84,8 @@ def kittler(hist, mi=0, mx=255):
     # prepare the hist and bins
     if len(hist.shape) == 2:
         hist = hist[:,0]
-    h = hist.astype(np.float)
-    g = np.arange(0, 257, 1).astype(np.float)
+    h = hist.astype(float)
+    g = np.arange(0, 257, 1).astype(float)
     
     # zero out data not within the min and max parameters
     h[:mi] = 0
@@ -135,7 +135,7 @@ def max_dev(hist, scale=1.0, debug=False, mx=255, show_debug=False):
 
     if mx > hist_norm.shape[0] - 1:
         mx = hist_norm.shape[0]-1
-        
+
     # get the peak and end of histogram
     x0, x1 = np.argmax(hist_norm[:mx]), mx
     y0, y1 = hist_norm[x0], hist_norm[x1]
