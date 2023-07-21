@@ -1,5 +1,5 @@
 ###### Requirements without Version Specifiers ######
-cv2
+opencv-python
 numpy
 pdoc
 pillow
