@@ -7,7 +7,21 @@ import sys
 import cv2
 import numpy as np
 from PIL import Image
-from sana_geo import Point
+import nibabel as nib
+
+# sana packages
+from sana_geo import Point, point_like
+
+# custom exceptions
+class DatatypeException(Exception):
+    def __init__(self, message):
+        self.message = message
+class ChannelException(Exception):
+    def __init__(self, message):
+        self.message = message
+class DimensionException(Exception):
+    def __init__(self, message):
+        self.message = message
 
 # TODO: check parameter usage
 class Frame:
@@ -159,8 +173,6 @@ class Frame:
         self.img = cv2.resize(self.img, dsize=(w, h), interpolation=interpolation)
         self.check_channels()
 
-
-
     # TODO: maybe look at histogram to auto-set the min/max values?
     def remove_background(self, min_background=1, max_background=255, debug=False):
         """
@@ -173,6 +185,9 @@ class Frame:
         :param max_background: maximum value to be used as background, this can be used to exclude the darkest objects in the image so that they don't contribute to background
         :param debug: when True, generates a plot that shows the original image, background image, and processed image
         """
+        if self.is_rgb():
+            raise ChannelException('Cannot apply background removal in RGB images')
+
         if debug:
             fig, axs = plt.subplots(1,3, figsize=(20,20))
             axs[0].imshow(self.img)
@@ -232,6 +247,214 @@ class Frame:
         if debug:
             axs[1].imshow(background_frame.img)
             axs[2].imshow(self.img)
+
+    def rotate(self, angle):
+        """
+        Rotates the image TODO around it's center
+        :param angle: rotation angle in degrees
+        """
+        # calculate the rotation matrix, along with the new width and height of the image
+        M, w, h = self.get_rotation_matrix(angle)
+
+        # perform the affine transformation
+        self.warp_affine(M, w, h)
+
+    def get_rotation_matrix(self, angle):
+        """
+        Finds the rotation matrix for the given angle and image center, also calculates the new width and height of the rotated image
+        :param angle: rotation angle in degrees
+        """
+
+        # get the rotation point
+        w, h = self.size()
+        cx, cy = w//2, h//2
+
+        # find the rotation matrix
+        M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+
+        # compute the new dimensions
+        cos_term = np.abs(M[0,0])
+        sin_term = np.abs(M[0,1])
+        new_w = int((h * sin_term) + (w * cos_term))
+        new_h = int((h * cos_term) + (w * sin_term))
+
+        # translate the rotation matrix so that the image center doesn't move
+        M[0,2] += (new_w / 2) - cx
+        M[1,2] += (new_h / 2) - cy
+
+        return M, new_w, new_h
+    
+    def warp_affine(self, M, w, h):
+        """
+        Performs an affine transformation using the transformation matrix and the dimensions
+        :param M: tranformation matrix
+        :param w: width of the image result
+        :param h: height of the image result
+        """
+        if self.is_gray():
+            border_value = 0
+        else:
+            border_value = (255,255,255)
+        self.img = cv2.warpAffine(self.img, M,
+                                  dsize=(w, h),
+                                  borderValue=border_value)
+        self.check_channels() # TODO
+
+    def pad(self, pad, alignment='center', mode='symmetric'):
+        """
+        Pads the image using the specified padding alignment
+        :param pad: Point, number of pixels to pad
+        :param alignment: 'before', 'center', or 'after' alignment methods
+        :param mode: method to use to select padded values, see np.pad
+        """
+        if alignment == 'before':
+            before = pad
+            after = point_like(pad, (0,0))
+        elif alignment == 'center':
+            before = pad//2
+            after = pad - before
+        elif alignment == 'right':
+            before = point_like(pad, (0,0))
+            after = pad
+        self.img = np.pad(self.img, ((before[1], after[1]), # y
+                                     (before[0], after[1]), # x
+                                     (0, 0),                # c
+                                     ), mode=mode)
+        
+    def save(self, fname, invert_sform=False, spacing=None):
+        """
+        Writes the image array to a file
+        :param fname: filename to write to
+        :param invert_sform: see sana.image.save_nifti
+        :param spacing: see sana.image.save_nifti
+        """
+        if fname.endswith('.nii.gz'):
+            self.save_nifti(fname, invert_sform, spacing)
+        else:
+            # can't write png's etc as floats, just store the image array
+            if self.is_float():
+                np.save(os.path.splitext(fname)[0]+'.npy', self.img)
+            else:
+                im = self.img
+                if self.is_gray():
+                    im = self.img[:,:,0]
+                if self.is_binary():
+                    im *= 255
+                im = Image.fromarray(im)
+                im.save(fname)
+    
+    def save_nifti(self, fname, invert_sform=False, spacing=None):
+        """
+        Writes the image array to a nifti form that programs like ITK-SNAP can read
+        :param fname: filename to write to
+        :param invert_sform: changes the sign of the sform
+        :param spacing: pixel spacing, uses Converter info if not given
+        """
+        if self.is_float:
+            raise DatatypeException('Cannot save floating point image to NifTI')
+        
+        # get the pixel spacing using the resolution and MPP
+        if spacing is None:
+            spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000)] * 2
+
+        # manipulate the channels of the image
+        pix = np.expand_dims(pix, (2))
+        if self.is_rgb():
+            rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
+            pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
+        else:
+            pix = pix[:,:,:,0]
+
+        nii = nib.Nifti1Image(pix, np.diag([spacing[0], spacing[1], 1.0, 1.0]))
+        if invert_sform:
+            nii.set_sform([
+                [-spacing[0], 0, 0, 0],
+                [0, -spacing[1], 0, 0],
+                [0, 0, 1, 0],
+            ])
+        nib.save(nii, fname)
+  
+    def mask(self, mask_frame, mask_value=0):
+        """
+        Applies a binary mask to the image
+        :param mask_frame: a binary image frame with the same dimensions
+        :param mask_value: value to set the masked data to
+        """
+        if self.size() != mask_frame.size():
+            raise DimensionException('Mask image {} has different dimensions than the frame {}'.format(mask_frame.size(), self.size()))
+        
+        if self.is_rgb() and type(mask_value) is int:
+            mask_value = (mask_value, mask_value, mask_value)
+        self.img[mask_frame.img[:,:,0] == 0] = mask_value
+
+    # TODO: check parameters
+    def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
+        """
+        Performs anisotrophic diffusion filtering on the image
+        https://github.com/agilescientific/bruges/blob/main/bruges/filters/anisodiff.py
+        :param: niter: number of iterations
+        :param kappa: conduction coefficient
+        :param gamma:
+        :param step: tuple, distance between pixels
+        """
+        if self.is_rgb():
+            raise ChannelException('Cannot apply filter to RGB image')
+        
+        self.to_float()
+
+        deltaS = np.zeros_like(self.img)
+        deltaE = deltaS.copy()
+        NS = deltaS.copy()
+        EW = deltaS.copy()
+        gS = np.ones_like(self.img)
+        gE = gS.copy()
+
+        for ii in range(niter):
+
+            # calculate the diffs (change in pixels in both rows and cols)
+            deltaS[:-1, :] = np.diff(self.img, axis=0)
+            deltaE[:, :-1] = np.diff(self.img, axis=1)
+
+            # conduction gradients
+            gS = 1. / (1. + (deltaS/kappa)**2.) / step[0]
+            gE = 1. / (1. + (deltaE/kappa)**2.) / step[1]
+
+            # update matrices
+            S = gS * deltaS
+            E = gE * deltaE
+
+            # subtract a copy that has been shifted 'North/West' by one
+            # pixel. don't as questions. just do it. trust me.
+            NS[:] = S
+            EW[:] = E
+            NS[1:, :] -= S[:-1, :]
+            EW[:, 1:] -= E[:, :-1]
+
+            self.img += gamma * (NS + EW)
+
+        # clip values between 0 and 255, round to integer
+        np.clip(self.img, 0, 255, out=self.img)
+        self.to_short()    
+    
+    def threshold(self, threshold, x, y):
+        """
+        Applies a threshold to a grayscale image, setting passing pixels to value y and all other pixels to value x
+        :param threshold: grayscale value
+        :param x: value for below threshold
+        :param y: value for above threshold
+        """
+        if self.is_rgb():
+            raise ChannelException('Cannot apply threshold to RGB image')
+        
+        # preapre image arrays for the true and false conditions
+        if type(x) is int:
+            x = np.full_like(self.img, x)
+        if type(y) is int:
+            y = np.full_like(self.img, y)
+
+        # perform the thresholding
+        self.img = np.where(self.img < threshold, x, y)
+        
 
 def gaussian_kernel(length, sigma):
     """
