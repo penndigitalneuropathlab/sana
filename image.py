@@ -454,7 +454,17 @@ class Frame:
 
         # perform the thresholding
         self.img = np.where(self.img < threshold, x, y)
-        
+
+def frame_like(frame, img):
+    """
+    Creates a Frame object with the same parameters as the given frame
+    :param frame: frame to emulate
+    :param img: image array to store in the new Frame object
+    """
+    return Frame(img, frame.lvl, frame.converter,
+                 frame.csf_threshold, frame.slide_color, frame.padding)
+#
+# end of frame_like
 
 def gaussian_kernel(length, sigma):
     """
