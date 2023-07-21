@@ -4,6 +4,11 @@ numpy
 pdoc
 pillow
 nibabel
+numba
+shapely
+matplotlib
+scipy
+pyefd
 
 ###### Requirements with Version Specifiers ######
 # XXX == 0.6.1
