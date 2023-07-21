@@ -46,7 +46,10 @@ ANTIBODY_MEASUREMENTS = {
     'AT8': ['manual', 'auto'],
     'TDP43': ['manual', 'auto'],
     'TDP43MP': ['manual', 'auto'],
-
+    'GFAP': ['manual', 'auto'],
+    'IBA1': ['manual', 'auto'],
+    'MeguroTriton': ['manual', 'auto'],
+    'Ferritin': ['manual', 'auto'],
 }
 
 class DirectoryIncompleteError(Exception):
@@ -157,9 +160,11 @@ class Region:
         ],
         'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
         'SMTC': [],
+        'M1': [],
+        'ANG': [],
     }
     for region_name in region_mapping:
-        region_mapping[region_name] += ['ROI', 'Greatest GM Sampling']
+        region_mapping[region_name] += ['ROI', 'Greatest GM Sampling', 'GM_SEG']
     def __init__(self, name, bid):
         self.name = name
         self.bid = bid
@@ -411,7 +416,7 @@ class Entry:
 # end of Entry
 
 # TODO: why not make the output directory structure: aid/hemi/region/roi/
-def collect_patients(idir, hc, hemi):
+def collect_patients(idir, hc, hemi, exclude):
 
     # load the list of HC patients
     if os.path.exists(hc):
@@ -425,6 +430,10 @@ def collect_patients(idir, hc, hemi):
         for x in hemi_data:
             hemisphere_data[x[1]] = x[2]
 
+    exclude_slides = []
+    if os.path.exists(exclude):
+        exclude_slides = [l.rstrip() for l in open(exclude, 'r')]
+    print(exclude_slides)
     patients = {}
     antibodies = []
     
@@ -433,7 +442,11 @@ def collect_patients(idir, hc, hemi):
         slide_d = os.path.join(idir, slide_name)
         if not os.path.isdir(slide_d):
             continue
-            
+
+        # skip the files that are deemed to be unworthy of analyzing
+        if slide_name in exclude_slides:
+            continue
+        
         # loop through the ROIs in this region
         for roi in os.listdir(slide_d):
             roi_d = os.path.join(slide_d, roi)
@@ -778,7 +791,7 @@ def main(argv):
     args = parser.parse_args()
 
     # dataset of Patients containing hierarchical data
-    patients, antibodies = collect_patients(args.idir, args.hc, args.hemi)
+    patients, antibodies = collect_patients(args.idir, args.hc, args.hemi, args.exclude)
     
     # flatten the hierarchical data into a table
     generate_spreadsheets(args.odir, patients, antibodies)
@@ -807,6 +820,10 @@ def cmdl_parser(argv):
     parser.add_argument(
         '-hemi', type=str, default='',
         help='file containing a list of cases w/ hemisphere information'
+    )
+    parser.add_argument(
+        '-exclude', type=str, default='',
+        help='file containing slide names to exclude in the analysis'
     )
     return parser
 #

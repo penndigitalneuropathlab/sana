@@ -42,6 +42,7 @@ FLOAT_KEYS = [
     'vert_fibers_ao', 'horz_fibers_ao',
     'grn_ao', 'pyr_ao', 'tot_ao',
     'lb_wc_ao', 'lb_poly_ao', 'ln_wc_ao', 'lb_poly_ao',
+    'cell_density', 'cell_area',
 ]
 LIST_KEYS = [
     'sub_areas',
@@ -133,7 +134,7 @@ class Params:
         return Point(x0, x1, False, 0)
     def parse_M(self, val):
         M = self.parse_list(val)
-        return np.array(M, dtype=np.float64).reshape((2,3))
+        return np.array(M, dtype=float).reshape((2,3))
     #
     # end of parsing
 
@@ -145,7 +146,7 @@ class Params:
             return x
         elif type(x) is int or type(x) is np.int64 or type(x) is np.int32:
             return self.convert_int(x)
-        elif type(x) is float or type(x) is np.float64 or type(x) is np.float32:
+        elif type(x) is float or type(x) is np.float64 or type(x) is np.float32:        
             return self.convert_float(x)
         elif type(x) is list or type(x) is Point:
             return self.convert_list(x)

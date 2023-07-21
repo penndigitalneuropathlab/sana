@@ -29,7 +29,7 @@ class TilerException(Exception):
 #  -roi_size: Point, size of ROI for the Framer
 class Tiler:
     def __init__(self, lvl, converter, size, step=None,
-                 fsize=None, loader=None, roi_loc=None, roi_size=None):
+                 fsize=None, loader=None, roi_loc=None, roi_size=None, fpad_mode='symmetric'):
         self.lvl = lvl
         self.converter = converter
 
@@ -49,7 +49,8 @@ class Tiler:
         # calculate the amount to pad the frame for center alignment
         self.fpad = self.size - 1
         self.fshift = self.size // 2
-
+        self.fpad_mode = fpad_mode
+        
         # create the Framer if needed
         if not fsize is None:
             self.framer = Framer(loader, fsize,
@@ -73,7 +74,7 @@ class Tiler:
         self.frame = frame
 
         # pad the frame for center-alignment
-        self.frame.pad(self.fpad)
+        self.frame.pad(self.fpad, mode=self.fpad_mode)
 
         # TODO: check if this is necessary? might mess with the stride_tricks
         self.frame.img = self.frame.img[:, :, 0]

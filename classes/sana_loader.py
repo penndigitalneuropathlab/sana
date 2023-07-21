@@ -342,7 +342,7 @@ class Loader(openslide.OpenSlide):
     #
     # end of load_gm_zone_frame
     
-    def from_vector(self, params, v, l, padding=0):
+    def from_vector(self, params, v, l, w, padding=0, logger=None):
 
         # get the angle of the vector
         angle = v.get_angle()
@@ -355,8 +355,6 @@ class Loader(openslide.OpenSlide):
             l[0].rotate(c, angle)
             w = np.max(l[0][:,0])-np.min(l[0][:,0])
             l[0].rotate(c, -angle)
-        else:
-            w = 6000 # TODO: make this a args parameter
 
         # sort the vector by the y values
         v = v[np.argsort(v[:,1])]

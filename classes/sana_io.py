@@ -98,8 +98,12 @@ def get_slide_parts(fname):
     if len(parts) == 7:
         cid, hemi, region, antibody, dil, date, init = parts
     elif len(parts) == 6:
-        cid, region, antibody, dil, date, init = parts
-        hemi = 'N'
+        if parts[1] in ['L','R','N']:
+            cid, hemi, region, antibody, date, init = parts
+            dil = None
+        else:
+            cid, region, antibody, dil, date, init = parts
+            hemi = 'N'
     else:
         raise Exception
 
@@ -124,11 +128,7 @@ def get_region(fname):
     return get_slide_parts(fname)[2]
 # e.g. SMI32
 def get_antibody(fname):
-    # NOTE: this assumes that we have the file name: *-ANTIBODY.tif
-    if fname.endswith('.tif'):
-        return os.path.splitext(fname)[0].split('-')[-1]
-    else:
-        return get_slide_parts(fname)[3]
+    return get_slide_parts(fname)[3]
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
