@@ -10,7 +10,8 @@ from PIL import Image
 import nibabel as nib
 
 # sana packages
-from classes.sana_geo import Point, point_like
+#from classes.sana_geo import Point, point_like
+from classes.sana_geo import Point
 
 # custom exceptions
 class DatatypeException(Exception):
@@ -309,12 +310,12 @@ class Frame:
         """
         if alignment == 'before':
             before = pad
-            after = point_like(pad, (0,0))
+            #after = point_like(pad, (0,0))
         elif alignment == 'center':
             before = pad//2
             after = pad - before
         elif alignment == 'right':
-            before = point_like(pad, (0,0))
+            #before = point_like(pad, (0,0))
             after = pad
         self.img = np.pad(self.img, ((before[1], after[1]), # y
                                      (before[0], after[1]), # x
