@@ -1,0 +1,9 @@
+###### Requirements without Version Specifiers ######
+cv2
+numpy
+pdoc
+pillow
+nibabel
+
+###### Requirements with Version Specifiers ######
+# XXX == 0.6.1

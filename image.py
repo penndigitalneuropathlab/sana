@@ -10,7 +10,7 @@ from PIL import Image
 import nibabel as nib
 
 # sana packages
-from sana_geo import Point, point_like
+from classes.sana_geo import Point, point_like
 
 # custom exceptions
 class DatatypeException(Exception):
