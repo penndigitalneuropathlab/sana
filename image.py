@@ -6,29 +6,18 @@ import sys
 # installed packages
 import cv2
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 import nibabel as nib
 
 # sana packages
-from classes.sana_geo import Point, point_like
-
-# custom exceptions
-class DatatypeException(Exception):
-    def __init__(self, message):
-        self.message = message
-class ChannelException(Exception):
-    def __init__(self, message):
-        self.message = message
-class DimensionException(Exception):
-    def __init__(self, message):
-        self.message = message
+import geo
 
 # TODO: check parameter usage
 class Frame:
     """ Provides an interface for applying a series of image processing functions to the stored 2D numpy image array. This class attempts to perform operations in place so that memory usage does not explode.
     :param img: the 2d numpy array to store
     :param level: the slide level the array was loaded from
-    :param converter: Converter object to use to manipulate units
+    :param converter: Converter object used to manipulate units
     :param slide_threshold: grayscale intensity value to remove background slide data
     :param slide_color: color of slide background to use when needed
     :param padding: amount of padding added to the frame
@@ -455,6 +444,85 @@ class Frame:
         # perform the thresholding
         self.img = np.where(self.img < threshold, x, y)
 
+    def get_contours(self, min_body_area=0, min_hole_area=0, max_body_area=np.inf, max_hole_area=np.inf):
+        """
+        Finds the contours on all edges of the image, then filters the contours based on size criteria. In the image, background is zero pixels and foreground is non-zero pixels. 
+        :param min_body_area: minimum size required for a contour to be considered a body
+        :param min_hole_area: minimum size required for a contour to be considered a hole
+        :param max_body_area: maximum size for a body contour
+        :param max_hole_area: maximum size for a hole contour
+        :returns: a list of the body contours and a list of the hole contours 
+        """
+        if not self.is_rgb():
+            raise DatatypeException('Contour detection requires a grayscale image')
+        
+        self.contours = []
+        contours, hierarchies = cv2.findContours(self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+        if hierarchies is None:
+            return
+        for c, h in zip(contours, hierarchies[0]):
+            self.contours.append(Contour(c, h, self.lvl, self.converter))
+
+        # find the body contours
+        for c in self.contours:
+
+            # make sure this contour does not have a parent contour
+            if c.hierarchy[3] != -1:
+                continue
+
+            # make sure the size matches the criteria
+            area = c.polygon.area()
+            if area > min_body_area and area < max_body_area:
+                c.body = True
+
+        # now find the hole contours
+        for c in self.contours:
+
+            # skip the already found body contours
+            if c.body:
+                continue
+
+            # make sure this contour has a body contour as it's parent
+            if not self.contours[c.hierarchy[3]].body:
+                continue
+
+            # make sure the size matches the criteria
+            area = c.polygon.area()
+            if area > min_body_area and area < max_body_area:
+                c.hole = True
+
+        bodies = [c for c in self.contours if c.body]
+        holes = [c for c in self.contours if c.hole]
+        return bodies, holes
+
+class Contour:
+    """
+    Stores the contour using it's place in the hierarchy and it's polygon
+    :param contour: contour array from findContours
+    :param hierarchy: hierarchy information from findContours
+    :param level: pixel resolution level
+    :param converter: Converter object used to manipulate units
+    """
+    def __init__(self, contour, hierarchy, level, converter):
+
+        # convert the contour array to a Polygon
+        self.polygon = self.contour_to_polygon(contour)
+        self.hierarchy = hierarchy
+        self.level = level
+        self.converter = converter
+
+        # flags denoting whether or not this contour is a body or a hole
+        self.body = False
+        self.hole = False
+
+    def contour_to_polygon(self, contour):
+        x = np.array([float(v[0][0]) for v in contour])
+        y = np.array([float(v[0][1]) for v in contour])
+        polygon = geo.Polygon(x, y, False, self.lvl)
+        return polygon
+#
+# end of Detection
+
 def frame_like(frame, img):
     """
     Creates a Frame object with the same parameters as the given frame
@@ -465,6 +533,101 @@ def frame_like(frame, img):
                  frame.csf_threshold, frame.slide_color, frame.padding)
 #
 # end of frame_like
+
+# generates a binary mask based on a list of given Polygons
+#  -polygons: list of polygons to be filled with value y
+#  -size: Point defining the size of the mask initialized with value x
+#  -x, y: vals defining the negative and positive values in the mask
+def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1):
+    """
+    Generates a binary mask from a list of Polygons
+    :param polygons: list of body Polygon
+    :param frame: Frame object to get the size, level, and converter
+    :param x: negative condition value
+    :param y: positive condition value
+    :param holes: list of hole Polygons
+    :param outlines_only: the generated mask will only be the outlines
+    :param linewidth: used when outlines_only=True
+    """
+
+    # convert the Polygons to lists of values that PIL can handle
+    polys = []
+    for p in polygons:
+        frame.converter.to_pixels(p, lvl)
+        p = frame.converter.to_int(p)
+        polys.append([tuple(p[i]) for i in range(p.shape[0])])
+    hs = []
+    for h in holes:
+        frame.converter.to_pixels(h, lvl)
+        h = frame.converter.to_int(h)
+        hs.append([tuple(h[i]) for i in range(h.shape[0])])
+
+    # create a blank image
+    size = frame.converter.to_int(frame.size())
+    mask = Image.new('L', (size[0], size[1]), x)
+    dr = ImageDraw.Draw(mask)  
+
+    # draw the body polygons on the image
+    for poly in polys:
+        if outlines_only:
+            if linewidth == 1:
+                dr.polygon(poly, outline=y, fill=0)
+            else:
+                dr.line(poly, fill=y, width=linewidth, joint='curve')
+        else:
+            dr.polygon(poly, outline=y, fill=y)
+
+    # draw the hole polygons on the image with the body polygons
+    for h in hs:
+        dr.polygon(h, outline=x, fill=x)
+
+    # create the Frame object
+    return frame_like(np.array(mask)[:, :, None], frame)
+#
+# end of create_mask
+
+# TODO: this should be in plots.py
+def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_roi_masks=[], main_roi=None, sub_rois=[], linewidth=9):
+    """
+    Overlays a semi-transparent mask on a frame
+    :param frame: background image
+    :param mask: binary image mask to overlay
+    :param alpha: transparency
+    :param color: color to use for the mask
+    :param main_roi_mask: used to exclude non-annotated pixels
+    :param sub_roi_masks: list of masks used to exclude non-annotate pixels
+    :param main_roi: if given, overlays the Annotation
+    :param sub_rois: if given, overlays the Annotations
+    :param linewidth: used when plotting the Annotations
+    """
+    mask = mask.copy()
+
+    # get the RGB color
+    if type(color) is str:
+        color = np.array(name_to_rgb(color))
+
+    # exclude non-annotated pixels
+    if not main_roi_mask is None:
+        mask.img[main_roi_mask.img == 0] = 0
+    if len(sub_roi_masks) != 0:
+        full_sub_roi_mask = frame_like(np.zeros_like(mask.img), mask)
+        for sub_roi_mask in sub_roi_masks:
+            full_sub_roi_mask += sub_roi_mask.img
+        mask.img[full_sub_roi_mask == 0] = 0
+
+    # create the overlay image using a weight sum
+    overlay = frame.copy()
+    overlay.img[mask.img[:,:,0] != 0] = color
+    overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
+
+    # plot the annotations
+    if not main_roi is None:
+        main_roi_overlay = create_mask([main_roi], frame, outlines_only=True, linewidth=linewidth)
+        overlay.img[main_roi_overlay.img[:,:,0] == 1] = (0,0,0)
+    sub_roi_overlay = create_mask([sub_rois], frame, outlines_only=True, linewidth=linewidth)
+    overlay.img[sub_roi_overlay.img[:,:,0] == 1] = (0,0,0)
+
+    return overlay
 
 def gaussian_kernel(length, sigma):
     """
@@ -483,3 +646,16 @@ def gaussian_kernel(length, sigma):
     g2 = g2 / np.sum(g2)
 
     return g2
+
+
+
+# custom exceptions
+class DatatypeException(Exception):
+    def __init__(self, message):
+        self.message = message
+class ChannelException(Exception):
+    def __init__(self, message):
+        self.message = message
+class DimensionException(Exception):
+    def __init__(self, message):
+        self.message = message
