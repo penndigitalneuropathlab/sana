@@ -10,7 +10,7 @@ from PIL import Image, ImageDraw
 import nibabel as nib
 
 # sana packages
-import geo
+from sana import geo
 
 # TODO: check parameter usage
 class Frame:
