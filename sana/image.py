@@ -57,7 +57,7 @@ class Frame:
         :returns: Point object
         """
         (h, w) = self.img.shape[:2]
-        return Point(w, h, level=self.level)
+        return geo.Point(w, h, level=self.level)
 
     def copy(self):
         """
@@ -189,8 +189,8 @@ class Frame:
 
         # we will tile the image during the convolution with the gaussian kernel
         # TODO: check these params, make them arguments?
-        tsize = Point(200, 200, is_micron=True)
-        tstep = Point(10, 10, is_micron=True)
+        tsize = geo.Point(200, 200, is_micron=True)
+        tstep = geo.Point(10, 10, is_micron=True)
         tiler = Tiler(level, self.converter, tsize, tstep, fpad_mode='constant')
 
         # run the downsampling
@@ -298,12 +298,12 @@ class Frame:
         """
         if alignment == 'before':
             before = pad
-            after = point_like(pad, (0,0))
+            after = geo.point_like(pad, (0,0))
         elif alignment == 'center':
             before = pad//2
             after = pad - before
         elif alignment == 'right':
-            before = point_like(pad, (0,0))
+            before = geo.point_like(pad, (0,0))
             after = pad
         self.img = np.pad(self.img, ((before[1], after[1]), # y
                                      (before[0], after[1]), # x
@@ -646,8 +646,6 @@ def gaussian_kernel(length, sigma):
     g2 = g2 / np.sum(g2)
 
     return g2
-
-
 
 # custom exceptions
 class DatatypeException(Exception):
