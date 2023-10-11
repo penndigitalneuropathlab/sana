@@ -36,6 +36,7 @@ from sana_processors.R13_processor import R13Processor
 from sana_processors.SYN303_processor import SYN303Processor
 from sana_processors.HDAB_processor import HDABProcessor
 from sana_processors.HE_processor import HEProcessor
+from sana_processors.TauC3_processor import TauC3Processor
 
 # debugging modules
 from sana_geo import plot_poly
@@ -57,8 +58,8 @@ def get_processor(fname, frame, logger, **kwargs):
         'SMI35': SMI35Processor,
         'MEGURO': MeguroProcessor,
         'AT8': AT8Processor,
-        'TauC3': AT8Processor,
-        'C3': AT8Processor,
+        'TauC3': TauC3Processor,
+        'C3': TauC3Processor,
         'MC1': AT8Processor,
         'TDP43MP': TDP43MPProcessor,
         'TDP43': TDP43MPProcessor,         # TODO: is this right?
@@ -84,19 +85,27 @@ def get_slides(logger, lists, skip):
         logger.error("No Slides Found")
     else:
         # skip a number of slides at the beginning of the list
-        slides = slides[skip:]
-        logger.debug('Skipping %d slides!' % skip)
+        # TODO: make this divide by the number of jobs (skip should skip number slides AFTER splitting into jobs)
+        # when I want to skip 5 slides, I want to skip the first 5 slides from ALL jobs
+        slide_half_1 = slides[:len(slides)//2]
+        slide_half_2 = slides[len(slides)//2:]
+        slides = slide_half_1[skip:] + slide_half_2[skip:]
+        logger.debug('Skipping %d slides from jobs!' % skip)
         
     return slides
 #
 # end of get_slides
 
-def get_annotation_file(logger, slide_f, adir, rdir, ext='.json'):
+def get_annotation_file(logger, slide_f, adir, rdir, ext='.json', overlap=None):
         
     # get the annotation file containing ROIs
-    anno_f = sana_io.create_filepath(
-        slide_f, ext=ext, fpath=adir, rpath=rdir)
+    # anno_f = sana_io.create_filepath(
+    #     slide_f, ext=ext, fpath=adir, rpath=rdir)
 
+    # used for IBA1 microglia annotations
+    anno_f = sana_io.create_filepath(
+        slide_f.replace('-21_','-2021_'), ext=ext, fpath=adir, rpath=rdir)
+    
     # make sure the file exists, else we skip this slide
     if not os.path.exists(anno_f):
         logger.warning('Annotation file %s does not exist\n' % anno_f)
@@ -136,7 +145,7 @@ def process_slides(args, slides, logger):
 
     # loop through slides to load in all frames to process
     rois_to_process = []
-    for slide_f in slides:
+    for slide_f in tqdm(slides):
         
         loader = get_loader(logger, slide_f, args.lvl)
         if loader is None:
@@ -214,23 +223,87 @@ def process_slides(args, slides, logger):
 #
 # end of process_slides
 
-def process_rois(args, slides, logger):
+def process_rois(args, slides, logger, overlap_slides=None):
     
+    print('Overlapping Slides:',overlap_slides)
     # loop through the slides
     rois_to_process = []
-    for slide_f in slides:
+    for slide_f in tqdm(slides):
         logger.info('Setting up %s' % slide_f)
-
-        anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
-        if anno_f is None:
-            continue
         
+        if not args.sub_adir == '':
+            # load in slides from respective anno folder
+
+            # load in 
+            if slide_f in overlap_slides:
+                overlap_annos = {}
+                for i, anno_fldr in enumerate(os.listdir(args.sub_adir)):
+                    anno_f = get_annotation_file(logger, slide_f, os.path.join(args.sub_adir,anno_fldr), args.rdir)
+
+                    if anno_f is None:
+                        continue
+
+                     # load the main roi(s) from the json file
+                    if len(args.main_class) > 1:
+                        slide_rois = []
+                        for mclass in args.main_class:
+                            slide_rois += sana_io.read_annotations(anno_f, class_name=mclass, name=args.main_name)
+                    else:
+                        slide_rois = load_rois(logger, anno_f, args.main_class[0], args.main_name)
+
+                    overlap_annos[i] = slide_rois
+                
+                main_tiles = {}
+                anno_keys = overlap_annos.keys()
+                for k in anno_keys:
+                    slide_annos = overlap_annos[k]
+                    for anno in slide_annos:
+                        if not anno.name in main_tiles.keys():
+                            main_tiles[anno.name] = anno
+                        elif anno.name in main_tiles.keys():
+                            # have a 50% chance of overwriting anno already written in main_rois with that name
+                            np.random.seed(1)
+                            chance = np.random.randint(0, 10, 1)
+                            prob = chance/10 
+                            if prob >= 0.5:
+                                main_tiles[anno.name] = anno
+                [*main_names], [*main_rois] = zip(*main_tiles.items())
+
+            else:
+                for anno_fldr in os.listdir(args.sub_adir):
+                    anno_f = get_annotation_file(logger, slide_f, os.path.join(args.sub_adir,anno_fldr), args.rdir)
+                    if anno_f is None:
+                        continue
+                    else:
+                        break
+
+                # load the main roi(s) from the json file
+                if len(args.main_class) > 1:
+                    main_rois = []
+                    for mclass in args.main_class:
+                        main_rois += sana_io.read_annotations(anno_f, class_name=mclass, name=args.main_name)
+                else:
+                    main_rois = load_rois(logger, anno_f, args.main_class[0], args.main_name)
+                    
+                
+        else:    
+            anno_f = get_annotation_file(logger, slide_f, args.adir, args.rdir)
+            
+            if anno_f is None:
+                continue
+        
+            # load the main roi(s) from the json file
+            if len(args.main_class) > 1:
+                main_rois = []
+                for mclass in args.main_class:
+                    main_rois += sana_io.read_annotations(anno_f, class_name=mclass, name=args.main_name)
+            else:
+                main_rois = load_rois(logger, anno_f, args.main_class[0], args.main_name)
+        
+
         loader = get_loader(logger, slide_f, args.lvl)
         if loader is None:
             continue
-        
-        # load the main roi(s) from the json file
-        main_rois = load_rois(logger, anno_f, args.main_class, args.main_name)
 
         # loop through main roi(s)
         for main_roi_i, main_roi in enumerate(main_rois):
@@ -242,9 +315,10 @@ def process_rois(args, slides, logger):
             
             # load the sub roi(s) that are inside this main roi
             # NOTE: we attempt to find a sub_roi for each given sub_class
+            # FIXME: fix to work to read in anno file from main_roi.file_name
             sub_rois = []
             for sub_class in args.sub_classes:
-                rois = sana_io.read_annotations(anno_f, sub_class)
+                rois = sana_io.read_annotations(anno_f, class_name=sub_class)
                 for roi in rois:
                     if roi.partial_inside(main_roi) or main_roi.partial_inside(roi):
                         sub_rois.append(roi)
@@ -429,7 +503,7 @@ def dispatch(rois_to_process, njobs):
 # end of dispatch
 
 def main(argv):
-    
+    print(argv)
     # parse the command line
     parser = cmdl_parser(argv)
     args = parser.parse_args()
@@ -444,6 +518,20 @@ def main(argv):
     if len(slides) == 0:
         logger.error('No files found in lists: %s' % str(args.lists))
         exit()
+    
+    if not args.sub_adir == '':
+        seen_slides = []
+        overlap_slides = []
+        anno_folders = os.listdir(args.sub_adir)
+        for anno_fldr in anno_folders:
+            anno_files = os.listdir(os.path.join(args.sub_adir,anno_fldr))            
+            process_anno_files = [a for a in slides if os.path.basename(a).replace('.svs','.json') in anno_files]
+            for a_file in process_anno_files:
+                if a_file in seen_slides:
+                    overlap_slides.append(a_file)
+                else:
+                    seen_slides.append(a_file)
+        logger.debug('Overlapping slides: %d' %len(overlap_slides))
         
     # get the ROIs within the slides to process
     logger.info('Number of slides found: %d' % len(slides))
@@ -455,6 +543,9 @@ def main(argv):
         else:
 
             # process ROIs based on input annotations
+            # if overlap_slides:
+            #     rois_to_process = process_rois(args, slides, logger, overlap_slides=overlap_slides)
+            # else:
             rois_to_process = process_rois(args, slides, logger)
             
         # create and start the jobs
@@ -532,6 +623,9 @@ def cmdl_parser(argv):
         '-adir', type=str, default="",
         help="directory path containing .json files")
     parser.add_argument(
+        '-sub_adir', type=str, default="",
+        help="subdirectory path containing folders of .json files")
+    parser.add_argument(
         '-odir', type=str, default="",
         help="directory path to write the results to")
     parser.add_argument(
@@ -547,7 +641,7 @@ def cmdl_parser(argv):
         '-use_mask', action='store_true', default=False,
         help="for SLIDESCAN, uses the main ROIs to reduce the number of frames to process the slide")
     parser.add_argument(
-        '-main_class', type=str, default=None,
+        '-main_class', type=str, nargs='*', default=None,
         help="ROI class used to load and process the Frame")
     parser.add_argument(
         '-main_name', type=str, default=None,
@@ -569,7 +663,9 @@ def cmdl_parser(argv):
         '-stain_vector', type=float, nargs=6, default=None,
         help="Pre-defined stain vector in QuPath to use in Manual %AO"
     )
-    parser.add_argument('-skip', type=int, default=0)
+    parser.add_argument(
+        '-skip', type=int, default=0
+    )
 
     return parser
 #

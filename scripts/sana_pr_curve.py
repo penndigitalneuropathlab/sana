@@ -20,7 +20,7 @@ import sana_io
 from sana_io import get_anno_files, read_annotations, read_list_file, create_filepath
 from sana_loader import Loader
 from sana_geo import Converter, plot_poly, Polygon, fix_polygon, from_shapely
-from sana_frame import Frame
+from sana_frame import Frame, create_mask
 from sana_params import Params
 from sana_logger import SANALogger
 
@@ -37,6 +37,13 @@ IOUTHRESH_HELP = "List of IOU Thresholds to use while scoring"
 # defines the location of the usage text file for cmdl interface
 USAGE = os.path.join(os.environ.get('SANAPATH'),
                      'scripts', 'usage', 'sana_pr_curve.usage')
+
+# pass two image masks to this function; pred (hyp) and true (ref) should be binary mask images 
+def get_dice_coeff(ref_mask,hyp_mask):
+    # intersection = 2.0 * np.sum(hyp_mask*ref_mask)
+    intersection = np.sum(hyp_mask==ref_mask)
+    dice = intersection / (hyp_mask.shape[0] * hyp_mask.shape[1])
+    return dice
 
 # calculates the IOU score of 2 Polygons
 # NOTE: this uses Shapely, converts to shapely objects for easy calculations
@@ -106,7 +113,7 @@ def check_inside(rois, annos):
 #
 # end of check_inside
 
-def get_annos(args,load_subregion=None):
+def get_annos(args,load_subregion=None,get_rois=False):
    
     # get all annotation files in the ref and hyp dirs
     all_ref_files = sorted(get_anno_files(args.refdir))
@@ -127,8 +134,8 @@ def get_annos(args,load_subregion=None):
         exit()
 
     # loop through annotation files
-    ref_annos, hyp_annos = [], []
-    for rf in ref_files:
+    ref_annos, hyp_annos, roi_annos = [], [], []
+    for rf in tqdm(ref_files):
         for hf in hyp_files:
             # make sure there is a one to one match between ref and hyp dirs
             if os.path.basename(rf) == os.path.basename(hf):
@@ -157,13 +164,21 @@ def get_annos(args,load_subregion=None):
                     continue
 
                 # load the ref annotations with any of the given ref classes
-                if args.refclass is None:
+                if args.refname is None and args.refclass is None:
+                    print('loading all REF annos...')
                     ra = read_annotations(rf)
-                else:
+                elif args.refname is None and not args.refclass is None:
+                    print('loading REF class...')
                     ra = []
                     for rclass in args.refclass:
                         # print(rclass)
                         ra += read_annotations(rf, class_name=rclass)
+                elif not args.refname is None and args.refclass is None:
+                    print('loading REF name...')
+                    ra = []
+                    for rname in args.refname:
+                        ra += read_annotations(rf, name=rname)
+
                 #
                 # end of ref anno reading
                 # print('len(loaded ref):',len(ra))
@@ -251,6 +266,7 @@ def get_annos(args,load_subregion=None):
 
                 ref_annos += tile_refs
                 hyp_annos += tile_hyps
+                roi_annos += rois
                 # ref_annos += ra
                 # hyp_annos += ha              
             #
@@ -271,10 +287,14 @@ def get_annos(args,load_subregion=None):
         print('Could not load hyp annos...')
         exit()
 
+    print('Loaded in %d ROI annotations' %len(roi_annos))
     print('Loaded in %d Reference annotations' %len(ref_annos))
     print('Loaded in %d Hypothesis annotations' %len(hyp_annos))
     print()
-    return ref_annos, hyp_annos
+    if get_rois:
+        return ref_annos, hyp_annos, roi_annos
+    else:
+        return ref_annos, hyp_annos
 #
 # end of get_annos
 
@@ -305,7 +325,7 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
         }
 
         for slide_name in all_slides:
-            print(slide_name.replace('.svs',''))
+            # print(slide_name.replace('.svs',''))
             # slide_name = 2012-116-30F_R_MFC_R13_25K_05-23-19_DC.svs
 
             # build path name to get _Tile *'s
@@ -319,9 +339,17 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
             # for f in f_list:
             #     if f.name.split('_')[1] in args.refclass:
                     # print(args.refclass,'+',f.name.split('_')[1])
-            # exit()
-            main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() and f.name.split('_')[1] in args.refclass ]
-            # print('main_roi check:',main_roi_dirs)
+            if not os.path.exists(odir):
+                continue
+            main_roi_dirs = [ f.path for f in os.scandir(odir) if f.is_dir() and f.name.split('_')[0] in args.roiclass ]
+            
+            # main_roi_dirs = []
+            # for f in os.scandir(odir):
+            #     print(f)
+            #     print(f.is_dir(),f.name.split('_')[0] in args.refclass)
+            #     print(f.path)
+            #     print()
+
 
             anno_fname = args.refdir+slide_name.replace('.svs','.json')
             # load the ref rois, if given
@@ -356,18 +384,14 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
             # loop through ROIs in a slide
             for i, main_roi_dir in enumerate(main_roi_dirs):
                 main_roi_name = os.path.split(main_roi_dir)[1]
-                tile_class, tile_name = main_roi_name.split('_',1)
-                antibody, subregion, roi_id = main_roi_name.split('_',2)
-                tile_class = subregion
-                # print('Main ROI:',tile_class, '|' ,tile_name)
-                print('Main ROI:',antibody, '|', subregion, '|', roi_id)
-                # print('Main ROI:',main_roi_name)
-                
+                # ex. tile_class = GM
                 # ex. tile_name = Tile 52
+                tile_class, tile_name = main_roi_name.split('_',1)
+                # print('Main ROI:',tile_class, '|' ,tile_name)
                 
                 # fetch main_roi based on class names and tile names (if exists)
-                # main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
-                main_roi = [x for x in main_rois if (x.class_name == tile_class)]
+                main_roi = [x for x in main_rois if (x.class_name == tile_class) and (x.name == tile_name)]
+                # main_roi = [x for x in main_rois if (x.class_name == tile_class)]
                 # filter by subregion if doing subregion analysis
                 if not load_subregion is None:
                     main_roi = [x for x in main_roi if x.class_name == load_subregion]
@@ -386,11 +410,11 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
                 params = Params(params_fname)
                 padding = params.data['padding']
 
-                w, h = params.data['size']
-                x = params.data['loc'][0]
-                y = params.data['loc'][1]
-                roi_sq = np.array([[x,y],[x+w,y],[x+w,y+h],[x,y+h]])
-                main_roi = Polygon(roi_sq[:,0],roi_sq[:,1],is_micron=False,lvl=main_roi.lvl)
+                # w, h = params.data['size']
+                # x = params.data['loc'][0]
+                # y = params.data['loc'][1]
+                # roi_sq = np.array([[x,y],[x+w,y],[x+w,y+h],[x,y+h]])
+                # main_roi = Polygon(roi_sq[:,0],roi_sq[:,1],is_micron=False,lvl=main_roi.lvl)
                 
                 roi_plot = main_roi.copy()
                 roi_plot.translate(params.data['loc'])
@@ -407,7 +431,7 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
                 # print('inside hyps:',num_hyp_inside)
 
                 # TODO: rename results/seen 
-                results, seen, ref, hyp = score(ref, hyp, iou_threshold)
+                results, seen, ref, hyp = iou_score(ref, hyp, iou_threshold)
 
                 cumulative_tp = np.cumsum(results)
 
@@ -440,15 +464,19 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
                     
                     # use sana_io.create_filepath function instead of this os.path.join
                     wc_fname = os.path.join(main_roi_dir, slide_name.replace('.svs','_PROBS.npy'))
-                    wc_activation = np.load(wc_fname)
-                    wc_softmax = softmax(wc_activation,axis=0)
+                    try:
+                        wc_activation = np.load(wc_fname)
+                        wc_softmax = softmax(wc_activation,axis=0)
+                    except:
+                        continue
                     
                     # # LB detections are at dim 1 in wc_activations (and nonsoftmax'd)
                     # lb_activation = np.rint(255*wc_softmax[1,:,:]).astype(np.uint8)
                     # lb_activation = cv2.resize(lb_activation, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
                     # lb_activation = lb_activation[:,:,None]
+                    tangle_idx = 3
 
-                    lb_softmax = np.rint(255*wc_softmax[2,:,:]).astype(np.uint8)
+                    lb_softmax = np.rint(255*wc_softmax[tangle_idx,:,:]).astype(np.uint8)
                     lb_softmax = cv2.resize(lb_softmax, orig_frame.size(),interpolation=cv2.INTER_LINEAR)
                     lb_softmax = lb_softmax[:,:,None]
                     
@@ -532,40 +560,40 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
                 # end of results/seen check
             #
             # end of main_roi loop
+
+            # TODO: error_analyze PR curve
+            if not results is None and not seen is None:
+
+                # error_precision = np.array(total_error_pr['precision'])
+                # error_recall = np.array(total_error_pr['recall'])
+                # midpoints = (error_precision[1:] + error_precision[:-1]) / 2
+                # widths = error_recall[1:] - error_recall[:-1]
+                # total_error_pr['auc'] = np.sum(midpoints * widths)
+                
+                # fig, ax = plt.subplots(1,1)
+                # ax.plot(error_recall,error_precision,label='IOU = %.2f -- AuC = %.2f' % (iou_threshold, total_error_pr['auc']))
+                # ax.set_title(args.title+' | error_analyze\nRef Count: %d | Hyp Count: %d' %(len(seen),len(results)))
+                # ax.set_ylabel('Precision')
+                # ax.set_xlabel('Recall')
+                # ax.set_xlim([0, 1.1])
+                # ax.set_ylim([0, 1.1])
+                # plt.legend(loc='lower right')
+                # if not load_subregion is None:
+                #     error_pr_curve_fname = os.path.join(args.odir,'Subregions','error_analysis','error_pr_curve.png') 
+                # else:
+                #     error_pr_curve_fname = os.path.join(args.odir,'IoUs','error_analysis','error_pr_curve.png') 
+                # sana_io.create_directory(error_pr_curve_fname)
+                # plt.savefig(error_pr_curve_fname, dpi=500)
+                # print('PNG saved:',error_pr_curve_fname)
+
+                if os.path.exists(inside_annos_df_fname):
+                    inside_annos_df.to_csv(inside_annos_df_fname, mode='a', index=False, header=False)
+                else:
+                    sana_io.create_directory(inside_annos_df_fname)
+                    inside_annos_df.to_csv(inside_annos_df_fname, mode='w', index=False, header=True)
+            print('Error analysis performed...')
         #
         # end of slide_name loop
-
-        # TODO: error_analyze PR curve
-        if not results is None and not seen is None:
-
-            # error_precision = np.array(total_error_pr['precision'])
-            # error_recall = np.array(total_error_pr['recall'])
-            # midpoints = (error_precision[1:] + error_precision[:-1]) / 2
-            # widths = error_recall[1:] - error_recall[:-1]
-            # total_error_pr['auc'] = np.sum(midpoints * widths)
-            
-            # fig, ax = plt.subplots(1,1)
-            # ax.plot(error_recall,error_precision,label='IOU = %.2f -- AuC = %.2f' % (iou_threshold, total_error_pr['auc']))
-            # ax.set_title(args.title+' | error_analyze\nRef Count: %d | Hyp Count: %d' %(len(seen),len(results)))
-            # ax.set_ylabel('Precision')
-            # ax.set_xlabel('Recall')
-            # ax.set_xlim([0, 1.1])
-            # ax.set_ylim([0, 1.1])
-            # plt.legend(loc='lower right')
-            # if not load_subregion is None:
-            #     error_pr_curve_fname = os.path.join(args.odir,'Subregions','error_analysis','error_pr_curve.png') 
-            # else:
-            #     error_pr_curve_fname = os.path.join(args.odir,'IoUs','error_analysis','error_pr_curve.png') 
-            # sana_io.create_directory(error_pr_curve_fname)
-            # plt.savefig(error_pr_curve_fname, dpi=500)
-            # print('PNG saved:',error_pr_curve_fname)
-
-            if os.path.exists(inside_annos_df_fname):
-                inside_annos_df.to_csv(inside_annos_df_fname, mode='a', index=False, header=False)
-            else:
-                sana_io.create_directory(inside_annos_df_fname)
-                inside_annos_df.to_csv(inside_annos_df_fname, mode='w', index=False, header=True)
-        print('Error analysis performed...')
     else:
         print('Error analysis NOT performed...')
     #
@@ -573,11 +601,50 @@ def error_analyze(all_ref, all_hyp, iou_threshold, args, load_subregion=None):
 # 
 # end of error_analyze
             
+
+# NOTE: inputs must be a list of annotations that have the same coords in slide coord. system
+# this function takes in two lists of annotations and turns them into binary masks to then calculate dice score
+def dice_score(roi_anno, ref_annos, hyp_annos):
+    
+    # convert annotations to binary masks
+    roi_anno = roi_anno[0]
+    loc, size = roi_anno.bounding_box()
+
+    roi_anno.translate(loc)
+    [r.translate(loc) for r in ref_annos]
+    [h.translate(loc) for h in hyp_annos]
+    
+    
+    converter = Converter()
+
+    # create tile binary masks
+    ref_mask = create_mask(ref_annos,size=size,lvl=0,converter=converter)
+    hyp_mask = create_mask(hyp_annos,size=size,lvl=0,converter=converter)
+
+    ref_mask.img = np.flip(ref_mask.img,axis=0)
+    hyp_mask.img = np.flip(hyp_mask.img,axis=0)
+
+    # fig, axs = plt.subplots(1,2)
+    # plot_poly(axs[0],roi_anno,color='green')
+    # plot_poly(axs[1],roi_anno,color='green')
+    # [plot_poly(axs[0],r_anno,color='red') for r_anno in ref_annos]
+    # [plot_poly(axs[1],h_anno,color='blue') for h_anno in hyp_annos]
+    # axs[0].set_title('Ref')
+    # axs[1].set_title('Hyp')
+    # fig.tight_layout()
+    # fig, axs = plt.subplots(1,2)
+    # axs[0].imshow(ref_mask.img,cmap='gray')
+    # axs[1].imshow(hyp_mask.img,cmap='gray')
+    # plt.show()
+
+    return get_dice_coeff(ref_mask.img,hyp_mask.img)
+#
+# end of dice_score
             
 
 
 # NOTE: this can be any subset of a dataset! works on multiple slides and ROIs
-def score(ref_annos, hyp_annos, iou_threshold):
+def iou_score(ref_annos, hyp_annos, iou_threshold):
     print('Scoring annotations...')
 
     # array of trues/falses denoting if each reference has been used up in the scoring
@@ -659,13 +726,13 @@ def score(ref_annos, hyp_annos, iou_threshold):
 
     return results, seen, ref_annos, hyp_annos
 #
-# end of score
+# end of iou_score
 
 def pr(ref_annos, hyp_annos, iou_threshold, args):
     print('Running Precision-Recall calculation...')
 
     # get the TP, FP, hits, misses, and sorted by confidence hyp annos
-    results, seen, ref_annos, hyp_annos = score(ref_annos, hyp_annos, iou_threshold)
+    results, seen, ref_annos, hyp_annos = iou_score(ref_annos, hyp_annos, iou_threshold)
 
     # calculate rolling sum of TP's
     # NOTE: this is from most to least confident
@@ -688,51 +755,171 @@ def pr(ref_annos, hyp_annos, iou_threshold, args):
 #
 # end of pr
 
+# returns the ref and hyp annotations inside a given ROI from a slide
+def get_tile_annos(slide,roi,args):
+    
+    ref_anno_fname = os.path.join(args.refdir,slide)
+    for rclass in args.refclass:
+        ref_slide_annos = sana_io.read_annotations(ref_anno_fname,class_name=rclass)
+    
+    hyp_anno_fname = os.path.join(args.hypdir,'detections',slide)
+    for hclass in args.hypclass:
+        hyp_slide_annos = sana_io.read_annotations(hyp_anno_fname,class_name=hclass)
+
+    ref_tile_annos = check_inside(roi,ref_slide_annos)
+    hyp_tile_annos = check_inside(roi,hyp_slide_annos)
+
+    return ref_tile_annos, hyp_tile_annos
+
+    
+
+def get_dice_hist(args,logger=None):
+    print('Generating histogram from Dice Coeff.\'s...')
+    
+    process_list = read_list_file(args.slist)
+    slides = [os.path.basename(s) for s in process_list]
+    slides = [s for s in slides if s.replace('.svs','.json') in os.listdir(os.path.join(args.hypdir,'detections'))]
+
+    dice_scores = []
+    ref_tile_counts = []
+    hyp_tile_counts = []
+    ref_anno_count = 0
+    hyp_anno_count = 0
+    error_tile_names = []
+    good_tile_names = []
+    min_dice_score = 1.0
+    # loop through slides found in hyp dir
+    for slide in tqdm(slides):
+        slide_anno_fname = os.path.join(args.refdir,slide.replace('.svs','.json'))
+
+        slide_roi_annos = []
+        # load ROIs in slide
+        for roiclass in args.roiclass:
+            slide_roi_annos += sana_io.read_annotations(slide_anno_fname,name=args.roiname,class_name=roiclass)
+
+        tile_names = list(set([roi.name for roi in slide_roi_annos]))
+
+        # loop through tile names in slide
+        for tile in tile_names:
+
+            # get tile ROI annotation from list of slide ROIs
+            roi_anno = [roi for roi in slide_roi_annos if roi.name==tile]
+
+            # get manual and SANA annotations inside tile
+            ref_tile_annos, hyp_tile_annos = get_tile_annos(slide.replace('.svs','.json'),roi_anno,args)
+            
+            tile_dice_score = dice_score(roi_anno,ref_tile_annos,hyp_tile_annos)
+            
+            if tile_dice_score < min_dice_score:
+                min_dice_score = tile_dice_score
+
+            tile_fname = os.path.basename(roi_anno[0].file_name).replace('.json','')
+            if tile_dice_score <= 0.984:
+                error_tile_names.append((tile_fname+'-'+roi_anno[0].name+'-%0.3f') %tile_dice_score)
+            elif tile_dice_score > 0.85:
+                good_tile_names.append((tile_fname+'-'+roi_anno[0].name+'-%0.3f') %tile_dice_score)
+
+
+            dice_scores.append(tile_dice_score)
+            ref_tile_counts.append(len(ref_tile_annos))
+            hyp_tile_counts.append(len(hyp_tile_annos))
+
+            ref_anno_count += len(ref_tile_annos)
+            hyp_anno_count += len(hyp_tile_annos)
+    
+    with open(os.path.join(args.odir,'error_tiles.list'),'w') as f:
+        [f.write(i+'\n') for i in error_tile_names]
+    with open(os.path.join(args.odir,'good_tiles.list'),'w') as f:
+        [f.write(i+'\n') for i in good_tile_names]
+
+    # finally, show the plot
+    fig, ax = plt.subplots(1,1,figsize=(14,8))
+    step = 0.005
+    nbins = np.arange(np.floor(np.min(dice_scores)*100.0)/100.0,1.01,step=step)
+    n, bins, patches = ax.hist(dice_scores,bins=nbins,rwidth=0.9)
+            
+    ax.set_title('Dice Coefficients of Tile\'s\nRef Tile Count: %d | Hyp Tile Count: %d' %(ref_anno_count,hyp_anno_count))
+    ax.set_xlabel('Dice Coeff.')
+    ax.set_ylabel('Counts')
+    ax.set_xticks(bins)
+    plt.savefig(os.path.join(args.odir,'dice_hist.png'), dpi=300)
+    print('PNG saved:',args.odir)
+    
+    
+    fig, ax = plt.subplots(1,1)
+    nbins = np.arange(np.min(dice_scores),np.max(dice_scores),0.1)
+    dice_density = [dice_scores[i]/ref_tile_counts[i] for i in range(len(dice_scores))]
+    n, bins, patches = ax.hist(dice_density,bins=nbins,rwidth=0.9)
+    # n, bins, patches = ax.hist([dice_scores[i]/ref_tile_counts[i] for i in range(len(dice_scores))],bins=nbins,rwidth=0.9,alpha=0.5,label='Ref Annos')
+    # n, bins, patches = ax.hist([dice_scores[i]/hyp_tile_counts[i] for i in range(len(dice_scores))],bins=bins,rwidth=0.9,alpha=0.5,label='Hyp Annos')
+    ax.set_title('Dice Coefficients/Tile Counts of Tile\'s\nRef Tile Count: %d | Hyp Tile Count: %d' %(ref_anno_count,hyp_anno_count))
+    ax.set_xlabel('Dice Coeff./Ref Tile Tangle Count')
+    ax.set_ylabel('Counts')
+    ax.set_xticks(bins)
+    # plt.legend()
+    plt.savefig(os.path.join(args.odir,'dice_score_density.png'),dpi=300)
+
+    fig, ax = plt.subplots(1,1)
+    ax.set_title('Tangle Count vs Dice Coeff.')
+    ax.scatter(dice_scores,ref_tile_counts)
+    # ax.scatter(dice_scores,ref_tile_counts,label='Ref Annos')
+    # ax.scatter(dice_scores,hyp_tile_counts,label='Hyp Annos')
+    ax.set_xlabel('Dice Coeff.')
+    ax.set_ylabel('Ref Tangle Count')
+    ax.set_xticks(bins)
+    # plt.legend(loc='upper left')
+    plt.savefig(os.path.join(args.odir,'dice_score_v_counts.png'),dpi=300)
+    # plt.show()
+    
+# 
+# end of get_iou_pr
+
+
 def get_iou_pr(args,logger=None):
     print('Generating PR curve for IoUs...')
-    ref_annos, hyp_annos = get_annos(args)
+    ref_annos, hyp_annos, roi_annos = get_annos(args,get_rois=True)
     if ref_annos and hyp_annos:
         print('Annotations loaded...')
 
-    ref_sizes, hyp_sizes = get_poly_size(ref_annos, hyp_annos)
-    nbins = 'auto'
-    fig, ax = plt.subplots(1,1)
-    fig.suptitle('Total Tangle Count vs Tangle Size')
-    n, bins, patches = ax.hist(ref_sizes,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
-    # prob_density = stats.gaussian_kde(ref_sizes)
-    # ax.plot(bins,prob_density(bins),color='blue')
+    # ref_sizes, hyp_sizes = get_poly_size(ref_annos, hyp_annos)
+    # nbins = 'auto'
+    # fig, ax = plt.subplots(1,1)
+    # fig.suptitle('Total Tangle Count vs Tangle Size')
+    # n, bins, patches = ax.hist(ref_sizes,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(ref_sizes)
+    # # ax.plot(bins,prob_density(bins),color='blue')
 
-    n, bins, patches = ax.hist(hyp_sizes,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
-    # prob_density = stats.gaussian_kde(hyp_sizes)
-    # ax.plot(bins,prob_density(bins),color='green')
-    ax.set_xlabel('Tangle Size (microns)')
-    ax.set_ylabel('Tangle Count')
-    fig.suptitle('Distribution of Tangle Area')
-    plt.legend()
-    if not os.path.exists(os.path.join(args.odir,'IoUs','Histograms')):
-        os.makedirs(os.path.join(args.odir,'IoUs','Histograms'))
-    plt.savefig(os.path.join(args.odir,'IoUs','Histograms','tangle_area.png'), dpi=300)
+    # n, bins, patches = ax.hist(hyp_sizes,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(hyp_sizes)
+    # # ax.plot(bins,prob_density(bins),color='green')
+    # ax.set_xlabel('Tangle Size (microns)')
+    # ax.set_ylabel('Tangle Count')
+    # fig.suptitle('Distribution of Tangle Area')
+    # plt.legend()
+    # if not os.path.exists(os.path.join(args.odir,'IoUs','Histograms')):
+    #     os.makedirs(os.path.join(args.odir,'IoUs','Histograms'))
+    # plt.savefig(os.path.join(args.odir,'IoUs','Histograms','tangle_area.png'), dpi=300)
 
 
-    # get and draw eccentricity histogram
-    ref_eccs, hyp_eccs = get_poly_ecc(ref_annos, hyp_annos)
-    nbins = 'auto'
-    fig, ax = plt.subplots(1,1)
-    fig.suptitle('Total Tangle Count vs Tangle Eccentricity')
-    n, bins, patches = ax.hist(ref_eccs,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
-    # prob_density = stats.gaussian_kde(ref_eccs)
-    # ax.plot(bins,prob_density(bins),color='blue')
+    # # get and draw eccentricity histogram
+    # ref_eccs, hyp_eccs = get_poly_ecc(ref_annos, hyp_annos)
+    # nbins = 'auto'
+    # fig, ax = plt.subplots(1,1)
+    # fig.suptitle('Total Tangle Count vs Tangle Eccentricity')
+    # n, bins, patches = ax.hist(ref_eccs,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(ref_eccs)
+    # # ax.plot(bins,prob_density(bins),color='blue')
 
-    n, bins, patches = ax.hist(hyp_eccs,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
-    # prob_density = stats.gaussian_kde(hyp_eccs)
-    # ax.plot(bins,prob_density(bins),color='green')
-    ax.set_xlabel('Tangle Ecc.')
-    ax.set_ylabel('Tangle Count')
-    fig.suptitle('Distribution of Tangle Eccentricity')
-    plt.legend()
-    if not os.path.exists(os.path.join(args.odir,'IoUs','Histograms')):
-        os.makedirs(os.path.join(args.odir,'IoUs','Histograms'))
-    plt.savefig(os.path.join(args.odir,'IoUs','Histograms','tangle_eccentricity.png'), dpi=300)
+    # n, bins, patches = ax.hist(hyp_eccs,bins=bins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(hyp_eccs)
+    # # ax.plot(bins,prob_density(bins),color='green')
+    # ax.set_xlabel('Tangle Ecc.')
+    # ax.set_ylabel('Tangle Count')
+    # fig.suptitle('Distribution of Tangle Eccentricity')
+    # plt.legend()
+    # if not os.path.exists(os.path.join(args.odir,'IoUs','Histograms')):
+    #     os.makedirs(os.path.join(args.odir,'IoUs','Histograms'))
+    # plt.savefig(os.path.join(args.odir,'IoUs','Histograms','tangle_eccentricity.png'), dpi=300)
 
 
 
@@ -776,7 +963,7 @@ def get_iou_pr(args,logger=None):
     for i, iouthresh in enumerate(args.iouthresh):
         ax.plot(pr_dict['recall'][i], pr_dict['precision'][i],
                 label='IOU = %.2f -- AuC = %.2f' % (iouthresh, pr_dict['auc'][i]))
-    ax.set_title(args.title+'\nRef Count: %d | Hyp Count: %d' %(len(seen),len(results)))
+    ax.set_title(args.title+'\nTile ROI Count: %d | Ref Count: %d | Hyp Count: %d' %(len(roi_annos),len(ref_annos),len(hyp_annos)),fontsize=12)
     ax.set_ylabel('Precision')
     ax.set_xlabel('Recall')
     ax.set_xlim([0, 1.1])
@@ -785,6 +972,7 @@ def get_iou_pr(args,logger=None):
     if not os.path.exists(os.path.join(args.odir,'IoUs')):
         os.makedirs(os.path.join(args.odir,'IoUs'))
     plt.savefig(os.path.join(args.odir, 'IoUs','pr_curves.png'), dpi=300)
+    # plt.show()
     print('PNG saved:',args.odir)
 # 
 # end of get_iou_pr
@@ -922,7 +1110,7 @@ def main(argv):
     parser.add_argument('-hypclass', type=str, nargs='*', help=HYPCLASS_HELP)
     parser.add_argument('-hypname', type=str, nargs='*', help=HYPCLASS_HELP)
     parser.add_argument('-roiclass', type=str, nargs='*', help=ROICLASS_HELP)
-    parser.add_argument('-roiname', type=str, default='', help=ROICLASS_HELP)
+    parser.add_argument('-roiname', type=str, default=None, help=ROICLASS_HELP)
     parser.add_argument('-roisubregion', type=str, nargs='*', help=ROICLASS_HELP)
     parser.add_argument('-iouthresh', type=float, nargs='*', default=[0.5],
                         help=IOUTHRESH_HELP)
@@ -938,9 +1126,40 @@ def main(argv):
     if args.iouthresh:
         get_iou_pr(args)
 
+    get_dice_hist(args)
+    
+
     # if args.roisubregion:
     #     get_subregion_pr(args)
+
+    # ref_annos, hyp_annos = get_annos(args)
+    # if len(hyp_annos)>0:
+    #     print('%d annotations loaded...' %len(hyp_annos))
+
+    # ref_sizes, hyp_sizes = get_poly_size(ref_annos, hyp_annos)
+    # nbins = 'auto'
+    # fig, ax = plt.subplots(1,1)
+    # fig.suptitle('Total Tangle Count vs Tangle Size')
+    # # n, bins, patches = ax.hist(ref_sizes,bins=nbins,alpha=0.5,label='Reference Anno\'s',color='blue',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(ref_sizes)
+    # # ax.plot(bins,prob_density(bins),color='blue')
+
+    # n, bins, patches = ax.hist(hyp_sizes,bins=nbins,alpha=0.5,label='Hypothesis Anno\'s',color='green',edgecolor='black')
+    # # prob_density = stats.gaussian_kde(hyp_sizes)
+    # # ax.plot(bins,prob_density(bins),color='green')
+    # plt.xticks(bins,rotation=60)
+    # ax.set_xlabel('Tangle Size (microns$^2$)')
+    # ax.set_ylabel('Tangle Count')
+    # fig.suptitle('Distribution of Tangle Area')
+    # plt.legend()
+    # plt.tight_layout()
+    # if not os.path.exists(os.path.join(args.odir,'IoUs','Histograms')):
+    #     os.makedirs(os.path.join(args.odir,'IoUs','Histograms'))
+    # plt.savefig(os.path.join(args.odir,'IoUs','Histograms','tangle_area.png'), dpi=300)
+    # plt.show()
+
     # exit()
+    print('sana_pr_curve...done!')
     
 #
 # end of main

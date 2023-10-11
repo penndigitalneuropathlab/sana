@@ -36,144 +36,168 @@ class Model:
         self.model = self.model.to(self.device)
 
         # size of patch to be inputted to the model
-        self.patch_raw = 112
+        self.patch_raw = 224 # default: 112
 
         # size of window to load in
-        self.window_raw = 1120
+        # self.window_raw = 1120 # NOTE: wonder where this number came from?
 
         # padding, relative to patch_size to add to the window
-        self.padding_rel = 1.0
-        self.padding_raw = int(self.padding_rel * self.patch_raw)
+        self.padding_rel = 0.5 # default: 1.0
+        self.padding_raw = int(self.padding_rel * self.patch_raw) # 56
 
         # amount wildcat shrinks input images when mapping to segmentations
-        self.wildcat_shrinkage = 2
-
-        # don't want to store large output images
-        # TODO: do we need this?
-        self.extra_shrinkage = 1
-
-        # size of output pixel (in input pixels)
-        self.out_pix_size = self.wildcat_shrinkage * self.extra_shrinkage
-        #self.out_pix_size = self.extra_shrinkage
-
-        # output size for each window
-        self.window_out = int(self.window_raw / self.out_pix_size)
+        self.wildcat_ds = 2.0
 
         # padding size for the output
-        self.padding_out = int(self.padding_rel * self.patch_raw / self.out_pix_size)
+        self.padding_out = int(self.padding_rel * self.patch_raw / self.wildcat_ds)
 
         # size of image to process
-        self.slide_dim = np.array(self.frame.img.shape[:2])
+        self.image_size = np.array(self.frame.img.shape[:2])
 
-        # total number of non-overlapping windows to process
-        self.n_win = np.ceil(self.slide_dim / self.window_raw).astype(int)
-
-        # output image size
-        self.out_dim = (self.n_win * self.window_out).astype(int)
-
-        self.extra_scaled = (self.window_raw * self.n_win) / self.frame.img.shape[:-1]
-        self.true_out_dim = (self.out_dim / self.extra_scaled).astype(int)
+        # true final patch size to output
+        self.true_patch_size = self.patch_raw-self.padding_raw
+        
+        # dimension of the final output image
+        self.out_dim = self.true_patch_size*np.ceil(self.image_size/self.true_patch_size).astype(int)
     #
     # end of constructor
 
-    def run(self, debug=False):
+    def run(self, debug=False, get_coords=False, deploy_grid=True):
 
         # initialize the output array
-        output = np.zeros((self.num_classes, self.out_dim[0], self.out_dim[1]))
-        
-        # range of pix to scan
-        u_range, v_range = (0, self.n_win[0]), (0, self.n_win[1])
+        output = np.zeros((self.num_classes, self.out_dim[0],self.out_dim[1]))
 
-        # loop over windows
-        for u in range(u_range[0], u_range[1]):
-            for v in range(v_range[0], v_range[1]):
+        coords = []
+        if deploy_grid:
+            # loop over windows
+            for v in range(0, self.image_size[0], self.patch_raw-self.padding_raw): #height
+                for u in range(0, self.image_size[1], self.patch_raw-self.padding_raw): #width
 
-                # get coords of the window in raw pixels
-                x, y, w = u * self.window_raw, v * self.window_raw, self.window_raw
+                    # subtract the padding
+                    x0, y0 = u - (self.padding_raw//2), v - (self.padding_raw//2)
+                    x1, y1 = x0 + self.patch_raw, y0 + self.patch_raw
 
-                # subtract the padding
-                xp0, yp0, wp = x - self.padding_raw, y - self.padding_raw, self.window_raw + 2*self.padding_raw
-                xp1, yp1 = xp0+wp, yp0+wp
-                xpad0, xpad1, ypad0, ypad1 = 0,0,0,0
-                if xp0 < 0:
-                    xpad0 = 0 - xp0
-                    xp0 = 0
-                if yp0 < 0:
-                    ypad0 = 0 - yp0
-                    yp0 = 0
-                if xp1 > self.frame.img.shape[0]:
-                    xpad1 = xp1 - self.frame.img.shape[0]
-                    xp1 = self.frame.img.shape[0]
-                if yp1 > self.frame.img.shape[1]:
-                    ypad1 = yp1 - self.frame.img.shape[1]
-                    yp1 = self.frame.img.shape[1]
+                    xpad0, xpad1, ypad0, ypad1 = 0,0,0,0
+                    if x0 < 0:
+                        xpad0 = 0 - x0
+                        x0 = 0
+                    if y0 < 0:
+                        ypad0 = 0 - y0
+                        y0 = 0
+                    if x1 > self.image_size[1]:
+                        xpad1 = x1 - self.image_size[1]
+                        x1 = self.image_size[1]
+                    if y1 > self.image_size[0]:
+                        ypad1 = y1 - self.image_size[0]
+                        y1 = self.image_size[0]
+                    
+                    coords.append([(x0,y0),(x1,y1)])
+                    chunk = self.frame.img[y0:y1,x0:x1]
+                    chunk = np.pad(chunk, [(ypad0,ypad1),(xpad0,xpad1),(0,0)], mode='constant', constant_values=255)
+                    chunk = Image.fromarray(chunk)
 
-                chunk = self.frame.img[xp0:xp1, yp0:yp1]
-                chunk = np.pad(chunk, [(xpad0,xpad1),(ypad0,ypad1),(0,0)], mode='constant', constant_values=255)
-                chunk = Image.fromarray(chunk)
+                    # # compute the desired size of input
+                    # # TODO: input_size should be here as a ratio
+                    # wwc = int(wp * self.patch_raw / self.patch_raw)
 
-                # compute the desired size of input
-                # TODO: input_size should be here as a ratio
-                wwc = int(wp * self.patch_raw / self.patch_raw)
+                    # resample the chunk for the two networks
+                    tran = transforms.Compose([
+                        # transforms.Resize((wwc, wwc)),
+                        transforms.ToTensor(),
+                        #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+                    ])
 
-                # resample the chunk for the two networks
-                tran = transforms.Compose([
-                    transforms.Resize((wwc, wwc)),
-                    transforms.ToTensor(),
-                    #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
-                ])
+                    # convert the read chunk to tensor format
+                    with torch.no_grad():
 
-                # convert the read chunk to tensor format
-                with torch.no_grad():
+                        # Apply transforms and turn into correct size torch tensor
+                        chunk_tensor = torch.unsqueeze(tran(chunk), dim=0).to(self.device)
 
-                    # Apply transofrms and turn into correct size torch tensor
-                    chunk_tensor = torch.unsqueeze(tran(chunk), dim=0).to(self.device)
+                        # forward pass through the model
+                        x_clas = self.model.forward_to_classifier(chunk_tensor)
+                        x_cpool = self.model.spatial_pooling.class_wise(x_clas)
 
-                    # forward pass through the model
-                    x_clas = self.model.forward_to_classifier(chunk_tensor)
-                    x_cpool = self.model.spatial_pooling.class_wise(x_clas)
+                        # scale the image to desired size
+                        x_cpool_up = torch.nn.functional.interpolate(x_cpool, scale_factor=self.wildcat_ds)
 
-                    # scale the image to desired size
-                    x_cpool_up = torch.nn.functional.interpolate(x_cpool, scale_factor=1.0/self.extra_shrinkage)
+                        # extract the central portion of the output
+                        p0 = 0 + (self.padding_raw//2)
+                        p1 = self.patch_raw - (self.padding_raw//2)
+                        x_cpool_ctr = x_cpool_up[:,:,p0:p1,p0:p1]
 
-                    # extract the central portion of the output
-                    p0, p1 = self.padding_out, self.padding_out + self.window_out
-                    x_cpool_ctr = x_cpool_up[:,:,p0:p1,p0:p1]
+                        # place in the output
+                        xout0, xout1 = u, u+self.true_patch_size
+                        yout0, yout1 = v, v+self.true_patch_size
 
-                    # place in the output
-                    xout0, xout1 = u * self.window_out, ((u+1)*self.window_out)
-                    yout0, yout1 = v * self.window_out, ((v+1)*self.window_out)
-                    try:
-                        for i in range(self.num_classes):
-                            output[i, xout0:xout1,yout0:yout1] = x_cpool_ctr[0,i,:,:].cpu().detach().numpy()
-                    except ValueError as e:
-                        continue
+                        # print()
+                        # print('u,v: %d,%d' %(u,v))
+                        # print('input frame shape:',self.frame.img.shape)
+                        # print('x coords:', x0, x1)
+                        # print('y coords:', y0, y1)
+                        # print('x padded coords:',xpad0, xpad1)
+                        # print('y padded coords:',ypad0, ypad1)
+                        # print('x coords out:',xout0, xout1)
+                        # print('y coords out:',yout0, yout1)
+                        # print('center p coords:', p0, p1)
+                        # print('chunk shape:',chunk._size)
+                        # print('rescaled patch:',x_cpool_up.shape)
+                        # print('patch shape:',x_cpool_ctr[0,:,:,:].shape)
+                        # print('output patch shape:',output[:, xout0:xout1, yout0:yout1].shape)
 
-                    if debug:
-                        fig, axs = plt.subplots(2,2)
-                        axs = axs.ravel()
-                        axs[0].imshow(chunk, extent=(0,100,0,100))
-                        axs[1].imshow(x_cpool_up[0,1].cpu().detach().numpy(), extent=(0,100,0,100))
-                        axs[2].imshow(x_cpool_ctr[0,1].cpu().detach().numpy(), extent=(p0,p1,p0,p1))
-                        axs[3].imshow(output[1])
-                        plt.show()
+                        output[:, yout0:yout1, xout0:xout1] = x_cpool_ctr[0,:,:,:].cpu().detach().numpy()
+                        # output[:, xout0:xout1, yout0:yout1] = x_cpool_ctr[0,:,:,:].cpu().detach().numpy()
 
-                #
-                # end of model evaluation
-        #
-        # end of window loop
+                        # exit()
+                        # if debug:
+                        # fig, axs = plt.subplots(2,2)
+                        # axs = axs.ravel()
+                        # axs[0].imshow(chunk, extent=(0,100,0,100))
+                        # axs[1].imshow(x_cpool_up[0,2].cpu().detach().numpy(), extent=(0,100,0,100))
+                        # axs[2].imshow(x_cpool_ctr[0,2].cpu().detach().numpy(), extent=(p0,p1,p0,p1))
+                        # axs[3].imshow(output[2])
+                        # plt.show()
 
-        # cutoff the extra padded data from the windowing
-        output = output[:, :self.true_out_dim[0], :self.true_out_dim[1]]
+                    #
+                    # end of model evaluation
+            #
+            # end of window loop
+
+            output = output[:,:self.image_size[0],:self.image_size[1]]
 
         # # print(output.shape, self.frame.img.shape, flush=True)
         # if self.debug:
-        #     fig, axs = plt.subplots(1,2)
-        #     axs[0].imshow(self.frame.img, extent=(0,100,0,100))
-        #     axs[1].imshow(output[0], extent=(0,100,0,100))
-        #     plt.show()
+        # fig, axs = plt.subplots(1,2)
+        # axs[0].imshow(self.frame.img)
+        # axs[0].set_title('Orig. Frame')
+        # axs[1].imshow(output[2])
+        # axs[1].set_title('Model Output of tiled patches')
+        # plt.show()
+        else:
+            frame = Image.fromarray(self.frame.img)
+            # resample the chunk for the two networks
+            tran = transforms.Compose([
+                # transforms.Resize((wwc, wwc)),
+                transforms.ToTensor(),
+                #transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])
+            ])
+            frame_tensor = torch.unsqueeze(tran(frame), dim=0).to(self.device)
 
-        return output
+            x_clas = self.model.forward_to_classifier(frame_tensor)
+            x_cpool = self.model.spatial_pooling.class_wise(x_clas)
+            x_cpool_up = torch.nn.functional.interpolate(x_cpool, scale_factor=self.wildcat_ds) #shape: [1,3,596,596]
+            output = x_cpool_up[0,:,:,:].cpu().detach().numpy()
+
+            # fig, axs = plt.subplots(1,2)
+            # axs[0].imshow(self.frame.img)
+            # axs[0].set_title('Orig. Frame')
+            # axs[1].imshow(output[2])
+            # axs[1].set_title('Full frame processed by model')
+            # plt.show()
+
+        if get_coords and deploy_grid:
+            return output, coords
+        else:
+            return output
     #
     # end of run
 #
@@ -199,9 +223,14 @@ class CorticalTangleClassifier(Model):
         model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'AD_cortical_3class_5epoch_16batch_dice_lr001_v2.dat')
         super().__init__(model_path, frame, 3, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
 
+class CorticalTangleClassifier_TauC3(Model):
+    def __init__(self, frame):
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'AD_TauC3_cortical_5class_5epoch_16batch_dice_lr001_v3.dat')
+        super().__init__(model_path, frame, 5, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
+
 class MicrogliaClassifier(Model):
     def __init__(self, frame):
-        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'IBA1_microglia_6class_10epoch_16batch_dice_lr01_v0.dat')
+        model_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'microglia.dat')
         super().__init__(model_path, frame, 6, kmax=0.02, kmin=0.0, alpha=0.7, num_maps=4)
 
 class R13Classifier(Model):

@@ -119,7 +119,7 @@ class HDABProcessor(Processor):
 
     # TODO: rename scale/max
     # function takes in a DAB Frame object, extracting a DAB thresholded image
-    def process_dab(self, frame, run_normalize=False, scale=1.0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
+    def process_dab(self, frame, run_normalize=False, scale=1.0, mn=0, mx=255, close_r=0, open_r=0, mask = None, debug=False):
         self.logger.info('Processing DAB...')
         if debug and run_normalize:
             fig, axs = plt.subplots(2,3, sharex=True,sharey=True)
@@ -148,6 +148,7 @@ class HDABProcessor(Processor):
             # TODO: run anisodiff
             # smooth the image
             dab.anisodiff()
+            self.dab_norm = dab.copy()
 
             # plot #3
             if debug:
@@ -158,7 +159,7 @@ class HDABProcessor(Processor):
         dab_hist = dab.histogram()
 
         # get the stain threshold
-        dab_threshold = max_dev(dab_hist, scale=scale, mx=mx, debug=debug, show_debug=False)
+        dab_threshold = max_dev(dab_hist, scale=scale, mn=mn, mx=mx, debug=debug, show_debug=False)
 
         # apply the thresholding
         dab.img = np.where(dab.img < dab_threshold, 0, 1).astype(np.uint8)

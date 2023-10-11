@@ -24,6 +24,7 @@ INT_KEYS = [
     'lvl', 'padding',
     'csf_threshold',
     'padding',
+    'poly_count',
 ]
 POINT_KEYS = [
     'loc', 'size',

@@ -34,6 +34,10 @@ WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
 LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f,%0.16f\n'
 WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*(2*len(LAYER_NAMES))+'\n'
 
+# NOTE: add the measurement name to this list if it's a %AO label
+AO_MEASUREMENTS = ['manual', 'auto', 'lb_wc', 'ln_wc', 'tangle_wc', 'tangle_poly']
+
+# NOTE: add all measurement labels to write out to file (should match name in sana_process params outfile)
 # TODO: rename grn to non
 ANTIBODY_MEASUREMENTS = {
     'NeuN': ['manual', 'auto', 'grn', 'pyr'],
@@ -43,13 +47,18 @@ ANTIBODY_MEASUREMENTS = {
     'SMI94': ['manual', 'auto', 'vert_fibers', 'horz_fibers'],
     'SMI35': ['manual', 'auto'],
     'MJFR13': ['manual', 'auto', 'lb_wc'],
-    'AT8': ['manual', 'auto','tangle_wc','tangle_poly'],
+    'AT8': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
+    'TauC3': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
+    'C3': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
     'TDP43': ['manual', 'auto'],
     'TDP43MP': ['manual', 'auto'],
     'SYN303': ['auto', 'lb_wc', 'ln_wc'],
     'R13': ['auto', 'lb_wc', 'ln_wc'],
-
 }
+
+# add AO suffix to AO measurements; should label measurement name in results csv with _ao for all AO measurements
+for antibody in ANTIBODY_MEASUREMENTS.keys():
+    ANTIBODY_MEASUREMENTS[antibody] = [measurement+'_ao' if measurement in AO_MEASUREMENTS else measurement for measurement in ANTIBODY_MEASUREMENTS[antibody]]
 
 class DirectoryIncompleteError(Exception):
     def __init__(self, message='Directory is missing .csv file'):
@@ -103,8 +112,10 @@ class Patient:
         data = []
         for hemisphere_name in self.hemispheres:
             data.append(self.hemispheres[hemisphere_name].collapse_ao(antibody_name, measurement))
-        if len(data) != 0:
+        if len(data) != 0 and measurement.split('_')[-1] == 'ao':
             return calc(np.mean, data)
+        elif len(data) != 0 and measurement.split('_')[-1] == 'count':
+            return calc(np.sum, data)
         else:
             return np.full((len(LAYER_NAMES),), np.nan)
     #
@@ -134,8 +145,10 @@ class Hemisphere:
         data = []
         for region_name in self.regions:
             data.append(self.regions[region_name].collapse_ao(antibody_name, measurement))
-        if len(data) != 0:
+        if len(data) != 0 and measurement.split('_')[-1] == 'ao':
             return calc(np.mean, data)
+        elif len(data) != 0 and measurement.split('_')[-1] == 'count':
+            return calc(np.sum, data)
         else:
             return np.full((len(LAYER_NAMES),), np.nan)
     #
@@ -157,9 +170,12 @@ class Region:
             'Rostral_sulcus', 'Orbital_sulcus',
             'Cingulate_sulcus'
         ],
-        'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
-        'SMTC': [],
-        'HIP' : ['CA1', 'CA2', 'CA3', 'CA4', 'DG', 'Subiculum']
+        # 'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
+        'aCING': ['aCING_'],
+        'SMTC': ['SMTC_'],
+        'HIP' : ['GM']
+        # 'HIP' : ['CA1', 'CA2', 'CA3', 'CA4', 'DG', 'Subiculum']
+        # 'HIP': ['Greatest GM Sampling zone']
     }
     for region_name in region_mapping:
         region_mapping[region_name] += ['ROI', 'Greatest GM Sampling zone_*']
@@ -200,8 +216,10 @@ class Region:
             x = self.subregions[subregion_name].collapse_ao(antibody, measurement)
             if not x is None:
                 data.append(x)
-        if len(data) != 0:
+        if len(data) != 0 and measurement.split('_')[-1] == 'ao':
             return calc(np.mean, data)
+        elif len(data) != 0 and measurement.split('_')[-1] == 'count':
+            return calc(np.sum, data)
         else:
             return np.full((len(LAYER_NAMES),), np.nan)
     #
@@ -269,8 +287,10 @@ class Antibody:
         data = []
         for roi_name in self.rois:
             data.append(self.rois[roi_name].get_ao_data(measurement))
-        if len(data) != 0:
+        if len(data) != 0 and measurement.split('_')[-1] == 'ao':
             return calc(np.mean, data)
+        elif len(data) != 0 and measurement.split('_')[-1] == 'count':
+            return calc(np.sum, data)
         else:
             return np.full((len(LAYER_NAMES),), np.nan)
     #
@@ -306,6 +326,7 @@ class Entry:
         self.aid = sana_io.get_aid(self.slide_f)
 
         self.roi_name = self.slide_name+'_'+self.roi_name
+        # self.roi_name = self.slide_name+self.roi_name
         
         if self.region_name == 'CING':
             self.region_name = 'aCING'
@@ -332,7 +353,11 @@ class Entry:
         # initialize array for storing all combinations of sublayer data
         # NOTE: 1, 2, 3, 4, 5, 6, 23, 56, 123, 456, 23456, 123456
         ao_data = np.full((12), np.nan)
-        ao_data[-1] = self.data[measurement+'_ao']
+        # if measurement in AO_MEASUREMENTS:
+        #     ao_data[-1] = self.data[measurement+'_ao']
+        # else:
+        #     ao_data[-1] = self.data[measurement]
+        ao_data[-1] = self.data[measurement]
 
         # sometimes the sub_aos are not given
         if measurement+'_sub_aos' not in self.data:
