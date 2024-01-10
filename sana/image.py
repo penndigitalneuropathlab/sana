@@ -8,6 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw
 import nibabel as nib
+from matplotlib import colors
 
 # sana packages
 from sana import geo
@@ -21,8 +22,10 @@ class Frame:
     :param slide_threshold: grayscale intensity value to remove background slide data
     :param slide_color: color of slide background to use when needed
     :param padding: amount of padding added to the frame
+    :param filename: path to original file from where this Frame originated
+    :param logger: Logger object
     """
-    def __init__(self, img, level=-1, converter=None, slide_threshold=None, slide_color=None, padding=0):
+    def __init__(self, img, level=-1, converter=None, slide_threshold=None, slide_color=None, padding=0, filename="", logger=None):
 
         # load/store the image array
         if type(img) is str:
@@ -40,6 +43,8 @@ class Frame:
         self.slide_threshold = slide_threshold
         self.slide_color = slide_color
         self.padding = padding
+        self.filename = filename
+        self.logger = logger
 
         # TODO:
         self.contours = []
@@ -131,27 +136,31 @@ class Frame:
             histogram[:,i] = np.histogram(self.img[:,:,i], bins=256, range=(0,256))[0]
         return histogram
 
-    # TODO: add padding??
-    def get_tile(self, rect):
+    def get_tile(self, loc, size):
         """
         Gets a cropped rectangular tile from the frame
-        :param rect: Rectangle object
+        :param loc: top left of rectangle
+        :param size: size of rectangle
         """
-        self.converter.to_pixels(rect, self.level, round=True)
+        self.converter.to_pixels(loc, self.level)
+        self.converter.to_pixels(size, self.level)
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
         w, h = self.size()
-        (x0, y0) = rect.loc[0], rect.loc[1]
-        (x1, y1) = x0+rect.size[0], y0+rect.size[1]
+        (x0, y0) = loc[0], loc[1]
+        (x1, y1) = x0+size[0], y0+size[1]
+        print(x0, y0, x1, y1)
         x0 = np.clip(x0, 0, None)
         y0 = np.clip(y0, 0, None)
         x1 = np.clip(x1, None, w)
         y1 = np.clip(y1, None, h)
         return self.img[y0:y1, x0:x1, :]
 
-    def crop(self, rect):
+    def crop(self, loc, size):
         """
         Crops the image to the given rectangle
         """
-        self.img = self.get_tile(rect)
+        self.img = self.get_tile(loc, size)
 
     def resize(self, size, interpolation=cv2.INTER_NEAREST):
         """
@@ -259,7 +268,7 @@ class Frame:
         cx, cy = w//2, h//2
 
         # find the rotation matrix
-        M = cv2.getRotationMatrix2D((cx, cy), angle, 1.0)
+        M = cv2.getRotationMatrix2D(center=(int(cx), int(cy)), angle=angle, scale=1.0)
 
         # compute the new dimensions
         cos_term = np.abs(M[0,0])
@@ -444,6 +453,26 @@ class Frame:
         # perform the thresholding
         self.img = np.where(self.img < threshold, x, y)
 
+    def closing_filter(self, radius):
+        """
+        Applies a morphological closing filter. See https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
+        :param radius: radius of the closing kernel
+        """
+        if not self.is_binary():
+            raise ImageTypeException('Morphology filters can only be applied to binary images')
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
+        self.img = cv2.morphologyEx(self.img, cv2.MORPH_CLOSE, kern)
+
+    def opening_filter(self, radius):
+        """
+        Applies a morphological opening filter. See https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
+        :param radius: radius of the opening kernel
+        """
+        if not self.is_binary():
+            raise ImageTypeException('Morphology filters can only be applied to binary images')
+        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
+        self.img = cv2.morphologyEx(self.img, cv2.MORPH_OPEN, kern)
+
     def get_contours(self, min_body_area=0, min_hole_area=0, max_body_area=np.inf, max_hole_area=np.inf):
         """
         Finds the contours on all edges of the image, then filters the contours based on size criteria. In the image, background is zero pixels and foreground is non-zero pixels. 
@@ -453,8 +482,8 @@ class Frame:
         :param max_hole_area: maximum size for a hole contour
         :returns: a list of the body contours and a list of the hole contours 
         """
-        if not self.is_rgb():
-            raise DatatypeException('Contour detection requires a grayscale image')
+        if not self.is_binary():
+            raise ImageTypeException('Contour detection requires a binary image')
         
         self.contours = []
         contours, hierarchies = cv2.findContours(self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
@@ -604,7 +633,7 @@ def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_ro
 
     # get the RGB color
     if type(color) is str:
-        color = np.array(name_to_rgb(color))
+        color = np.array(colors.to_rgb(color))
 
     # exclude non-annotated pixels
     if not main_roi_mask is None:
@@ -655,5 +684,8 @@ class ChannelException(Exception):
     def __init__(self, message):
         self.message = message
 class DimensionException(Exception):
+    def __init__(self, message):
+        self.message = message
+class ImageTypeException(Exception):
     def __init__(self, message):
         self.message = message

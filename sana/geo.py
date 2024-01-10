@@ -1,9 +1,12 @@
 
 # system packages
+import math
 
 # installed packages
 import numpy as np
 import shapely.geometry
+from numba import jit
+
 
 class Converter:
     """
@@ -26,14 +29,18 @@ class Converter:
         Converts an Array to floating point
         :param x: sana.geo.Array
         """
-        return x.astype(dtype=float, copy=False)
+        if x.dtype == float:
+            return x
+        return x.astype(dtype=float, copy=False)    
     
     def to_int(self, x):
         """
         Converts an Array to integer
         :param x: sana.geo.Array
         """
-        return x.astype(dtype=int, copy=False)
+        if x.dtype == int:
+            return x
+        return np.rint(x).astype(int, copy=False)
     
     def rescale(self, x, level):
         """
@@ -71,6 +78,7 @@ class Converter:
         $y = \frac{x}{{mpp}^{order}}{\frac{ds_original}{ds_new}}^{order}$
         :param x: sana.geo.Array
         :param level: new pixel resolution level
+        :param round: whether or not to round to integer
         """
 
         # apply the microns per pixel constant
@@ -80,16 +88,16 @@ class Converter:
 
         # rescale to new pixel resolution
         self.rescale(x, level)
-        
 
 class Array(np.ndarray):
     """
-    Wrapper class to a Numpy array, also storing units, resolution, and order. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
+    Wrapper class to a Numpy array which only allows (n,2) arrays, while also storing units, resolution, and order. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, arr, is_micron=True, level=0, order=1):
+    def __new__(cls, x, y, is_micron=True, level=0, order=1):
+        arr = np.array([x, y]).T
         obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
         obj.level = level
@@ -100,6 +108,9 @@ class Array(np.ndarray):
         self.is_micron = getattr(obj, 'is_micron', None)
         self.level = getattr(obj, 'level', None)
         self.order = getattr(obj, 'order', None)
+
+    def get_xy(self):
+        return self[:,0], self[:,1]
 
     def check_resolution(self, p):
         """
@@ -116,44 +127,40 @@ class Array(np.ndarray):
 
         self -= p
 
-    def rotate(self, p, angle):
+    def rotate(self, origin, angle):
         """
-        Rotates values in the Array counter clockwise around a point 
+        Rotates values in the Array counter clockwise around an origin 
         :param c: rotation point
         :param angle: angle of rotation in degrees
         """
-        self.check_resolution(p)
+        self.check_resolution(origin)
 
-        x0, y0 = self.get_xy()
-        xc, yc = p
-        th = np.radians(angle)
+        px, py = self.get_xy()
+        ox, oy = origin
+        angle = math.radians(angle)
 
         # perform the rotation
-        x1 = xc + np.cos(th) * (x0 - xc) - np.sin(th) * (y0 - yc)
-        y1 = yc + np.sin(th) * (x0 - xc) + np.cos(th) * (y0 - yc)
+        qx = ox + math.cos(angle) * (px - ox) - math.sin(angle) * (py - oy)
+        qy = oy + math.sin(angle) * (px - ox) + math.cos(angle) * (py - oy)
 
-        self.set_xy(x1, y1)
+        self.set_xy(qx, qy)
 
-def Value(Array):
-    """
-    (1,) shaped Array object
-    :param x: input value
-    :param is_micron: flag denoting if the Array is micron units or pixel units
-    :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
-    """
-    def __new__(cls, x, is_micron=True, level=0, order=1):
-        arr = np.array((x,))
-        obj = Array(arr, is_micron, level, order).view(cls)
-        return obj
-    def get_xy(self):
-        raise NotImplementedError
-    def set_xy(self):
-        raise NotImplementedError
+    def transform(self, M, inverse=False):
+        """
+        Applies a transformation matrix to the Polygon
+        :param M: (2,3) transformation matrix M
+        :param inverse: whether or not to inverse the transformation
+        """
+        if not inverse:
+            np.matmul(self, M[:,:2].T, out=self)
+            self += M[:,2]
+        else:
+            self -= M[:,2]
+            np.matmul(self, np.linalg.inv(M[:,:2].T), out=self)
 
 class Point(Array):
     """
-    (2,) shaped Array object
+    (2) shaped np.ndarray object, same process as sana.geo.Array
     :param x: x value
     :param y: y value
     :param is_micron: flag denoting if the Array is micron units or pixel units
@@ -161,9 +168,18 @@ class Point(Array):
     :param order: order of the data, usually used for calculating areas
     """
     def __new__(cls, x, y, is_micron=True, level=0, order=1):
+        # TODO: need to check validity of x and y, same in Array
         arr = np.array((x, y))
-        obj = Array(arr, is_micron, level, order).view(cls)
+        obj = np.asarray(arr).view(cls)
+        obj.is_micron = is_micron
+        obj.level = level
+        obj.order = order
         return obj
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.is_micron = getattr(obj, 'is_micron', None)
+        self.level = getattr(obj, 'level', None)
+        self.order = getattr(obj, 'order', None)
     
     def get_xy(self):
         return self[0], self[1]
@@ -194,8 +210,7 @@ class Polygon(Array):
     :param order: order of the data, usually used for calculating areas
     """
     def __new__(cls, x, y, is_micron=True, level=0, order=1):
-        arr = np.array((x, y), dtype=float).T
-        obj = Array(arr, is_micron, level, order).view(cls)
+        obj = Array(x, y, is_micron, level, order).view(cls)
         return obj
     
     def get_xy(self):
@@ -211,19 +226,6 @@ class Polygon(Array):
         x, y = self.get_xy()
         return np.roll(x, 1), np.roll(y, 1)
 
-    def transform(self, M, inverse=False):
-        """
-        Applies a transformation matrix to the Polygon
-        :param M: (2,3) transformation matrix M
-        :param inverse: whether or not to inverse the transformation
-        """
-        if not inverse:
-            np.matmul(self, M[:,:2].T, out=self)
-            self += M[:,2]
-        else:
-            self -= M[:,2]
-            np.matmul(self, np.linalg.inv(M[:,:2].T), out=self)
-
     def get_area(self):
         """
         Calculates the area of the Polygon
@@ -232,8 +234,7 @@ class Polygon(Array):
             x0, y0 = self.get_xy()
             x1, y1 = self.get_rolled_xy()
             A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-            self.A = value_like(A, self)
-            self.A.order = 2
+            self.A = A
         return self.A
     
     def get_centroid(self):
@@ -473,44 +474,58 @@ class Polygon(Array):
             x, y = self.get_xy()
         return Annotation(x=x, y=y, geo=None, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order)
 
-class Line(Polygon):
+class Curve(Array):
     """
-    Specific instance of a Polygon that is not a closed shape
+    (n,2) shaped Array object, which usually is used for segmented boundaries in the tissue
     :param x: (n,1) array
     :param y: (n,1) array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=True, lvl=0, order=1):
-        obj = Polygon(x, y, is_micron, lvl, order).view(cls)
-        return obj@jit(nopython=True)
+    def __new__(cls, x, y, is_micron=True, level=0, order=1):
+        obj = Array(x, y, is_micron, level, order).view(cls)
+        return obj
     
+    def get_xy(self):
+        return self[:,0], self[:,1]
+    def set_xy(self, x, y):
+        self[:,0] = x
+        self[:,1] = y
+
     def linear_regression(self):
         """
         Calculates y = mx + b line of best fit
         """
+        if hasattr(self, 'slope'):
+            return self.slope, self.intercept
+        
         x, y = self.get_xy()
         n = self.shape[0]
         ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
         ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
         m = ss_xy/ss_xx
         b = np.mean(y) - m * np.mean(x)
-        return m, b
+        self.slope = m
+        self.intercept = b
+
+        return self.slope, self.intercept
     
     def get_angle(self):
         """
         Calculates the angle of rotation in degrees based on the line of best fit
         """
-
-        # calculate the line of best fit
-        m, b = self.linear_regression()
-        a = Point(self[0,0], m*self[0,0] + b, False, self.lvl)
-        b = Point(self[-1,0], m*self[-1,0] + b, False, self.lvl)
+        if hasattr(self, 'angle'):
+            return self.angle
+        if not hasattr(self, 'slope'):
+            self.linear_regression()
+        a = Point(self[0,0], self.slope*self[0,0] + self.intercept, False, self.level)
+        b = Point(self[-1,0], self.slope*self[-1,0] + self.intercept, False, self.level)
 
         # calculate the angle of rotation in degrees
-        angle = np.rad2deg(np.arctan(m))
+        angle = np.rad2deg(np.arctan(self.slope))
 
+        # TODO: check this math!
         # get only positive angles
         if angle < 0:
             angle = 360 + angle
@@ -519,18 +534,20 @@ class Line(Polygon):
         if angle > 180:
             angle -= 180
 
-        return angle
+        self.angle = angle
+        return self.angle
     
     def to_annotation(self, file_name, class_name,
-                      anno_name="", confidence=1.0, connect=True):
+                      annotation_name="", confidence=1.0, connect=True):
         """
-        Converts the Line to an Annotation using the LineString format in geojson
+        Converts the Curve to an Annotation using the LineString format in geojson
         """
+        x, y = self.get_xy()
         return Annotation(x=x, y=y, geo=None, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order, object_type='LineString')
     
-class Annotation(Polygon):
+class Annotation(Array):
     """
-    Special case of a Polygon that stores extra information about the object, usually from a geojson formatted file.
+    Special case of an Array that stores extra information about the object, usually from a geojson formatted file.
     :param geo: geojson formatted vertices, not needed if providing x and y parameters
     :param x: (n,1) input array, not needed if providing geo
     :param y: (n,1) input array, not needed if providing geo
@@ -542,12 +559,8 @@ class Annotation(Polygon):
     :param level: pixel resolution level (level=0 when in microns)
     :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, geo, x=None, y=None, class_name="", annotation_name="", confidence=1.0, object_type='Polygon', is_micron=True, lvl=0, order=1):
-    
-        # initalize the array using the geometry
-        if x is None or y is None:
-            x, y = cls.get_vertices(geo)
-        obj = Polygon(x, y, is_micron, lvl, order).view(cls)
+    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", confidence=1.0, object_type='Polygon', is_micron=True, level=0, order=1):
+        obj = Array(x, y, is_micron, level, order).view(cls)
         
         # store attributes
         obj.class_name = class_name
@@ -563,49 +576,11 @@ class Annotation(Polygon):
         self.annotation_name = getattr(obj, 'annotation_name', None)
         self.confidence = getattr(obj, 'confidence', None)
         self.is_micron = getattr(obj, 'is_micron', None)
-        self.lvl = getattr(obj, 'lvl', None)
+        self.level = getattr(obj, 'level', None)
         self.order = getattr(obj, 'order', None)
         self.object_type = getattr(obj, 'object_type', None)
-
-    # TODO: simplify or use geojson
-    # TODO: make a MultiPolygon object  
-    # TODO: move this out of geo.py and into io.py
-    def get_vertices(geo):
-        """
-        Generates a set of x,y coordinates from geojson formatted vertices
-        """
-        # TODO: this should be simplified.
-        #        need to actually handle what a MultiPolygon is
-        if geo['type'] == 'MultiPolygon':
-            coords_list = geo['coordinates']
-            x, y = [], []
-            for coords in coords_list:
-                x += [float(c[0]) for c in coords[0]]
-                y += [float(c[1]) for c in coords[0]]
-            x = np.array(x)
-            y = np.array(y)
-        elif geo['type'] == 'Polygon':
-            coords = geo['coordinates']
-            x = np.array([float(c[0]) for c in coords[0]])
-            y = np.array([float(c[1]) for c in coords[0]])
-        elif geo['type'] == 'MultiPoint':
-            coords = geo['coordinates']
-            x = np.array([float(c[0]) for c in coords])
-            y = np.array([float(c[1]) for c in coords])
-        elif geo['type'] == 'LineString':
-            coords = geo['coordinates']
-            x = np.array([float(c[0]) for c in coords])
-            y = np.array([float(c[1]) for c in coords])            
-        else:
-            x = np.array([])
-            y = np.array([])
-        #
-        # end of geo type checking
-
-        return x, y
     
-    # TODO: rename to geojson?
-    def to_json(self):
+    def to_geojson(self):
         """
         Generates a formatted geojson dictionary
         """
@@ -637,20 +612,45 @@ class Annotation(Polygon):
         }
         return annotation
 
+    def is_connected(self):
+        """
+        Checks if the first and last vertex are equivalent
+        """
+        return np.isclose(self[0,0], self[-1,0]) and np.isclose(self[0,1], self[-1,1])
+    
     def connect(self):
-        if not self.connected():
-            poly = super().connect()
-            return poly.to_annotation(self.file_name, self.class_name, self.name, self.confidence, connect=True)
-        else:
+        """
+        Connects the Annotation by copying the first vertex to the last
+        """
+        if self.is_connected():
             return self
-        
-    def disconnect(self):
-        if self.connected():
-            poly = super().disconnect()
-            return poly.to_annotation(self.file_name, self.class_name, self.name, self.confidence, connect=False)
         else:
-            return self
+            x, y = self.get_xy()
+            x = np.concatenate([x, [self[0,0]]], axis=0)
+            y = np.concatenate([y, [self[0,1]]], axis=0)
+            return polygon_like(x, y, self)
 
+    def disconnect(self):
+        """
+        Disconnects the Annotation by deleting the duplicated final vertex
+        """
+        if not self.is_connected():
+            return self
+        else:
+            x, y = self.get_xy()
+            x = x[:-1]
+            y = y[:-1]
+            return polygon_like(x, y, self)
+        
+    def to_polygon(self):
+        self = self.connect()
+        return polygon_like(self[:,0], self[:,1], self)
+    def to_curve(self):
+        self = self.disconnect()
+        return curve_like(self[:,0], self[:,1], self)
+
+# NOTE: using jit here makes this function viable in terms of speed
+@jit(nopython=True)
 def ray_tracing(x,y,poly):
     """
     Detects if the given xy point is inside the poly array. This uses numba so that the loops are very fast, therefore the inputs must be basic C datatypes
@@ -676,16 +676,26 @@ def ray_tracing(x,y,poly):
         p1x,p1y = p2x,p2y
     return inside
 
+def get_polygon_from_curves(c1, c2):
+    """
+    Creates a polygon by connecting 2 curves at both ends
+    """
+    x = np.concatenate([c1[:,0], c2[:,0][::-1], [c1[0,0]]], axis=0)
+    y = np.concatenate([c1[:,1], c2[:,1][::-1], [c1[0,1]]], axis=0)
+    return polygon_like(x, y, c1)
+
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level, order=obj.order)
-def value_like(x, obj):
-    return Value(x, is_micron=obj.is_micron, level=obj.level, order=obj.order)
 def point_like(x, y, obj):
     return Point(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
 def polygon_like(x, y, obj):
     return Polygon(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
-def line_like(x, y, obj):
-    return Line(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+def curve_like(x, y, obj):
+    return Curve(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+def rectangle_like(loc, size, obj):
+    x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
+    y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
+    return polygon_like(x, y, obj)
 
 class UnitException(Exception):
     def __init__(self, message):
