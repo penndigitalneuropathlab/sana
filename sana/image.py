@@ -12,6 +12,8 @@ from matplotlib import colors
 
 # sana packages
 from sana import geo
+from sana_tiler import Tiler
+
 
 # TODO: check parameter usage
 class Frame:
@@ -22,14 +24,19 @@ class Frame:
     :param slide_threshold: grayscale intensity value to remove background slide data
     :param slide_color: color of slide background to use when needed
     :param padding: amount of padding added to the frame
-    :param filename: path to original file from where this Frame originated
-    :param logger: Logger object
     """
-    def __init__(self, img, level=-1, converter=None, slide_threshold=None, slide_color=None, padding=0, filename="", logger=None):
+    def __init__(self, img, level=-1, converter=None, slide_threshold=None, slide_color=None, padding=0):
 
         # load/store the image array
         if type(img) is str:
-            self.img = np.array(Image.open(img))
+            if img.endswith('.dat.npz'):
+                self.img = load_compressed_array(img)
+            else:
+                im = np.array(Image.open(img))
+                if len(im.shape) == 2:
+                    self.img = im[:,:,None]
+                else:
+                    self.img = im[:,:,:3]
         else:
             self.img = img
 
@@ -43,8 +50,6 @@ class Frame:
         self.slide_threshold = slide_threshold
         self.slide_color = slide_color
         self.padding = padding
-        self.filename = filename
-        self.logger = logger
 
         # TODO:
         self.contours = []
@@ -75,18 +80,27 @@ class Frame:
         Checks if the image has only 1 color channel
         """
         return self.img.shape[2] == 1
+    
+    def is_rgb(self):
+        """
+        Checks if the image has 3 color channels
+        """
+        return self.img.shape[2] == 3
 
     def is_short(self):
         """
         Checks if the image is in floating point values
         """
-        return self.img.dtype != np.uint8
+        return self.img.dtype == np.uint8
 
     def is_binary(self):
         """
         Checks if the image has only 0's and 1's in it
         """
-        return self.is_gray() and self.is_short() and (np.max(self.img) > 1)
+        return self.is_gray() and self.is_short() and (np.max(self.img) <= 1) and (np.min(self.img) >= 0)
+
+    def is_float(self):
+        return self.img.dtype == float
 
     def to_float(self):
         """
@@ -149,13 +163,44 @@ class Frame:
         w, h = self.size()
         (x0, y0) = loc[0], loc[1]
         (x1, y1) = x0+size[0], y0+size[1]
-        print(x0, y0, x1, y1)
         x0 = np.clip(x0, 0, None)
         y0 = np.clip(y0, 0, None)
         x1 = np.clip(x1, None, w)
         y1 = np.clip(y1, None, h)
+
         return self.img[y0:y1, x0:x1, :]
 
+    def set_tile(self, loc, size, tile):
+        self.converter.to_pixels(loc, self.level)
+        self.converter.to_pixels(size, self.level)
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
+        w, h = self.size()
+        (x0, y0) = loc[0], loc[1]
+        (x1, y1) = x0+size[0], y0+size[1]
+        x0 = np.clip(x0, 0, None)
+        y0 = np.clip(y0, 0, None)
+        x1 = np.clip(x1, None, w)
+        y1 = np.clip(y1, None, h)
+
+        self.img[y0:y1, x0:x1, :] = tile
+
+    # TODO: refactor these functions
+    def or_tile(self, loc, size, tile):
+        self.converter.to_pixels(loc, self.level)
+        self.converter.to_pixels(size, self.level)
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
+        w, h = self.size()
+        (x0, y0) = loc[0], loc[1]
+        (x1, y1) = x0+size[0], y0+size[1]
+        x0 = np.clip(x0, 0, None)
+        y0 = np.clip(y0, 0, None)
+        x1 = np.clip(x1, None, w)
+        y1 = np.clip(y1, None, h)
+
+        self.img[y0:y1, x0:x1, :] |= tile
+        
     def crop(self, loc, size):
         """
         Crops the image to the given rectangle
@@ -166,7 +211,8 @@ class Frame:
         """
         Resizes the image array to the specified size
         """
-        size = self.converter.to_pixels(size, self.level, round=True)
+        size = self.converter.to_pixels(size, self.level)
+        size = self.converter.to_int(size)
         w, h = size
         self.img = cv2.resize(self.img, dsize=(w, h), interpolation=interpolation)
         self.check_channels()
@@ -200,12 +246,12 @@ class Frame:
         # TODO: check these params, make them arguments?
         tsize = geo.Point(200, 200, is_micron=True)
         tstep = geo.Point(10, 10, is_micron=True)
-        tiler = Tiler(level, self.converter, tsize, tstep, fpad_mode='constant')
+        tiler = Tiler(level, self.converter, tsize, tstep)
 
         # run the downsampling
         ds_frame = self.copy()
-        ds_frame.resize(ds_size, interpolation=cv2.INTER_CUBIC) # TODO: check interpolation
-        tiler.set_frame(frame_ds)
+        ds_frame.resize(ds_size, interpolation=cv2.INTER_NEAREST) # TODO: check interpolation
+        tiler.set_frame(ds_frame)
 
         # load the tiles
         tiles = tiler.load_tiles()
@@ -225,7 +271,7 @@ class Frame:
 
                 # get the pixels within the value range in the tile
                 tile = tiles[i][j]
-                valid = (data >= min_background) & (data <= max_background)
+                valid = (tile >= min_background) & (tile <= max_background)
 
                 # background is calculated as the sum of valid pixels after applying the gaussian kernel
                 background_value = np.sum((tile * kern)[valid])
@@ -315,23 +361,23 @@ class Frame:
             before = geo.point_like(pad, (0,0))
             after = pad
         self.img = np.pad(self.img, ((before[1], after[1]), # y
-                                     (before[0], after[1]), # x
+                                     (before[0], after[0]), # x
                                      (0, 0),                # c
                                      ), mode=mode)
         
-    def save(self, fname, invert_sform=False, spacing=None):
+    def save(self, fpath, invert_sform=False, spacing=None):
         """
         Writes the image array to a file
         :param fname: filename to write to
         :param invert_sform: see sana.image.save_nifti
         :param spacing: see sana.image.save_nifti
         """
-        if fname.endswith('.nii.gz'):
-            self.save_nifti(fname, invert_sform, spacing)
+        if fpath.endswith('.nii.gz'):
+            self.save_nifti(fpath, invert_sform, spacing)
         else:
             # can't write png's etc as floats, just store the image array
             if self.is_float():
-                np.save(os.path.splitext(fname)[0]+'.npy', self.img)
+                np.save(os.path.splitext(fpath)[0]+'.npy', self.img)
             else:
                 im = self.img
                 if self.is_gray():
@@ -339,9 +385,25 @@ class Frame:
                 if self.is_binary():
                     im *= 255
                 im = Image.fromarray(im)
-                im.save(fname)
+                im.save(fpath)
     
-    def save_nifti(self, fname, invert_sform=False, spacing=None):
+    def save_compressed(self, fpath):
+        """
+        Creates and saves a compressed binary image array
+        """
+        if not self.is_binary():
+            raise ImageTypeException(f'Array must be binary and single-channel -- datatype={self.img.dtype}, shape={self.img.shape}')
+        
+        # get the image as a boolean array
+        img = self.img[:,:,0].astype(bool)
+            
+        # pack the bools into bytes (compresses by 1/8)
+        arr = np.packbits(img, axis=-1, bitorder='little')
+
+        # finally, use numpy's compression algorithm to further compress
+        np.savez_compressed(fpath, arr)
+
+    def save_nifti(self, fpath, invert_sform=False, spacing=None):
         """
         Writes the image array to a nifti form that programs like ITK-SNAP can read
         :param fname: filename to write to
@@ -353,7 +415,7 @@ class Frame:
         
         # get the pixel spacing using the resolution and MPP
         if spacing is None:
-            spacing = [self.converter.ds[self.lvl] * (self.converter.mpp / 1000)] * 2
+            spacing = [self.converter.ds[self.level] * (self.converter.mpp / 1000)] * 2
 
         # manipulate the channels of the image
         pix = np.expand_dims(pix, (2))
@@ -370,7 +432,7 @@ class Frame:
                 [0, -spacing[1], 0, 0],
                 [0, 0, 1, 0],
             ])
-        nib.save(nii, fname)
+        nib.save(nii, fpath)
   
     def mask(self, mask_frame, mask_value=0):
         """
@@ -378,7 +440,9 @@ class Frame:
         :param mask_frame: a binary image frame with the same dimensions
         :param mask_value: value to set the masked data to
         """
-        if self.size() != mask_frame.size():
+        size = self.size()
+        mask_size = mask_frame.size()
+        if size[0] != mask_size[0] or size[1] != mask_size[1]:
             raise DimensionException('Mask image {} has different dimensions than the frame {}'.format(mask_frame.size(), self.size()))
         
         if self.is_rgb() and type(mask_value) is int:
@@ -461,7 +525,7 @@ class Frame:
         if not self.is_binary():
             raise ImageTypeException('Morphology filters can only be applied to binary images')
         kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-        self.img = cv2.morphologyEx(self.img, cv2.MORPH_CLOSE, kern)
+        self.img = cv2.morphologyEx(self.img, cv2.MORPH_CLOSE, kern)[:,:,None]
 
     def opening_filter(self, radius):
         """
@@ -471,7 +535,7 @@ class Frame:
         if not self.is_binary():
             raise ImageTypeException('Morphology filters can only be applied to binary images')
         kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-        self.img = cv2.morphologyEx(self.img, cv2.MORPH_OPEN, kern)
+        self.img = cv2.morphologyEx(self.img, cv2.MORPH_OPEN, kern)[:,:,None]
 
     def get_contours(self, min_body_area=0, min_hole_area=0, max_body_area=np.inf, max_hole_area=np.inf):
         """
@@ -488,9 +552,9 @@ class Frame:
         self.contours = []
         contours, hierarchies = cv2.findContours(self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
         if hierarchies is None:
-            return
+            return [], []
         for c, h in zip(contours, hierarchies[0]):
-            self.contours.append(Contour(c, h, self.lvl, self.converter))
+            self.contours.append(Contour(c, h, self.level, self.converter))
 
         # find the body contours
         for c in self.contours:
@@ -500,8 +564,8 @@ class Frame:
                 continue
 
             # make sure the size matches the criteria
-            area = c.polygon.area()
-            if area > min_body_area and area < max_body_area:
+            area = c.polygon.get_area()
+            if area >= min_body_area and area <= max_body_area:
                 c.body = True
 
         # now find the hole contours
@@ -516,7 +580,7 @@ class Frame:
                 continue
 
             # make sure the size matches the criteria
-            area = c.polygon.area()
+            area = c.polygon.get_area()
             if area > min_body_area and area < max_body_area:
                 c.hole = True
 
@@ -535,9 +599,9 @@ class Contour:
     def __init__(self, contour, hierarchy, level, converter):
 
         # convert the contour array to a Polygon
+        self.level = level
         self.polygon = self.contour_to_polygon(contour)
         self.hierarchy = hierarchy
-        self.level = level
         self.converter = converter
 
         # flags denoting whether or not this contour is a body or a hole
@@ -547,7 +611,7 @@ class Contour:
     def contour_to_polygon(self, contour):
         x = np.array([float(v[0][0]) for v in contour])
         y = np.array([float(v[0][1]) for v in contour])
-        polygon = geo.Polygon(x, y, False, self.lvl)
+        polygon = geo.Polygon(x, y, False, self.level)
         return polygon
 #
 # end of Detection
@@ -558,15 +622,32 @@ def frame_like(frame, img):
     :param frame: frame to emulate
     :param img: image array to store in the new Frame object
     """
-    return Frame(img, frame.lvl, frame.converter,
-                 frame.csf_threshold, frame.slide_color, frame.padding)
+    return Frame(img,
+                 level=frame.level,
+                 converter=frame.converter,
+                 slide_threshold=frame.slide_threshold,
+                 slide_color=frame.slide_color,
+                 padding=frame.padding)
 #
 # end of frame_like
 
-# generates a binary mask based on a list of given Polygons
-#  -polygons: list of polygons to be filled with value y
-#  -size: Point defining the size of the mask initialized with value x
-#  -x, y: vals defining the negative and positive values in the mask
+def create_mask_cv2(polygons, frame):
+    """
+    similar to create_mask(), but uses opencv since PIL was causing some weird issues
+    """
+
+    int_polygons = []
+    for p in polygons:
+        frame.converter.to_pixels(p, frame.level)
+        p = frame.converter.to_int(p).connect()
+        int_polygons.append(p)
+
+    mask_img = np.zeros(frame.img.shape[:2])
+    mask_img = cv2.fillPoly(mask_img, pts=int_polygons, color=1)
+
+    return frame_like(frame, mask_img.astype(np.uint8))
+
+# TODO: PIL is acting weird, merge with cv2 and only use PIL for outline??
 def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1):
     """
     Generates a binary mask from a list of Polygons
@@ -582,17 +663,23 @@ def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewi
     # convert the Polygons to lists of values that PIL can handle
     polys = []
     for p in polygons:
-        frame.converter.to_pixels(p, lvl)
-        p = frame.converter.to_int(p)
+        if not frame.converter is None:
+            frame.converter.to_pixels(p, frame.level)
+            p = frame.converter.to_int(p)
         polys.append([tuple(p[i]) for i in range(p.shape[0])])
+
     hs = []
     for h in holes:
-        frame.converter.to_pixels(h, lvl)
-        h = frame.converter.to_int(h)
+        if not frame.converter is None:
+            frame.converter.to_pixels(h, frame.level)
+            h = frame.converter.to_int(h)
         hs.append([tuple(h[i]) for i in range(h.shape[0])])
-
+    
     # create a blank image
-    size = frame.converter.to_int(frame.size())
+    if not frame.converter is None:
+        size = frame.converter.to_int(frame.size())
+    else:
+        size = frame.size()
     mask = Image.new('L', (size[0], size[1]), x)
     dr = ImageDraw.Draw(mask)  
 
@@ -604,14 +691,15 @@ def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewi
             else:
                 dr.line(poly, fill=y, width=linewidth, joint='curve')
         else:
-            dr.polygon(poly, outline=y, fill=y)
+            #dr.polygon(poly, outline=y, fill=y)
+            dr.polygon(poly, fill=y)            
 
     # draw the hole polygons on the image with the body polygons
     for h in hs:
         dr.polygon(h, outline=x, fill=x)
 
     # create the Frame object
-    return frame_like(np.array(mask)[:, :, None], frame)
+    return frame_like(frame, np.array(mask)[:, :, None])
 #
 # end of create_mask
 
@@ -629,32 +717,36 @@ def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_ro
     :param sub_rois: if given, overlays the Annotations
     :param linewidth: used when plotting the Annotations
     """
-    mask = mask.copy()
-
     # get the RGB color
     if type(color) is str:
-        color = np.array(colors.to_rgb(color))
+        color = 255*np.array(colors.to_rgb(color))
 
-    # exclude non-annotated pixels
-    if not main_roi_mask is None:
-        mask.img[main_roi_mask.img == 0] = 0
-    if len(sub_roi_masks) != 0:
-        full_sub_roi_mask = frame_like(np.zeros_like(mask.img), mask)
-        for sub_roi_mask in sub_roi_masks:
-            full_sub_roi_mask += sub_roi_mask.img
-        mask.img[full_sub_roi_mask == 0] = 0
-
-    # create the overlay image using a weight sum
     overlay = frame.copy()
-    overlay.img[mask.img[:,:,0] != 0] = color
-    overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
+
+    if not mask is None:
+        mask = mask.copy()
+        mask.img = mask.img[:frame.img.shape[0], :frame.img.shape[1]]
+    
+        # exclude non-annotated pixels
+        if not main_roi_mask is None:
+            mask.img[main_roi_mask.img == 0] = 0
+        if len(sub_roi_masks) != 0:
+            full_sub_roi_mask = frame_like(np.zeros_like(mask.img), mask)
+            for sub_roi_mask in sub_roi_masks:
+                full_sub_roi_mask += sub_roi_mask.img
+            mask.img[full_sub_roi_mask == 0] = 0
+
+        # create the overlay image using a weight sum
+        overlay.img[mask.img[:,:,0] != 0] = color
+        overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
 
     # plot the annotations
     if not main_roi is None:
         main_roi_overlay = create_mask([main_roi], frame, outlines_only=True, linewidth=linewidth)
-        overlay.img[main_roi_overlay.img[:,:,0] == 1] = (0,0,0)
-    sub_roi_overlay = create_mask([sub_rois], frame, outlines_only=True, linewidth=linewidth)
-    overlay.img[sub_roi_overlay.img[:,:,0] == 1] = (0,0,0)
+        overlay.img[main_roi_overlay.img[:,:,0] != 0] = color
+    if len(sub_rois) != 0:
+        sub_roi_overlay = create_mask(sub_rois, frame, outlines_only=True, linewidth=linewidth)
+        overlay.img[sub_roi_overlay.img[:,:,0] != 0] = color
 
     return overlay
 
@@ -667,8 +759,8 @@ def gaussian_kernel(length, sigma):
     """
 
     # calculate the 1D gaussian
-    x = np.linspace(-(l-1)/2, (l-1)/2, l)
-    g1 = np.exp(-0.5 * np.square(x) / np.square(sg))
+    x = np.linspace(-(length-1)/2, (length-1)/2, length)
+    g1 = np.exp(-0.5 * np.square(x) / np.square(sigma))
 
     # get the 2D gaussian and normalize
     g2 = np.outer(g1,g1)
@@ -676,6 +768,13 @@ def gaussian_kernel(length, sigma):
 
     return g2
 
+def load_compressed(filename):
+    arr = np.load(filename)
+    arr = arr['arr_0']
+    arr = np.unpackbits(arr, axis=-1, bitorder='little')
+
+    return arr
+        
 # custom exceptions
 class DatatypeException(Exception):
     def __init__(self, message):
