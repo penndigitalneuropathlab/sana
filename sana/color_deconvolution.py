@@ -34,7 +34,7 @@ class StainSeparator:
             ], dtype=np.uint8)[None,:,:]
         
         # find the physical range of each stain in the image
-        stains = self.run(digital_extrema)
+        stains = self.separate(digital_extrema)
         self.min_od = [np.min(stains[:,:,i]) for i in range(3)]
         self.max_od = [np.max(stains[:,:,i]) for i in range(3)]
     #
@@ -64,7 +64,6 @@ class StainSeparator:
         img = np.rint(255 * np.clip(img_norm, 0, 1)).astype(np.uint8)
 
         return img
-
 
     # performs color denconvolution using a rgb image and a inverted stain vector
     def separate(self, img):

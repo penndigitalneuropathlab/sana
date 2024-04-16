@@ -7,7 +7,6 @@ import numpy as np
 import shapely.geometry
 from numba import jit
 
-
 class Converter:
     """
     Unit conversion class which handles conversion between micron and pixel values stored within an Array object (or it's subclasses). Most SANA code will support both microns and pixel units, however usually it will convert to pixels during processing, therefore best practice would be to use pixel units as much as possible
@@ -52,9 +51,14 @@ class Converter:
         if x.is_micron:
             raise UnitException("Cannot rescale data in micron units")
         
+        if x.dtype == int:
+            x = self.to_float(x)
+        
         # rescale the Array
         x *= (self.ds[x.level] / self.ds[level])**x.order
         x.level = level
+
+        return x
 
     def to_microns(self, x):
         """
@@ -66,11 +70,13 @@ class Converter:
             return
         
         # rescale to original pixel resolution
-        self.rescale(x, 0)
+        x = self.rescale(x, 0)
 
         # apply the microns per pixel constant
         x *= (self.mpp)**x.order
         x.is_micron = True
+
+        return x
 
     def to_pixels(self, x, level):
         """
@@ -78,16 +84,20 @@ class Converter:
         $y = \frac{x}{{mpp}^{order}}{\frac{ds_original}{ds_new}}^{order}$
         :param x: sana.geo.Array
         :param level: new pixel resolution level
-        :param round: whether or not to round to integer
         """
 
         # apply the microns per pixel constant
         if x.is_micron:
+            if x.dtype == int:
+                x = self.to_float(x)
+
             x /= (self.mpp)**x.order
             x.is_micron = False
 
         # rescale to new pixel resolution
-        self.rescale(x, level)
+        x = self.rescale(x, level)
+
+        return x
 
 class Array(np.ndarray):
     """
@@ -160,14 +170,14 @@ class Array(np.ndarray):
 
 class Point(Array):
     """
-    (2) shaped np.ndarray object, same process as sana.geo.Array
+    (2,) shaped np.ndarray object, same process as sana.geo.Array
     :param x: x value
     :param y: y value
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=True, level=0, order=1):
+    def __new__(cls, x, y, is_micron=False, level=0, order=1):
         # TODO: need to check validity of x and y, same in Array
         arr = np.array((x, y))
         obj = np.asarray(arr).view(cls)
@@ -371,7 +381,7 @@ class Polygon(Array):
         """
         Gets the bounding box of the centroid
         """
-        c, r = self.centroid()
+        c, r = self.get_centroid()
         loc = point_like(c[0]-r, c[1]-r, self)
         size = point_like(2*r, 2*r, self)
         return loc, size
@@ -472,7 +482,7 @@ class Polygon(Array):
             x, y = self.connect().get_xy()
         else:
             x, y = self.get_xy()
-        return Annotation(x=x, y=y, geo=None, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order)
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order)
 
 class Curve(Array):
     """
@@ -502,6 +512,7 @@ class Curve(Array):
         
         x, y = self.get_xy()
         n = self.shape[0]
+
         ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
         ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
         m = ss_xy/ss_xx
@@ -519,8 +530,8 @@ class Curve(Array):
             return self.angle
         if not hasattr(self, 'slope'):
             self.linear_regression()
-        a = Point(self[0,0], self.slope*self[0,0] + self.intercept, False, self.level)
-        b = Point(self[-1,0], self.slope*self[-1,0] + self.intercept, False, self.level)
+
+        self.slope = (self[-1,1] - self[0,1]) / (self[-1,0] - self[0,0])
 
         # calculate the angle of rotation in degrees
         angle = np.rad2deg(np.arctan(self.slope))
@@ -601,7 +612,7 @@ class Annotation(Array):
                 "coordinates": verts,
             },
             "properties": {
-                "name": self.name,
+                "name": self.annotation_name,
                 "objectType": "annotation",
                 "classification": {
                     "name": self.class_name,
@@ -696,6 +707,41 @@ def rectangle_like(loc, size, obj):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
     return polygon_like(x, y, obj)
+
+
+
+def transform_array_with_logger(x, logger, inverse=False):
+    if inverse:
+        return inverse_transform_array(x, logger.data.get('loc'), logger.data.get('M'), logger.data.get('crop_loc'))
+    else:
+        return transform_array(x, logger.data.get('loc'), logger.data.get('M'), logger.data.get('crop_loc'))
+    
+# performs a series a translations and rotations to transform a polygon
+#  to the coordinate system of a processed Frame
+def transform_array(x, loc, M, crop_loc):
+    if not loc is None:
+        x.translate(loc)
+    if not M is None:
+        x.transform(M)
+    if not crop_loc is None:
+        x.translate(crop_loc)
+    return x
+#
+# end of transform_array
+
+# performs the inverse translations and rotations to return a polygon
+#  to the original coordinate system
+def inverse_transform_array(x, loc, M, crop_loc):
+    if not crop_loc is None:
+        x.translate(-crop_loc)
+    if not M is None:
+        x.transform_inv(M)
+    if not loc is None:
+        x.translate(-loc)
+
+    return x
+#
+# end of transform_inv_poly
 
 class UnitException(Exception):
     def __init__(self, message):
