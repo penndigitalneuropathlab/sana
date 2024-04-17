@@ -240,8 +240,8 @@ class Loader(openslide.OpenSlide):
         :param c2: geo.Curve that is semi-parallel to c1
         :param padding: amount of padding to apply to the Frame
         """
-        c1 = c1.copy()
-        c2 = c2.copy()
+        c1 = c1.to_curve()
+        c2 = c2.to_curve()
 
         # get the center of the 2 curves
         roi = geo.get_polygon_from_curves(c1, c2)

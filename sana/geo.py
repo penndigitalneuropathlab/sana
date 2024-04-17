@@ -484,6 +484,13 @@ class Polygon(Array):
             x, y = self.get_xy()
         return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order)
 
+    def to_polygon(self):
+        """
+        Convenience function which returns a copy of the connected polygon
+        """
+        self = self.connect()
+        return polygon_like(self[:,0], self[:,1], self)
+
 class Curve(Array):
     """
     (n,2) shaped Array object, which usually is used for segmented boundaries in the tissue

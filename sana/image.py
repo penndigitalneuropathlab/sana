@@ -30,7 +30,7 @@ class Frame:
         # load/store the image array
         if type(img) is str:
             if img.endswith('.dat.npz'):
-                self.img = load_compressed_array(img)
+                self.img = load_compressed(img)
             else:
                 im = np.array(Image.open(img))
                 if len(im.shape) == 2:

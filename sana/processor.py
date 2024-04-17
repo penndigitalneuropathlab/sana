@@ -21,18 +21,12 @@ class Processor:
     :param frame: sana.image.Frame object to process
     :param qupath_threshold: manually selected threshold defined in qupath
     :param stain_vector: manually selected stain vector to be used during color deconvolution
-    :param run_signals: whether or not to run the heatmap analysis, note that this is only implemented for GM Segmentations, and other ROIs will yield unexpected results
-    :param run_wildcat: whether or not to run the pre-trained wildcat model on this frame, if the model exists
-    :param run_objects: whether or not to run the object detection algorithm
     """
-    def __init__(self, logger, frame, roi_type="", qupath_threshold=None, stain_vector=None, run_signals=False, run_wildcat=False, run_objects=False):
+    def __init__(self, logger, frame, qupath_threshold=None, stain_vector=None):
         self.logger = logger
         self.frame = frame
         self.qupath_threshold = qupath_threshold
         self.stain_vector = stain_vector
-        self.run_signals = run_signals
-        self.run_wildcat = run_wildcat
-        self.run_objects = run_objects
 
         # TODO: qupath threshold and stain vector are unimplemented!
 
@@ -270,12 +264,8 @@ class DABProcessor(Processor):
         self.logger.data['sub_areas'] = sub_areas
         self.logger.data['sub_aos'] = sub_aos
 
-        if self.run_signals:
-            signals = self.calculate_heatmap(self.pos_dab)
-
-
-
-
+        if self.logger.generate_plots:
+            plt.show()
 
 class HematoxylinProcessor(Processor):
     """
