@@ -4,6 +4,7 @@ import math
 
 # installed packages
 import numpy as np
+from scipy.spatial import ConvexHull
 import shapely.geometry
 from numba import jit
 
@@ -749,6 +750,77 @@ def inverse_transform_array(x, loc, M, crop_loc):
     return x
 #
 # end of transform_inv_poly
+
+ # this function converts shapely.Polygon's and shapely.MultiPolygon's to sana_geo.Polygon's
+# NOTE: Multi -> Poly takes the portion of the Multi w/ the largest area
+# TODO: EDIT this!
+def from_shapely(p, is_micron=False, lvl=0, order=1):
+    if type(p) is MultiPolygon:
+        areas = [geom.area for geom in p.geoms]
+        return from_shapely(p.geoms[np.argmax(areas)])
+    else:
+        xs, ys = p.exterior.xy
+        return Polygon(xs, ys, is_micron, lvl, order)
+#
+# end of from_shapely
+
+# removes self-intersecting points and returns a new Polygon
+# NOTE: supports sana_geo.Polygon or shapely.Polygon
+# NOTE: sometimes this creates a MultiPolygon, sana_geo only supports Polygons,
+#       in this case we use the largest section of the MultiPolygon
+# TODO: rewrite this!
+def fix_polygon(p):
+    was_sana_poly = type(p) is Polygon
+    if was_sana_poly:
+        is_micron, lvl, order = p.is_micron, p.lvl, p.order
+        p = p.to_shapely()
+
+    if not p.is_valid:
+        p = p.buffer(0) # NOTE: this could still end up invalid... add an exception?
+    else:
+        pass
+
+    if was_sana_poly:
+        p = from_shapely(p, is_micron, lvl, order)
+        
+    return p
+#
+# end of fix_polygon
+
+def get_overlap(x, y):
+    orig_x = x
+    
+    x = x.copy().to_shapely()
+    y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
+    i = x.intersection(y)
+    if i.is_empty:
+        return None
+    else:
+        return from_shapely(i, orig_x.is_micron, orig_x.lvl, orig_x.order)
+
+# calculates the IOU score of 2 Polygons
+# NOTE: this uses Shapely, converts to shapely objects for easy calculations
+# TODO: rewrite all the IOU functions
+def get_iou(x, y):
+    # print('entered get_iou')
+    x = x.copy().to_shapely()
+    y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
+    i = x.intersection(y).area
+    u = x.union(y).area 
+    # print('i:',i)
+    # print('u:',u)
+    return i/u
+#
+# end of iou
+
 
 class UnitException(Exception):
     def __init__(self, message):

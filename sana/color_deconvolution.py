@@ -159,9 +159,10 @@ class StainVector:
             'HE': ['HEM', 'EOS', 'RES'],
             'HED': ['HEM', 'EOS', 'DAB'],
             'H-DAB': ['HEM', 'DAB', 'RES'],
+            'CV-DAB': ['CV', 'DAB', 'RES'],
         }
         if not self.staining_code in self.available_stains:
-            raise StainNotImplementedError(self.stain)
+            raise StainNotImplementedError(self.staining_code)
         self.stains = self.available_stains[self.staining_code]
 
         if not stain_vector is None:
@@ -195,6 +196,12 @@ class StainVector:
                 self.v = np.array([
                     [0.67, 0.73, 0.13],
                     [0.92, 0.38, 0.06],
+                    [0.00, 0.00, 0.00],
+                ])
+            elif self.staining_code == 'CV-DAB':
+                self.v = np.array([
+                    [0.57, 0.79, 0.22],
+                    [0.48, 0.57, 0.67],
                     [0.00, 0.00, 0.00],
                 ])
         

@@ -2,8 +2,10 @@
 # installed modules
 import numpy as np
 from matplotlib import pyplot as plt
+import tqdm
 
 # sana modules
+import sana.image
 from sana.geo import Point, Polygon
 from sana_tiler import Tiler
 
@@ -16,12 +18,13 @@ class Convolver:
     :param tstep: (y,x) amount to step across the image during convolution
     :param objs: list of sana.geo.Polygon instances that were detected within the input frame
     """
-    def __init__(self, logger, frame, tsize, tstep, objs=[]):
+    def __init__(self, logger, frame, tsize, tstep, mask=None, objs=[]):
 
         self.logger = logger
         self.frame = frame
         self.tsize = tsize
         self.tstep = tstep
+        self.mask = mask
         self.objs = objs
 
         # create the tiles
@@ -47,7 +50,7 @@ class Convolver:
                 out[i, :, :] = func
 
         # start the convolution
-        for j in range(self.tiles.shape[1]):
+        for j in tqdm.tqdm(range(self.tiles.shape[1])):
             for i in range(self.tiles.shape[0]):
                 
                 # TODO: debug message?
@@ -61,28 +64,49 @@ class Convolver:
                 # center align the tile
                 loc -= size // 2
 
-                # build the tile polygon, clipping to the image boundaries
-                x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
-                y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
-                x = np.clip(x, 0, self.frame.img.shape[1])
-                y = np.clip(y, 0, self.frame.img.shape[0])
-                tile = Polygon(x, y, is_micron=False, level=self.frame.level)
-                self.tile_area = tile.get_area() # TODO: calculate this in microns!!!
-
+                # build the tile polygon
+                if self.mask is None:
+                    x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0]]
+                    y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1]]
+                    x = np.clip(x, 0, self.frame.img.shape[1])
+                    y = np.clip(y, 0, self.frame.img.shape[0])
+                    tile = Polygon(x, y, is_micron=False, level=self.frame.level)
+                    self.tile_area = tile.get_area() # TODO: calculate this in microns!!!
+                
+                else:
+                    tile_mask = sana.image.frame_like(self.mask, self.mask.get_tile(loc, size, pad=True))
+                    c, h = tile_mask.get_contours()
+                    if len(c) != 0:
+                        tile = c[0].polygon.connect()
+                        tile.translate(-loc)
+                        self.tile_area = tile.get_area()
+                    else:
+                        tile = None
+                        self.tile_area = 0
+                                        
                 # find the objects that are inside this polygon
-                curr_inds = (
-                    (self.obj_ctrs[:,0] > x[0]) & # left bound
-                    (self.obj_ctrs[:,0] < x[1]) & # right bound
-                    (self.obj_ctrs[:,1] > y[0]) & # upper bound
-                    (self.obj_ctrs[:,1] < y[2])   # lower bound
-                )
-
-                # apply each function to the tile and the objects within the tile
-                for n, func in enumerate(funcs):
-                    if callable(func): # TODO: necessary??
-                        out[n][i][j] = func(self.tiles[i][j], curr_inds)
+                curr_inds = np.zeros(self.obj_ctrs.shape[0])
+                if not tile is None:
+                    for obj_idx in range(self.obj_ctrs.shape[0]):
+                        curr_inds[obj_idx] = sana.geo.ray_tracing(
+                            self.obj_ctrs[obj_idx,0],
+                            self.obj_ctrs[obj_idx,1],
+                            np.array(tile),
+                        )
+                    
+                    # apply each function to the tile and the objects within the tile
+                    tile_img = self.tiles[i][j]
+                    if not self.mask is None:
+                        tile_img[tile_mask.img[:,:,0] == 0] = 0            
+                    
+                    for n, func in enumerate(funcs):
+                        if callable(func):
+                            out[n][i][j] = func(tile_img, curr_inds)
         return out
 
+    def ao_feature(self, img, inds):
+        return np.sum(img) / self.tile_area
+    
     def density_feature(self, img, inds):
         return np.sum(inds) / self.tile_area
     
@@ -93,14 +117,14 @@ class Convolver:
             return 0
         
         # calculate the areas of the objects within the tile
-        areas = np.array([self.objs[i].get_area() for i in range(len(inds)) if inds[i] == 1])
+        areas = np.array([self.objs[i].get_area() for i in np.where(inds == 1)[0]])
 
         # only calculate the mean area of objects within a range
         # TODO: only upper cutoff?
         mu, sg = np.mean(areas), np.std(areas)
-        sigma = 0.3
+        sigma = 0.8
         cut_off = sigma * 2 # TODO: test this!
-        # areas = areas[(areas > mu - cut_off) & (areas < mu + cut_off)]
+        #areas = areas[(areas > mu - cut_off) & (areas < mu + cut_off)]
         if len(areas) == 0:
             return 0
 

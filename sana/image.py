@@ -29,7 +29,7 @@ class Frame:
 
         # load/store the image array
         if type(img) is str:
-            if img.endswith('.dat.npz'):
+            if img.endswith('.npz'):
                 self.img = load_compressed(img)
             else:
                 im = np.array(Image.open(img))
@@ -150,7 +150,7 @@ class Frame:
             histogram[:,i] = np.histogram(self.img[:,:,i], bins=256, range=(0,256))[0]
         return histogram
 
-    def get_tile(self, loc, size):
+    def get_tile(self, loc, size, pad=False):
         """
         Gets a cropped rectangular tile from the frame
         :param loc: top left of rectangle
@@ -163,12 +163,33 @@ class Frame:
         w, h = self.size()
         (x0, y0) = loc[0], loc[1]
         (x1, y1) = x0+size[0], y0+size[1]
+
+        pad_x0, pad_y0, pad_x1, pad_y1 = 0, 0, 0, 0
+        if x0 < 0:
+            pad_x0 = -x0
+        if y0 < 0:
+            pad_y0 = -y0
+        if x1 >= w:
+            pad_x1 = w-x1
+        if y1 >= h:
+            pad_y1 = h-y1
+        
         x0 = np.clip(x0, 0, None)
         y0 = np.clip(y0, 0, None)
         x1 = np.clip(x1, None, w)
         y1 = np.clip(y1, None, h)
+            
+        img = self.img[y0:y1, x0:x1, :]
+        if pad:
 
-        return self.img[y0:y1, x0:x1, :]
+            img = np.pad(img, [
+                [pad_y0, pad_y1],
+                [pad_x0, pad_x1],
+                [0,0],
+            ])
+        return img
+
+            
 
     def set_tile(self, loc, size, tile):
         self.converter.to_pixels(loc, self.level)
@@ -217,6 +238,11 @@ class Frame:
         self.img = cv2.resize(self.img, dsize=(w, h), interpolation=interpolation)
         self.check_channels()
 
+    def apply_morphology_filter(self, filter):
+        if not self.is_binary():
+            raise ImageTypeException("Cannot apply morphology filter to non-binary image")
+        self.img = filter.apply(self.img)[:,:,None]
+
     # TODO: maybe look at histogram to auto-set the min/max values?
     def remove_background(self, min_background=1, max_background=255, debug=False):
         """
@@ -244,6 +270,7 @@ class Frame:
 
         # we will tile the image during the convolution with the gaussian kernel
         # TODO: check these params, make them arguments?
+
         tsize = geo.Point(200, 200, is_micron=True)
         tstep = geo.Point(10, 10, is_micron=True)
         tiler = Tiler(level, self.converter, tsize, tstep)
@@ -719,8 +746,7 @@ def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_ro
     """
     # get the RGB color
     if type(color) is str:
-        color = 255*np.array(colors.to_rgb(color))
-
+        color = np.rint(255*np.array(colors.to_rgb(color))).astype(np.uint8)
     overlay = frame.copy()
 
     if not mask is None:
@@ -748,6 +774,8 @@ def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_ro
         sub_roi_overlay = create_mask(sub_rois, frame, outlines_only=True, linewidth=linewidth)
         overlay.img[sub_roi_overlay.img[:,:,0] != 0] = color
 
+    overlay.to_short()
+        
     return overlay
 
 def gaussian_kernel(length, sigma):
