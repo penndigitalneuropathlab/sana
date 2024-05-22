@@ -418,14 +418,18 @@ class Frame:
         """
         Creates and saves a compressed binary image array
         """
-        if not self.is_binary():
-            raise ImageTypeException(f'Array must be binary and single-channel -- datatype={self.img.dtype}, shape={self.img.shape}')
+        if (not self.is_short()) or (not self.is_gray()):
+            raise ImageTypeException(f'Array must be short and grayscale -- datatype={self.img.dtype}, shape={self.img.shape}')
         
-        # get the image as a boolean array
-        img = self.img[:,:,0].astype(bool)
-            
-        # pack the bools into bytes (compresses by 1/8)
-        arr = np.packbits(img, axis=-1, bitorder='little')
+        if self.is_binary():
+
+            # get the image as a boolean array
+            img = self.img[:,:,0].astype(bool)
+                
+            # pack the bools into bytes (compresses by 1/8)
+            arr = np.packbits(img, axis=-1, bitorder='little')
+        else:
+            arr = self.img[:,:,0]
 
         # finally, use numpy's compression algorithm to further compress
         np.savez_compressed(fpath, arr)

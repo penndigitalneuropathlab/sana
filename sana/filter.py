@@ -89,6 +89,10 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
     D = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (n,n))
     D[r,r] = 0
 
+    if debug:
+        fig, axs = plt.subplots(1,1+2*n_iterations, sharex=True, sharey=True)
+        axs[0].imshow(frame.img)
+
     # perform the N iterations of the filter
     for i in range(n_iterations):
 
@@ -103,13 +107,10 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
 
         centers = np.where(img == 1)
         if debug:
-            fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
-            axs[0].imshow(frame.img)
-            axs[1].imshow(img_blur)
-            axs[2].imshow(img)
-            axs[2].plot(centers[1], centers[0], 'x', color='red')
-            axs[1].set_title('iteration=%d' % i)
-            plt.show()
+            axs[1+2*i].imshow(img_blur)
+            axs[1+2*i].set_title('iteration=%d' % i)
+            axs[1+2*i+1].imshow(img)
+            axs[1+2*i+1].plot(centers[1], centers[0], 'x', color='red')
     #
     # end of iterations
 

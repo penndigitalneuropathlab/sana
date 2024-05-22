@@ -5,7 +5,8 @@ from matplotlib import pyplot as plt
 import cv2
 from tqdm import tqdm
 from copy import copy
-from multiprocessing import Manager, Process
+import multiprocessing as mp
+from pathos.multiprocessing import ProcessPool
 
 # sana modules
 from sana.image import ImageTypeException, create_mask, frame_like, Frame
@@ -214,47 +215,34 @@ class Processor:
 
         # convert the marker image to polygons
         njobs = 8
-        somas = self.markers_to_cells(markers, njobs)
+        somas = self.markers_to_polygons(markers, njobs)
 
         return somas
 
-    def markers_to_objects(self, markers, njobs):
+    def markers_to_polygons(self, markers, njobs):
         
         # get the the height of each section of the frame to split into
         step = int(self.frame.size()[1]/njobs)
         args_list = []
+
+        # TODO: this needs to be windowed to avoid boundary issues
         for n in range(njobs):
             st = n*step
             en = st+step
-            args_list.append(
-                {
-                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
-                    'level': self.frame.level,
-                    'converter': copy(self.frame.converter),
-                    'st': st,
-                    'en': en,
-                }
-            )
-        manager = Manager()
-        ret = manager.dict()
-        jobs = []
-        for pid in range(njobs):
-            # TODO: use the other process object
-            p = Process(target=run_segment_markers,
-                        args=(pid, ret, args_list[pid]))
-            jobs.append(p)
-        [p.start() for p in jobs]
-        [p.join() for p in jobs]
+            args_list.append({
+                'markers': markers[st:en, :],
+                'st': st,
+                'en': en,
+            })
+        pool = mp.Pool(njobs)
+        polygons = pool.map(run_segment_markers, args_list)
+        polygons = [poly for polys in polygons for poly in polys]
+        for p in polygons:
+            p.is_micron = False
+            p.level = self.frame.level
+            p.order = 1
 
-        objs = []
-        for pid in ret:
-            objs += ret[pid]
-        objs = [x for x in objs if not x is None]
-
-        return objs
-    #
-    # end of markers_to_cells
-
+        return polygons
 
 class HDABProcessor(Processor):
     """
@@ -334,6 +322,9 @@ class HDABProcessor(Processor):
             **kwargs):
         super().run(**kwargs)
 
+        # list of processed images to return
+        ret = []
+
         # get the threshold for the DAB
         hist = self.dab.get_histogram()
         threshold = max_dev(hist, scale=max_dev_scaler, mx=max_dev_endpoint, debug=self.logger.generate_plots)
@@ -341,419 +332,45 @@ class HDABProcessor(Processor):
         # perform pixel classification by thresholding and morphology filters
         self.pos_dab = self.dab.copy()
         self.classify_pixels(self.pos_dab, threshold, mask=self.main_mask, morphology_filters=morphology_filters)
-
-        # run the AO quantitation of the positive DAB
-        # TODO: should this be measurement+'ao'???
-        main_ao, main_area, sub_aos, sub_areas = self.calculate_ao(self.pos_dab)
-        self.logger.data['area'] = main_area
-        self.logger.data['ao'] = main_ao
-        self.logger.data['sub_areas'] = sub_areas
-        self.logger.data['sub_aos'] = sub_aos
-
-        if run_soma_detection:
-            somas = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
-
-            # TODO: segment objects based on somas
-
-            # TODO: mask pos_dab by soma mask
+        ret.append(['pos_dab', self.pos_dab])
 
         # run the structure tensor analysis to find the orientation of the DAB
         if run_sta:
             # TODO: this can save the V/H/D sta data
             pass
 
+        if run_soma_detection:
+            self.somas = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
+
+            # get the pixel classifications for the soma detections
+            self.soma_mask = sana.image.create_mask_cv2(self.somas, self.frame)
+            ret.append(['soma_mask', self.soma_mask])
+
+            # TODO: segment objects based on somas
+
+            # TODO: mask pos_dab by soma mask
+
         # run the specified wildcat model
         if run_model:
             # TODO: these functions will store PYR/GRAN/Tangle specific AOs
             pass
 
-class HematoxylinProcessor(Processor):
-    """
-    Subclass of Processor which handles the hematoxylin stain, providing functions to detect cells in the hematoxylin.
-    """
-    def __init__(self, logger, frame, **kwargs):
-        super(HematoxylinProcessor, self).__init__(logger, frame, **kwargs)
-        if self.logger.generate_plots:
-            fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
-            ax = axs[0][0]
-            ax.imshow(self.frame.img)
-            ax.set_title('Original Frame')
+        # return all of the processed images
+        return ret
 
-        # get the HEM image
-        self.ss = StainSeparator('H-DAB', self.stain_vector)
-        self.stains = self.ss.separate(self.frame.img)
-        self.hem = frame_like(self.frame, self.stains[:,:,0])
-        self.dab = frame_like(self.frame, self.stains[:,:,1])
-        if self.logger.generate_plots:
-            ax = axs[0][1]
-            ax.imshow(self.hem.img)
-            ax.set_title('Hematoxylin (OD)')
-
-        # TODO: clip low DAB by some value to avoid deleting faint neurons. Really we just want to remove the super dark DAB (i.e. pial surface or strong inclusions that aren't actually cells)
-        self.hem.img -= self.dab.img
-        if self.logger.generate_plots:
-            ax = axs[1][0]
-            ax.imshow(self.hem.img)
-            ax.set_title('HEM w/ DAB subtracted (OD)')
-
-        # rescale the OD HEM image to uint8
-        # NOTE: using the digital min/max heavily compresses the range, setting a constant for now should be good enough
-        self.hem.rescale(0.0, 1.0)
-        # self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
-        if self.logger.generate_plots:
-            ax = axs[1][1]
-            ax.imshow(self.hem.img, cmap='gray')
-            ax.set_title('Hematoxylin (Rescaled)')
-            hist = self.hem.get_histogram()
-
-        # smooth the interiors of the cells
-        # NOTE: this helps when we represent cells as disks
-        self.hem.anisodiff()
-
-        # self.disk_radius = 5 # anything smaller and we detect everything
-        # self.sigma = 5 # further smoothing
-        # self.closing_radius = 5 # set this higher for dendrites in NeuN
-        # self.opening_radius = 7
-        # self.cleaning_radius = 11 # removes things like vessels
-
-        self.disk_radius = 5 # anything smaller and we detect everything
-        self.sigma = 5 # further smoothing
-        self.closing_radius = 7 # set this higher for dendrites in NeuN
-        self.opening_radius = 0
-        self.cleaning_radius = 0 # removes things like vessels
-
-        # TODO: this is bad! need to implement csf threshold detection from thumbnail, then convert that to HEM space
-        csf_threshold = 10
-
-        # calculate the histogram, and remove CSF data
-        hist = self.hem.get_histogram()
-        hist[:csf_threshold] = 0
-
-        # TODO: analyze these params!
-        scale = 1.0
-        mx = 100
-        # TODO: rewrite this!
-        self.threshold = max_dev(hist, scale=scale, mx=mx, debug=self.logger.generate_plots)
-
-    def segment_cells(self):
-
-        # apply threshold and filter out most of the data to find large circular objects
-        object_pixels = self.hem.copy()
-        self.classify_pixels(object_pixels, self.threshold, None, closing_radius=self.closing_radius, opening_radius=self.opening_radius)
-
-        # find parts of circular objects that are far away from background pixels
-        img_dist = cv2.distanceTransform(object_pixels.img, cv2.DIST_L2, 3)
-
-        img_minmax = minmax_filter(img_dist, self.disk_radius, self.sigma, 1)
-
-        candidates = np.where(img_minmax == -1)
-        r0 = 3
-        sure_fg = np.zeros_like(self.frame.img, dtype=np.uint8)
-        for i in range(len(candidates[0])):
-            sure_fg = cv2.circle(
-                sure_fg, 
-                (candidates[1][i], candidates[0][i]), 
-                r0, color=255, thickness=-1)
-
-        cell_pixels = self.hem.copy()
-        self.classify_pixels(cell_pixels, self.threshold, None, closing_radius=self.closing_radius, opening_radius=self.opening_radius)
-
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9,9))
-        sure_bg = cv2.dilate(cell_pixels.img, kern, iterations=3)
-
-        unknown_pixels = cv2.subtract(sure_bg, sure_fg[:,:,0])
-
-        ret, markers = cv2.connectedComponents(sure_fg[:,:,0])
-        markers += 1
-        markers[unknown_pixels == 1] = 0
-        hem_rgb = np.concatenate([self.hem.img, self.hem.img, self.hem.img], axis=-1) # TODO: hem or orig
-        markers = cv2.watershed(hem_rgb, markers)
-        markers[markers <= 1] = 0
-
-        njobs = 8
-        cells = self.markers_to_cells(markers, njobs)
-
-        # return cells
-
-        rgb_markers = np.zeros_like(self.frame.img)
-        colors = [(np.random.randint(10, 255),
-                    np.random.randint(10, 255),
-                    np.random.randint(10, 255)) \
-                    for _ in range(1,np.max(markers))]
-        colors = [(0,0,0)] + colors + [(80,80,80)]
-        for j in tqdm(range(rgb_markers.shape[0])):
-            for i in range(rgb_markers.shape[1]):
-                rgb_markers[j,i] = colors[markers[j,i]]
-
-        fig, axs = plt.subplots(2,4, sharex=True, sharey=True)
-        axs = axs.ravel()
-        axs[0].imshow(self.frame.img)
-        axs[0].set_title('Original Frame')
-        axs[1].matshow(object_pixels.img, cmap='gray')
-        axs[1].set_title('Proc. Stain for Objs only')
-        axs[2].imshow(img_dist, cmap='gray')
-        axs[2].set_title('Distance Transform')
-        axs[3].matshow(cell_pixels.img, cmap='gray')
-        axs[3].set_title('Proc. Stain for All Cells Parts')
-        axs[4].imshow(self.hem.img)
-        axs[4].set_title('Original Stain')
-        axs[5].matshow(unknown_pixels, cmap='gray')
-        axs[5].set_title('Unknown Pixel Data')                        
-        axs[6].imshow(img_minmax, cmap='gray')
-        axs[6].set_title('Min-Max Filtered Dist. Transform')
-        axs[6].plot(candidates[1], candidates[0], 'x', color='red')
-        axs[7].matshow(rgb_markers)
-        axs[7].set_title('Instance Segmented Cells')
-        fig.tight_layout()
-
-        return cells
-
-    def markers_to_cells(self, markers, njobs):
-        
-        # get the the height of each section of the frame to split into
-        step = int(self.frame.size()[1]/njobs)
-        args_list = []
-        for n in range(njobs):
-            st = n*step
-            en = st+step
-            args_list.append(
-                {
-                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
-                    'level': self.frame.level,
-                    'converter': copy(self.frame.converter),
-                    'st': st,
-                    'en': en,
-                }
-            )
-        manager = Manager()
-        ret = manager.dict()
-        jobs = []
-        for pid in range(njobs):
-            p = Process(target=run_segment_markers,
-                        args=(pid, ret, args_list[pid]))
-            jobs.append(p)
-        [p.start() for p in jobs]
-        [p.join() for p in jobs]
-
-        cells = []
-        for pid in ret:
-            cells += ret[pid]
-        cells = [x for x in cells if not x is None]
-
-        # TODO: this is related to the issue in sana_process where pickling loses these attributes
-        for cell in cells:
-            cell.is_micron = False
-            cell.level = self.frame.level
-            cell.order = 1
-         
-        return cells
-    #
-    # end of markers_to_cells
-
-class CVProcessor(Processor):
-    """
-    Subclass of Processor which handles the hematoxylin stain, providing functions to detect cells.
-    """
-    def __init__(self, logger, frame, **kwargs):
-        super(CVProcessor, self).__init__(logger, frame, **kwargs)
-        if self.logger.generate_plots:
-            fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
-            ax = axs[0][0]
-            ax.imshow(self.frame.img)
-            ax.set_title('Original Frame')
-
-        self.original_frame = self.frame.copy()
-        
-        # get the image
-        if self.original_frame.img.shape[2] == 3:
-            self.ss = StainSeparator('CV-DAB', self.stain_vector)
-            self.stains = self.ss.separate(self.frame.img)
-            self.cv = frame_like(self.frame, self.stains[:,:,0])
-            self.dab = frame_like(self.frame, self.stains[:,:,1])
-            if self.logger.generate_plots:
-                ax = axs[0][1]
-                ax.imshow(self.cv.img, cmap='gray')
-
-            # rescale the OD image to uint8
-            # NOTE: using the digital min/max heavily compresses the range, setting a constant for now should be good enough
-            self.cv.rescale(0.0, 1.0)
-            # self.hem.rescale(self.ss.min_od[0], self.ss.max_od[0])
-            if self.logger.generate_plots:
-                ax = axs[1][0]
-                ax.imshow(self.cv.img, cmap='gray')
-        else:
-            self.cv = self.original_frame.copy()    
-
-        # smooth the interiors of the cells
-        # NOTE: this helps when we represent cells as disks
-        self.cv.anisodiff()
-
-        self.cv.remove_background()
-        if self.logger.generate_plots:
-            ax = axs[1][1]
-            ax.imshow(self.cv.img, cmap='gray')
-        
-        # self.disk_radius = 5 # anything smaller and we detect everything
-        # self.sigma = 5 # further smoothing
-        # self.closing_radius = 5 # set this higher for dendrites in NeuN
-        # self.opening_radius = 7
-        # self.cleaning_radius = 11 # removes things like vessels
-
-        self.disk_radius = 7 # anything smaller and we detect everything
-        self.sigma = 9 # further smoothing
-        self.closing_radius = 9 # set this higher for dendrites in NeuN
-        self.opening_radius = 5
-        self.cleaning_radius = 0 # removes things like vessels
-
-        # TODO: this is bad! need to implement csf threshold detection from thumbnail, then convert that to HEM space
-        csf_threshold = 10
-
-        # calculate the histogram, and remove CSF data
-        hist = self.cv.get_histogram()
-        hist[:csf_threshold] = 0
-
-        # TODO: analyze these params!
-        scale = 1.0
-        mx = 255
-        # TODO: rewrite this!
-        self.threshold = max_dev(hist, scale=scale, mx=mx, debug=self.logger.generate_plots)
-
-    def segment_cells(self):
-
-        # apply threshold and filter out most of the data to find large circular objects
-        object_pixels = self.cv.copy()
-        self.classify_pixels(object_pixels, self.threshold, None, closing_radius=self.closing_radius, opening_radius=self.opening_radius)
-
-        # find parts of circular objects that are far away from background pixels
-        img_dist = cv2.distanceTransform(object_pixels.img, cv2.DIST_L2, 3)
-
-        img_minmax = minmax_filter(img_dist, self.disk_radius, self.sigma, 1)
-
-        candidates = np.where(img_minmax == -1)
-        r0 = 3
-        sure_fg = np.zeros_like(self.frame.img, dtype=np.uint8)
-        for i in range(len(candidates[0])):
-            sure_fg = cv2.circle(
-                sure_fg, 
-                (candidates[1][i], candidates[0][i]), 
-                r0, color=255, thickness=-1)
-
-        cell_pixels = self.cv.copy()
-        self.classify_pixels(cell_pixels, self.threshold, None, closing_radius=self.closing_radius, opening_radius=self.opening_radius)
-
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9,9))
-        sure_bg = cv2.dilate(cell_pixels.img, kern, iterations=3)
-
-        unknown_pixels = cv2.subtract(sure_bg, sure_fg[:,:,0])
-
-        ret, markers = cv2.connectedComponents(sure_fg[:,:,0])
-        markers += 1
-        markers[unknown_pixels == 1] = 0
-        cv_rgb = np.concatenate([cell_pixels.img, cell_pixels.img, cell_pixels.img], axis=-1) # TODO: cv or orig
-        #cv_rgb = self.original_frame.img
-        markers = cv2.watershed(cv_rgb, markers)
-        markers[markers <= 1] = 0
-
-        njobs = 8
-        cells = self.markers_to_cells(markers, njobs)
-
-        # return cells
-
-        rgb_markers = np.zeros((self.frame.img.shape[0], self.frame.img.shape[1], 3))
-        colors = [(np.random.randint(10, 255),
-                    np.random.randint(10, 255),
-                    np.random.randint(10, 255)) \
-                    for _ in range(1,np.max(markers))]
-        colors = [(0,0,0)] + colors + [(80,80,80)]
-        for j in tqdm(range(rgb_markers.shape[0])):
-            for i in range(rgb_markers.shape[1]):
-                rgb_markers[j,i] = colors[markers[j,i]]
-
-        if self.logger.generate_plots:
-            fig, axs = plt.subplots(2,4, sharex=True, sharey=True)
-            axs = axs.ravel()
-            axs[0].imshow(self.frame.img)
-            axs[0].set_title('Original Frame')
-            axs[1].matshow(object_pixels.img, cmap='gray')
-            axs[1].set_title('Proc. Stain for Objs only')
-            axs[2].imshow(img_dist, cmap='gray')
-            axs[2].set_title('Distance Transform')
-            axs[3].matshow(cell_pixels.img, cmap='gray')
-            axs[3].set_title('Proc. Stain for All Cells Parts')
-            axs[4].imshow(self.cv.img)
-            axs[4].set_title('Original Stain')
-            axs[5].matshow(unknown_pixels, cmap='gray')
-            axs[5].set_title('Unknown Pixel Data')                        
-            axs[6].imshow(img_minmax, cmap='gray')
-            axs[6].set_title('Min-Max Filtered Dist. Transform')
-            axs[6].plot(candidates[1], candidates[0], 'x', color='red')
-            axs[7].matshow(markers, cmap='rainbow')
-            #axs[7].matshow(rgb_markers)
-            axs[7].set_title('Instance Segmented Cells')
-            fig.tight_layout()
-
-        return cells
-
-    def markers_to_cells(self, markers, njobs):
-        
-        # get the the height of each section of the frame to split into
-        step = int(self.frame.size()[1]/njobs)
-        args_list = []
-        for n in range(njobs):
-            st = n*step
-            en = st+step
-            args_list.append(
-                {
-                    'markers': markers[st:en, :].copy(), # TODO: is this copy necessary?
-                    'level': self.frame.level,
-                    'converter': copy(self.frame.converter),
-                    'st': st,
-                    'en': en,
-                }
-            )
-        manager = Manager()
-        ret = manager.dict()
-        jobs = []
-        for pid in range(njobs):
-            p = Process(target=run_segment_markers,
-                        args=(pid, ret, args_list[pid]))
-            jobs.append(p)
-        [p.start() for p in jobs]
-        [p.join() for p in jobs]
-
-        cells = []
-        for pid in ret:
-            cells += ret[pid]
-        cells = [x for x in cells if not x is None]
-
-        # TODO: this is related to the issue in sana_process where pickling loses these attributes
-        for cell in cells:
-            cell.is_micron = False
-            cell.level = self.frame.level
-            cell.order = 1
-         
-        return cells
-    #
-    # end of markers_to_cells
+def run_segment_markers(args):
+    return segment_markers(**args)
     
-
-def run_segment_markers(pid, ret, args):
-    ret[pid] = segment_markers(**args)
-    
-def segment_markers(markers, level, converter, st, en):
+def segment_markers(markers, st, en):
     cells = []
     z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
     o = z.copy() + 1
     marker_vals = np.sort(np.unique(markers))[1:]
-    for val in marker_vals:
-        x = np.where(markers == val, o, z)
-        f = Frame(x, level, converter)
-        bodies, holes = f.get_contours() # TODO: specify area limits
+    for i, val in enumerate(marker_vals):
+        f = Frame(np.where(markers == val, o, z))
+        bodies, holes = f.get_contours()
         if len(bodies) != 0:
             cell = bodies[0].polygon.connect()
             cell[:,1] += st
             cells.append(cell)
     return cells
-
-#
-# end of file
