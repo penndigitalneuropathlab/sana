@@ -24,15 +24,21 @@ import seaborn as sns; sns.set()
 sns.set_style("whitegrid")
 plt.rcParams['axes.prop_cycle'] = plt.cycler(color=sns.color_palette("Set2"))
 
-LAYER_NAMES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6',
-               'L23', 'L56', 'L123', 'L456', 'L23456', 'L123456']
+# LAYER_NAMES = ['L1', 'L2', 'L3', 'L4', 'L5', 'L6',
+#                'L23', 'L56', 'L123', 'L456', 'L23456', 'L123456']
+LAYER_NAMES = ['AO']
+
 LAYERS_HEADER = ''.join(['%s,' % x for x in LAYER_NAMES])
 ZLAYERS_HEADER = ''.join(['z_%s,' % x for x in LAYER_NAMES])
 FIELDS_HEADER = 'SlideName,AutopsyID,BlockID,Hemisphere,Region,Subregion,ROI,Antibody,Measurement,'
-LONG_HEADER = FIELDS_HEADER+'Layer,AO,z_AO,'
-WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
-LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f,%0.16f\n'
-WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*(2*len(LAYER_NAMES))+'\n'
+# LONG_HEADER = FIELDS_HEADER+'Layer,AO,z_AO,'
+# WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER+ZLAYERS_HEADER
+LONG_HEADER = FIELDS_HEADER+'Layer,AO,'
+WIDE_HEADER = FIELDS_HEADER+LAYERS_HEADER
+# LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f,%0.16f\n'
+# WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*(2*len(LAYER_NAMES))+'\n'
+LONG_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%0.16f\n'
+WIDE_LINE = '%s,%s,%s,%s,%s,%s,%s,%s,%s,'+'%0.16f,'*(len(LAYER_NAMES))+'\n'
 
 # NOTE: add the measurement name to this list if it's a %AO label
 AO_MEASUREMENTS = ['manual', 'auto', 'lb_wc', 'ln_wc', 'tangle_wc', 'tangle_poly']
@@ -50,6 +56,8 @@ ANTIBODY_MEASUREMENTS = {
     'AT8': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
     'TauC3': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
     'C3': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
+    'MN423': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
+    'MC1': ['manual', 'auto', 'tangle_wc', 'tangle_poly', 'poly_count'],
     'TDP43': ['manual', 'auto'],
     'TDP43MP': ['manual', 'auto'],
     'SYN303': ['auto', 'lb_wc', 'ln_wc'],
@@ -173,8 +181,8 @@ class Region:
         # 'aCING': ['a33', 'a32', 'a24a', 'a24b', 'a24c', 'a24'],
         'aCING': ['aCING_'],
         'SMTC': ['SMTC_'],
-        'HIP' : ['GM']
-        # 'HIP' : ['CA1', 'CA2', 'CA3', 'CA4', 'DG', 'Subiculum']
+        # 'HIP' : ['GM']
+        'HIP' : ['CA1', 'CA2', 'CA3', 'CA4', 'DG', 'Subiculum']
         # 'HIP': ['Greatest GM Sampling zone']
     }
     for region_name in region_mapping:
@@ -338,6 +346,7 @@ class Entry:
 
         self.params_f = os.path.join(self.directory, self.slide_name+'.csv')
         if not os.path.exists(self.params_f):
+            print(' ',os.path.basename(self.params_f))
             raise DirectoryIncompleteError
 
         if self.bid in hemisphere_data:
@@ -352,7 +361,8 @@ class Entry:
 
         # initialize array for storing all combinations of sublayer data
         # NOTE: 1, 2, 3, 4, 5, 6, 23, 56, 123, 456, 23456, 123456
-        ao_data = np.full((12), np.nan)
+        # ao_data = np.full((12), np.nan) # should be len(LAYER_NAMES)
+        ao_data = np.full((1), np.nan)
         # if measurement in AO_MEASUREMENTS:
         #     ao_data[-1] = self.data[measurement+'_ao']
         # else:
@@ -457,7 +467,8 @@ def collect_patients(idir, hc, hemi):
     antibodies = []
     
     # loop through the BIDs found in the idir
-    for slide_name in tqdm(os.listdir(idir)):
+    slide_names = [s for s in os.listdir(idir) if s!='detections']
+    for slide_name in tqdm(slide_names):
         slide_d = os.path.join(idir, slide_name)
         if not os.path.isdir(slide_d):
             continue
@@ -465,7 +476,7 @@ def collect_patients(idir, hc, hemi):
         # loop through the ROIs in this region
         for roi in os.listdir(slide_d):
             roi_d = os.path.join(slide_d, roi)
-            if not os.path.isdir(roi_d):
+            if not os.path.isdir(roi_d) or roi_d=='detections':
                 continue
 
             # load the data in this ROI
@@ -787,14 +798,18 @@ def write_row(fps, slide_name, aid, bid,
               antibody_name, measurement, x, z):
     long_fp, wide_fp = fps
     for i in range(len(x)):
+        # long_fp.write(
+        #     LONG_LINE % \
+        #     (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name,
+        #      antibody_name, measurement, LAYER_NAMES[0], x[i], z[i]))
         long_fp.write(
             LONG_LINE % \
-            (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name,
-             antibody_name, measurement, LAYER_NAMES[i], x[i], z[i]))
+            (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name.split('_')[-1],
+             antibody_name, measurement, LAYER_NAMES[0], x[i]))
     wide_fp.write(
         WIDE_LINE % \
-        (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name, antibody_name, measurement,
-         *tuple(x), *tuple(z)))
+        (slide_name, aid, bid, hemisphere_name, region_name, subregion_name, roi_name.split('_')[-1], antibody_name, measurement,
+         *tuple(x)))
 #
 # end of write_row
     

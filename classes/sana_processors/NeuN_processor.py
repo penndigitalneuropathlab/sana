@@ -29,7 +29,7 @@ class NeuNProcessor(HDABProcessor):
     def __init__(self, fname, frame, logger, **kwargs):
         super(NeuNProcessor, self).__init__(fname, frame, logger, **kwargs)
 
-        self.run_neuron_analysis = False
+        self.run_neuron_analysis = self.run_wildcat
     #
     # end of constructor
 
@@ -56,6 +56,7 @@ class NeuNProcessor(HDABProcessor):
 
         # detect and analyze the neurons in the ROI
         if self.run_neuron_analysis:
+            self.logger.debug('Running Neuron Analysis...')
             self.run_neurons(odir, detection_odir, first_run, params, main_roi, debug=False)
         
         # save the params IO to a file
@@ -106,7 +107,8 @@ class NeuNProcessor(HDABProcessor):
         
         # load the pre-trained model
         # NOTE: this isn't a wildcat model but no better place for it right now
-        clf = pickle.load(open(os.path.join(os.environ['SANAHOME'], 'classes', 'wildcat', 'RF_model.dat'), 'rb'))
+        # clf = pickle.load(open(os.path.join(os.environ['SANAHOME'], 'classes', 'wildcat', 'RF_model.dat'), 'rb'))
+        clf = pickle.load(open(os.path.join(r'C:/DNPL/src/sana/', 'classes', 'wildcat', 'RF_model.dat'), 'rb'))
 
         # TODO: this is hardcoded bc idk how to save this somewhere convenient, would be nice to wrap the threshold and teh .dat file into some object that a class can load, or just hardcode it in the classifier class
         thresh = 0.62
@@ -140,11 +142,20 @@ class NeuNProcessor(HDABProcessor):
         params.data['non_sub_aos'] = non_results['sub_aos']
         params.data['tot_sub_aos'] = tot_results['sub_aos']
 
+
         # create and store the debugging overlay
         overlay = self.frame.copy()
         colors = ['red', 'blue']
         overlay = overlay_thresh(overlay, pyr_outline, alpha=1.0, color=colors[0])
         overlay = overlay_thresh(overlay, non_outline, alpha=1.0, color=colors[1])
+
+        # if self.logger.plots:
+        #     orig_frame = self.frame.copy()
+        #     pyr_overlay = overlay_thresh(orig_frame, pyr_mask, alpha=0.75, color=colors[0])
+        #     fig, axs = plt.subplots(1,2,sharex=True,sharey=True)
+        #     axs[0].imshow(self.auto_overlay.img)
+        #     axs[1].imshow(pyr_overlay.img)
+        #     plt.show()
 
         # save the original frame
         self.save_frame(odir, overlay, 'PYR')
@@ -153,15 +164,19 @@ class NeuNProcessor(HDABProcessor):
         pyr_signals = pyr_results['signals']        
         non_signals = non_results['signals']
         tot_signals = tot_results['signals']
-        self.save_signals(odir, pyr_signals['normal'], 'PYR_NORMAL')        
-        self.save_signals(odir, non_signals['normal'], 'NON_NORMAL')
-        self.save_signals(odir, tot_signals['normal'], 'TOT_NORMAL')
-        self.save_signals(odir, pyr_signals['main_deform'], 'PYR_MAIN_DEFORM')
-        self.save_signals(odir, non_signals['main_deform'], 'NON_MAIN_DEFORM')
-        self.save_signals(odir, tot_signals['main_deform'], 'TOT_MAIN_DEFORM')
-        self.save_signals(odir, pyr_signals['sub_deform'], 'PYR_SUB_DEFORM')
-        self.save_signals(odir, non_signals['sub_deform'], 'NON_SUB_DEFORM')
-        self.save_signals(odir, tot_signals['sub_deform'], 'TOT_SUB_DEFORM')
+        
+        if not pyr_signals is None:
+            self.save_signals(odir, pyr_signals['normal'], 'PYR_NORMAL')        
+            self.save_signals(odir, pyr_signals['main_deform'], 'PYR_MAIN_DEFORM')
+            self.save_signals(odir, pyr_signals['sub_deform'], 'PYR_SUB_DEFORM')
+        if not tot_signals is None:    
+            self.save_signals(odir, tot_signals['normal'], 'TOT_NORMAL')
+            self.save_signals(odir, tot_signals['main_deform'], 'TOT_MAIN_DEFORM')
+            self.save_signals(odir, tot_signals['sub_deform'], 'TOT_SUB_DEFORM')
+        if not non_signals is None:
+            self.save_signals(odir, non_signals['normal'], 'NON_NORMAL')
+            self.save_signals(odir, non_signals['main_deform'], 'NON_MAIN_DEFORM')
+            self.save_signals(odir, non_signals['sub_deform'], 'NON_SUB_DEFORM')
 
         if self.logger.plots:
             custom_lines = [Line2D([0],[0], color=color, lw=4) for color in colors]

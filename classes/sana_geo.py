@@ -302,10 +302,14 @@ def hull_to_poly(hull, points, is_micron=False, lvl=0):
 
  # this function converts shapely.Polygon's and shapely.MultiPolygon's to sana_geo.Polygon's
 # NOTE: Multi -> Poly takes the portion of the Multi w/ the largest area
-def from_shapely(p, is_micron=False, lvl=0, order=1):
+def from_shapely(p, is_micron=False, lvl=0, order=1, return_all=False):
     if type(p) is MultiPolygon:
-        areas = [geom.area for geom in p.geoms]
-        return from_shapely(p.geoms[np.argmax(areas)])
+        if return_all:
+            poly_list = [from_shapely(pg) for pg in p.geoms]
+            return poly_list
+        else:
+            areas = [geom.area for geom in p.geoms]
+            return from_shapely(p.geoms[np.argmax(areas)])
     else:
         xs, ys = p.exterior.xy
         return Polygon(xs, ys, is_micron, lvl, order)
@@ -317,7 +321,7 @@ def from_shapely(p, is_micron=False, lvl=0, order=1):
 # NOTE: sometimes this creates a MultiPolygon, sana_geo only supports Polygons,
 #       in this case we use the largest section of the MultiPolygon
 def fix_polygon(p):
-    was_sana_poly = type(p) is Polygon
+    was_sana_poly = type(p) is Polygon or type(p) is Annotation
     if was_sana_poly:
         is_micron, lvl, order = p.is_micron, p.lvl, p.order
         p = p.to_shapely()
@@ -333,6 +337,24 @@ def fix_polygon(p):
     return p
 #
 # end of fix_polygon
+
+def fix_multipolygons(p):
+    was_sana_poly = type(p) is Polygon or type(p) is Annotation
+    if was_sana_poly:
+        is_micron, lvl, order = p.is_micron, p.lvl, p.order
+        p = p.to_shapely()
+
+    if not p.is_valid:
+        p = p.buffer(0) # NOTE: this could still end up invalid... add an exception?
+    else:
+        pass
+
+    if was_sana_poly:
+        p = from_shapely(p, is_micron, lvl, order, return_all=True)
+        
+    return p
+#
+# end of fix_multipolygon
 
 # calculates the IOU score of 2 Polygons
 # NOTE: this uses Shapely, converts to shapely objects for easy calculations
@@ -351,6 +373,20 @@ def get_iou(x, y):
     return i/u
 #
 # end of iou
+
+# calculates the dice coefficient between 2 Polygons
+def get_dice_score(x,y):
+    x = x.copy().to_shapely()
+    y = y.copy().to_shapely()
+
+    x = fix_polygon(x)
+    y = fix_polygon(y)
+
+    dice_score = 2*(x.intersection(y).area)/(x.area + y.area)
+
+    return dice_score
+#
+# end get_dice_score
 
 # Array conversion class to handle microns, pixel resolutions, and orders
 # NOTE: SANA code supports both microns and pixel analysis, but it is best

@@ -18,7 +18,7 @@ from sana_frame import Frame, frame_like, create_mask, overlay_thresh
 from sana_loader import Loader
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
-from wildcat.pixel_classifiers import CorticalTangleClassifier_TauC3
+from wildcat.pixel_classifiers import TauC3CorticalTangleClassifier, TauC3HIPTangleClassifier
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -32,8 +32,10 @@ class TauC3Processor(HDABProcessor):
     def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
         self.logger.info('Running TauC3 Processor...')
 
-
         self.generate_masks(main_roi, sub_rois)
+
+        self.main_roi = main_roi
+        self.sub_rois = sub_rois
 
         # save the original frame
         if self.save_images:
@@ -96,21 +98,19 @@ class TauC3Processor(HDABProcessor):
         self.logger.info('Running Tangle detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
         
-        # roi_class = odir.split('/')[-1].split('_')[1]
-        # if roi_class in ['GM']:
-        #     self.logger.debug('Deploying Cortical AT8 Tangle Classifier...')
-        #     model = CorticalTangleClassifier(self.frame)
-        # elif roi_class in ['CA1', 'CA2', 'CA3', 'CA4', 'Subiculum', 'DG']:
-        #     self.logger.debug('Deploying HIP AT8 Tangle Classifier...')
-        #     model = HIPTangleClassifier(self.frame)
-        # else:
-        #     self.logger.info('No AT8 classifier found for ROI class: %s' %roi_class)
-        #     return
-
-        # model = HIPTangleClassifier(self.frame)        
-        model = CorticalTangleClassifier_TauC3(self.frame)
-
-        tangle_idx = 3
+        roi_class = main_roi.class_name.split('_')[1]
+       
+        if roi_class in ['GM']:
+            self.logger.debug('Deploying Cortical TauC3 Tangle Classifier...')
+            model = TauC3CorticalTangleClassifier(self.frame)
+        elif roi_class in ['CA1', 'CA2', 'CA3', 'CA4', 'Subiculum', 'DG']:
+            self.logger.debug('Deploying HIP TauC3 Tangle Classifier...')
+            model = TauC3HIPTangleClassifier(self.frame)
+        else:
+            self.logger.info('No TauC3 classifier found for ROI class: %s' %roi_class)
+            return
+        
+        tangle_idx = 2
 
         # decode the model to get activations of each class
         wc_activation = model.run()
@@ -139,12 +139,10 @@ class TauC3Processor(HDABProcessor):
             class_dict = {
                 0: 'Artifact',
                 1: 'Background',
-                2: 'GM NP',
-                3: 'GM Tangle',
-                4: 'GM Thread'
+                2: 'GM Tangle',
             }
             
-            fig, axs = plt.subplots(2,3,sharex=True,sharey=True)
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             axs[0].imshow(self.frame.img)
@@ -159,18 +157,39 @@ class TauC3Processor(HDABProcessor):
             
             plt.show()
         # end self.logger.plots
-        
+            
+        # TODO: try masking DAB image by WC activations before sending to process_dab
+        wc_mask = self.dab.copy()
+        wc_mask.img = np.where(tangle_softmax >= softmax_prob_thresh, np.ones_like(tangle_softmax), np.zeros_like(tangle_softmax))
+
+        dab_masked = self.dab.copy()
+        wc_mask.img = wc_mask.img[:,:,None]
+        dab_masked.mask(wc_mask)
+
         relevant_tangle_dab_msk, dab_thresh = self.process_dab(
             self.dab,
             run_normalize = True,
             scale = 1.0,
-            mn = 10,
+            # mn = 50,
             mx = 90, #default: 90, experiment w/ mx = 100-110
             open_r = 7, #always an odd number (7 < open_r < 13)
             close_r = 4,
+            wc_mask = dab_masked,
+            # reverse = False,
             # mask = self.main_mask,
             debug = self.logger.plots
         )
+
+        
+        # fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
+        # fig.suptitle(main_roi.name)
+        # axs[0].imshow(self.frame.img)
+        # axs[0].set_title('Orig. Frame')
+        # axs[1].imshow(self.dab.img)
+        # axs[1].set_title('DAB Img')
+        # axs[2].imshow(relevant_tangle_dab_msk.img)
+        # axs[2].set_title('WC Masked DAB')
+        # plt.show()
         
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
@@ -284,15 +303,17 @@ class TauC3Processor(HDABProcessor):
             )
             tangle_annos.append(tangle_anno)
 
-        tangle_poly_mask = create_mask(tangle_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
-        if len(tangle_annos) > 0 and np.max(tangle_poly_mask)!=0:
-
-            # run the %AO over predictions
+        tangle_poly_mask = create_mask([a for a in tangle_annos if a.confidence >= 1.31], self.frame.size(), self.frame.lvl, self.frame.converter)
+        # run the %AO over predictions
+        if np.max(wc_preds.img)>0:
             results = self.run_ao(wc_preds)
             params.data['tangle_wc_ao'] = results['ao']
             if not results['signals'] is None:
                 self.save_signals(odir, results['signals']['main_deform'], 'tangle')
+        else:
+            params.data['tangle_wc_ao'] = 0
 
+        if len(tangle_annos) > 0 and np.max(tangle_poly_mask.img)>0:
             results = self.run_ao(tangle_poly_mask)
             params.data['tangle_poly_ao'] = results['ao']
             if not results['signals'] is None:
@@ -303,8 +324,8 @@ class TauC3Processor(HDABProcessor):
             # self.logger.debug('Polygon Tangle %AO:',params.data['tangle_poly_ao'])
             # self.logger.debug()
         else:
-            params.data['tangle_wc_ao'] = 0
             params.data['tangle_poly_ao'] = 0
+
         params.data['poly_count'] = len(tangle_annos)
 
         if len(tangle_annos)>0 and self.save_images:
@@ -317,13 +338,13 @@ class TauC3Processor(HDABProcessor):
             
             fig, axs = plt.subplots(1,1)
             tile = odir.split('_')[-1]
-            fig.suptitle(os.path.basename(self.fname).replace('.svs','')+' | '+tile)
+            fig.suptitle(os.path.basename(self.fname).replace('.svs','')+' | '+tile+'\n'+os.path.basename(main_roi.file_name))
             axs.set_axis_off()
             axs.imshow(overlay.img)
             roi_anno = main_roi.copy()
             overlay.converter.rescale(roi_anno,overlay.lvl)
             plot_poly(axs,roi_anno,color='red',linewidth=0.75)
-            [plot_poly(axs,tangle,color='blue',linewidth=0.5) for tangle in tangle_annos if tangle.partial_inside(roi_anno)]
+            [plot_poly(axs,tangle,color='blue',linewidth=0.5) for tangle in tangle_annos if tangle.inside(roi_anno)]
             plt.savefig(os.path.join(odir,'%s_TANGLE_ANNO.png') %os.path.basename(self.fname).replace('.svs',''),dpi=500)
             plt.close()
 
@@ -351,12 +372,10 @@ class TauC3Processor(HDABProcessor):
             class_dict = {
                 0: 'Artifact',
                 1: 'Background',
-                2: 'GM NP',
-                3: 'GM Tangle',
-                4: 'GM Thread'
+                2: 'Tangle'
             }
             
-            fig, axs = plt.subplots(2,3,sharex=True,sharey=True)
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
             fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             axs[0].imshow(self.frame.img)
@@ -437,22 +456,23 @@ class TauC3Processor(HDABProcessor):
             sana_io.append_annotations(anno_fname, tangle_annos)
         
         # write WC box polygons to file
-        # afile = os.path.basename(self.fname).replace('.svs','_WC_ANNOS.json')
-        # anno_fname = odir+'/'+afile
-        # if not os.path.exists(anno_fname) or first_run:
-        #     self.logger.debug('Writing %d WC box polygons: %s' %(len(wc_annos),anno_fname))
-        #     sana_io.write_annotations(anno_fname, wc_annos)
-        #     first_run = False
-        # else:
-        #     self.logger.debug('Appending %d WC box polygons: %s' %(len(wc_annos),anno_fname))
-        #     sana_io.append_annotations(anno_fname, wc_annos)
-        # self.logger.debug('Detections written to file: %s' %anno_fname)
+        os.makedirs(os.path.join(roi_odir,'WC_ANNOS'),exist_ok=True)
+        afile = os.path.basename(self.fname).replace('.svs','_WC_ANNOS.json')
+        anno_fname = os.path.join(roi_odir,'WC_ANNOS',afile)
+        if not os.path.exists(anno_fname) or first_run:
+            self.logger.debug('Writing %d WC box polygons: %s' %(len(wc_annos),anno_fname))
+            sana_io.write_annotations(anno_fname, wc_annos)
+            first_run = False
+        else:
+            self.logger.debug('Appending %d WC box polygons: %s' %(len(wc_annos),anno_fname))
+            sana_io.append_annotations(anno_fname, wc_annos)
+        self.logger.debug('Detections written to file: %s' %anno_fname)
 
         # debugging
         # loads in anno file that was just written out
         # if self.logger.plots and len(tangle_annos)>0:
         if self.logger.plots:
-            slides = sana_io.read_list_file('C:/Users/eteun/dev/data/tauC3_tangle/lists/HIP_v1_test.list')
+            slides = sana_io.read_list_file('C:/Users/eteun/dev/data/TauC3_tangles/lists/TauC3_HIP_test.list')
             img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
 
             # initialize loader, this will allow us to load slide data into memory
@@ -463,10 +483,10 @@ class TauC3Processor(HDABProcessor):
 
             thumb_frame = loader.load_thumbnail()
             roiname = ['Tile *']
-            refclass = ['Mature Tangle']
+            refclass = ['tangle']
             hypclass = ['tangle detection']
 
-            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/tauC3_tangle/annotations/')
+            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/TauC3_tangles/annotations/TauC3_all_process')
 
             ROIS = []
             for roi_name in roiname:

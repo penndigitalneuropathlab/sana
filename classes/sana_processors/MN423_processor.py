@@ -7,29 +7,30 @@ import cv2
 import numpy as np
 from PIL import Image
 from scipy.special import softmax
+from scipy.special import expit as sigmoid
 
 # custom modules
 import sana_io
 from sana_thresholds import max_dev, kittler
 from sana_processors.HDAB_processor import HDABProcessor
-from sana_geo import Point, transform_inv_poly, plot_poly, transform_poly_with_params, Polygon
+from sana_geo import Point, transform_inv_poly, plot_poly, transform_poly_with_params, Polygon, fix_polygon
 from sana_frame import Frame, frame_like, create_mask, overlay_thresh
 from sana_loader import Loader
 from sana_heatmap import Heatmap
 from sana_filters import minmax_filter
-from wildcat.pixel_classifiers import MulticlassClassifier, TangleClassifier, AT8HIPTangleClassifier, AT8CorticalTangleClassifier
+from wildcat.pixel_classifiers import MN423HIPTangleClassifier
 
 # debugging modules
 from matplotlib import pyplot as plt
 
-class AT8Processor(HDABProcessor):
+class MN423Processor(HDABProcessor):
     def __init__(self, fname, frame, logger, **kwargs):
-        super(AT8Processor, self).__init__(fname, frame, logger, **kwargs)
+        super(MN423Processor, self).__init__(fname, frame, logger, **kwargs)
     #
     # end of constructor
 
     def run(self, odir, detection_odir, first_run, params, main_roi, sub_rois=[]):
-        self.logger.info('Running AT8 Processor...')
+        self.logger.info('Running MN423 Processor...')
 
 
         self.generate_masks(main_roi, sub_rois)
@@ -57,7 +58,7 @@ class AT8Processor(HDABProcessor):
 
             # generate the tangle severity results
             # self.run_tangle(odir, params)
-            softmax_prob_thresh = 0.3
+            softmax_prob_thresh = 0.6
             self.run_tangle_detection(odir, detection_odir, first_run, params, main_roi, softmax_prob_thresh)
 
 
@@ -94,21 +95,21 @@ class AT8Processor(HDABProcessor):
     def run_tangle_detection(self, odir, roi_odir, first_run, params, main_roi, softmax_prob_thresh=0.5):   
         self.logger.info('Running Tangle detections...')
         self.logger.debug('Softmax Prob. Thresh: %0.2f' %softmax_prob_thresh)
+        
+        # roi_class = odir.split('/')[-1].split('_')[1]
+        # if roi_class in ['GM']:
+        #     self.logger.debug('Deploying Cortical AT8 Tangle Classifier...')
+        #     model = CorticalTangleClassifier(self.frame)
+        # elif roi_class in ['CA1', 'CA2', 'CA3', 'CA4', 'Subiculum', 'DG']:
+        #     self.logger.debug('Deploying HIP AT8 Tangle Classifier...')
+        #     model = HIPTangleClassifier(self.frame)
+        # else:
+        #     self.logger.info('No AT8 classifier found for ROI class: %s' %roi_class)
+        #     return
 
-        roi_class = main_roi.class_name.split('_')[1]
+        model = MN423HIPTangleClassifier(self.frame)
 
-        if roi_class in ['GM']:
-            self.logger.debug('Deploying Cortical AT8 Tangle Classifier...')
-            model = AT8CorticalTangleClassifier(self.frame)
-        elif roi_class in ['CA1', 'CA2', 'CA3', 'CA4', 'Subiculum', 'DG']:
-            self.logger.debug('Deploying HIP AT8 Tangle Classifier...')
-            model = AT8HIPTangleClassifier(self.frame)
-        else:
-            self.logger.info('No AT8 classifier found for ROI class: %s' %roi_class)
-            return 
-
-        # model = HIPTangleClassifier(self.frame)        
-        # model = CorticalTangleClassifier(self.frame)
+        tangle_idx = 2
 
         # decode the model to get activations of each class
         wc_activation = model.run()
@@ -123,8 +124,8 @@ class AT8Processor(HDABProcessor):
             np.save(f, wc_activation)
 
         # [2,:,:] to select Tangle predictions from model output (Background, GM NP, GM Tangle)
-        tangle_activation = wc_activation[2,:,:]
-        tangle_softmax = wc_probs[2,:,:]
+        tangle_activation = wc_activation[tangle_idx,:,:]
+        tangle_softmax = wc_probs[tangle_idx,:,:]
 
         if self.logger.plots:
             # load in main roi to plot in tile
@@ -133,35 +134,35 @@ class AT8Processor(HDABProcessor):
 
             # make this into a function --> visual_wc_probs(class_dict)
             # debug WC activations for each of the classes
+            
+            # class_dict = {
+            #     0: 'Artifact',
+            #     1: 'Background',
+            #     2: 'GM NP',
+            #     3: 'GM Tangle',
+            #     4: 'GM Thread'
+            # }
+
             class_dict = {
-                0: 'Background',
-                1: 'GM NP',
-                2: 'GM Tangle',
-            }
-            class_dict = {
-                0: 'Background',
-                1: 'GM Tangle',
+                0: 'Artifact',
+                1: 'Background',
+                2: 'Tangle',
             }
             
-            fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
-            fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
+            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
             axs = axs.ravel()
-            [ax.set_axis_off() for ax in axs]
+            fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
             axs[0].imshow(self.frame.img)
             axs[0].set_title('Orig. Frame')
-            # plot_poly(axs[0],orig_anno,color='red')
-            axs[1].imshow(cv2.resize(wc_probs[0,:,:],self.frame.img[:,:,0].transpose((1,0)).shape,interpolation=cv2.INTER_NEAREST))
-            axs[1].set_title(class_dict[0])
-            axs[2].imshow(cv2.resize(wc_probs[2,:,:],self.frame.img[:,:,0].transpose((1,0)).shape,interpolation=cv2.INTER_NEAREST))
-            axs[2].set_title(class_dict[1])
-            # for i in range(len(axs)-1):
-            #     axs[i+1].imshow(cv2.resize(wc_probs[i,:,:],self.frame.img[:,:,0].transpose((1,0)).shape,interpolation=cv2.INTER_NEAREST))
-            #     axs[i+1].set_title(class_dict[i])
+            plot_poly(axs[0],orig_anno,color='red')
+            for i in range(len(axs)-1):
+                plot_poly(axs[i+1],orig_anno,color='red')
+                axs[i+1].imshow(cv2.resize(wc_probs[i,:,:],self.frame.img[:,:,0].transpose((1,0)).shape,interpolation=cv2.INTER_NEAREST))
+                axs[i+1].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
-            
             plt.show()
-
+            
         # end self.logger.plots
         wc_mask = self.dab.copy()
         wc_mask.img = np.where(tangle_softmax >= softmax_prob_thresh, np.ones_like(tangle_softmax), np.zeros_like(tangle_softmax))
@@ -169,21 +170,20 @@ class AT8Processor(HDABProcessor):
 
         dab_masked = self.dab.copy()
         dab_masked.mask(wc_mask)
-
+        
         relevant_tangle_dab_msk, dab_thresh = self.process_dab(
             self.dab,
             run_normalize = True,
             scale = 1.0,
-            # mn = 10,
-            mx = 90, #default: 90, experiment w/ mx = 100-110
+            # mn = 15,
+            mx = 70, #default: 90, experiment w/ mx = 100-110
             open_r = 7, #always an odd number (7 < open_r < 13)
             close_r = 4,
             wc_mask = dab_masked,
             # mask = self.main_mask,
             debug = self.logger.plots
         )
-        # plt.show()
-
+        
         # fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
         # fig.suptitle(main_roi.name)
         # axs[0].imshow(self.frame.img)
@@ -192,7 +192,6 @@ class AT8Processor(HDABProcessor):
         # axs[1].set_title('DAB Img')
         # axs[2].imshow(relevant_tangle_dab_msk.img)
         # axs[2].set_title('WC Masked DAB')
-        # plt.show()
         
         self.logger.info('DAB Thresh: %d' %dab_thresh)
 
@@ -211,8 +210,15 @@ class AT8Processor(HDABProcessor):
         tangle_msk = np.where(tangle_softmax.img >= softmax_prob_thresh, relevant_tangle_dab_msk.img[:,:,0], np.zeros_like(relevant_tangle_dab_msk.img[:,:,0]))
         tangle_msk = Frame(tangle_msk, lvl=self.dab.lvl, converter=self.dab.converter)
 
+        # fig, axs = plt.subplots(1,2)
+        # axs[0].imshow(tangle_softmax.img)
+        # axs[0].set_title('Tangle Softmax Img')
+        # axs[1].imshow(tangle_msk.img)
+        # axs[1].set_title('Tangle Mask Img')
+        # plt.show()
+
         # generate WC predictions for %AO
-        wc_preds = frame_like(self.frame, (wc_probs[2] > softmax_prob_thresh).astype(np.uint8))
+        wc_preds = frame_like(self.frame, (wc_probs[tangle_idx] > softmax_prob_thresh).astype(np.uint8))
         wc_preds.resize(self.frame.size(), interpolation=cv2.INTER_NEAREST)
 
         # get the contours/polygons from the tangle mask
@@ -225,10 +231,10 @@ class AT8Processor(HDABProcessor):
         wc_mask = np.where(tangle_softmax.img >= softmax_prob_thresh, np.ones_like(tangle_softmax.img), np.zeros_like(tangle_softmax.img)).astype('uint8')
         wc_mask = Frame(wc_mask, lvl=self.dab.lvl, converter=self.dab.converter)
 
+
         # fig, axs = plt.subplots(1,1)
-        # axs.imshow(tangle_msk.img)
-        # axs.set_title('Tangle DAB Mask')
-        # plt.show()
+        # axs.imshow(wc_mask.img)
+        # axs.set_title('WC Mask')
 
         wc_mask.get_contours()
         wc_mask.filter_contours(min_body_area=35/(self.dab.converter.mpp**2)) #default: 20/mpp
@@ -279,10 +285,13 @@ class AT8Processor(HDABProcessor):
         
         tangle_annos = []
         for tangle in tangles:
+            # only continue and convert tangle to annotation if tangle area is greater than size cutoff (35 microns^2)
+            # if tangle.area()/(0.5045**2) < 35.0:
+            #     continue 
                 
             # confidence is the average tangle activation within the polygon
             conf, conf_std = self.get_confidence(tangle, tangle_activation)
-            
+
             # confidence is average value of the DAB intensity within the polygon
             dab_conf, dab_std = self.get_confidence(tangle, tangle_dab)
 
@@ -304,13 +313,15 @@ class AT8Processor(HDABProcessor):
                 dab_confidence=dab_conf,
                 dab_std=dab_std,
             )
+            # NOTE: Fix polygons to be closed and connected
+            # tangle_anno = fix_polygon(tangle_anno)
             tangle_annos.append(tangle_anno)
-        
-        # create mask from tangles that are above a WC confidence of 3.64 - calculated from PR curve code, maximizing >80% recall
-        tangle_poly_mask = create_mask([a for a in tangle_annos if a.confidence>=3.64], self.frame.size(), self.frame.lvl, self.frame.converter)
-        
+
+        tangle_poly_mask = create_mask([a for a in tangle_annos if a.confidence >= 1.42], self.frame.size(), self.frame.lvl, self.frame.converter)
+        # tangle_poly_mask = create_mask(tangle_annos, self.frame.size(), self.frame.lvl, self.frame.converter)
+
+        # run the %AO over predictions
         if np.max(wc_preds.img)>0:
-            # run the %AO over predictions
             results = self.run_ao(wc_preds)
             params.data['tangle_wc_ao'] = results['ao']
             if not results['signals'] is None:
@@ -318,48 +329,36 @@ class AT8Processor(HDABProcessor):
         else:
             params.data['tangle_wc_ao'] = 0
 
-
+        # run the %AO over detections
         if len(tangle_annos) > 0 and np.max(tangle_poly_mask.img)>0:
-
             results = self.run_ao(tangle_poly_mask)
             params.data['tangle_poly_ao'] = results['ao']
             if not results['signals'] is None:
                 self.save_signals(odir, results['signals']['main_deform'], 'tangle_POLY')        
-
-            # self.logger.debug('%AO:')
-            # self.logger.debug('WC Tangle %AO:',params.data['tangle_wc_ao'])
-            # self.logger.debug('Polygon Tangle %AO:',params.data['tangle_poly_ao'])
-            # self.logger.debug()
         else:
             params.data['tangle_poly_ao'] = 0
         
+        # store count of tangle polygons
         params.data['poly_count'] = len(tangle_annos)
 
         if len(tangle_annos)>0 and self.save_images:
             # frame resizing 
-            orig_img = cv2.resize(self.frame.img.copy(), wc_probs[2,:,:].transpose((1,0)).shape, interpolation=cv2.INTER_NEAREST)
+            orig_img = cv2.resize(self.frame.img.copy(), wc_probs[tangle_idx,:,:].transpose((1,0)).shape, interpolation=cv2.INTER_NEAREST)
             orig_frame = Frame(orig_img,lvl=self.frame.lvl,converter=self.frame.converter)
-            tangle_preds = frame_like(orig_frame, wc_activation[2,:,:] > softmax_prob_thresh)
+            tangle_preds = frame_like(orig_frame, wc_activation[tangle_idx,:,:] > softmax_prob_thresh)
             overlay = overlay_thresh(orig_frame, tangle_preds, alpha=0.3, color='red')
             overlay.img = cv2.resize(overlay.img, self.frame.size(), interpolation=cv2.INTER_NEAREST)
             
             fig, axs = plt.subplots(1,1)
             tile = odir.split('_')[-1]
-            # fig.suptitle(os.path.basename(self.fname).replace('.svs','')+' | '+tile)
+            fig.suptitle(os.path.basename(self.fname).replace('.svs','')+' | '+tile)
             axs.set_axis_off()
-            # axs.imshow(overlay.img)
-            # [cv2.fillPoly(orig_frame.img,pts=np.int32([tangle]),color=(255,0,0)) for tangle in inside_tangles]
-            [plot_poly(axs,tangle,color='red') for tangle in inside_tangles]
-            axs.imshow(orig_frame.img)
+            axs.imshow(overlay.img)
             roi_anno = main_roi.copy()
-            # overlay.converter.rescale(roi_anno,overlay.lvl)
-            # plot_poly(axs,roi_anno,color='red',linewidth=0.75)
-            # [plot_poly(axs,tangle,color='red',linewidth=0.65) for tangle in inside_tangles]
-
+            overlay.converter.rescale(roi_anno,overlay.lvl)
+            plot_poly(axs,roi_anno,color='red',linewidth=0.75)
+            [plot_poly(axs,tangle,color='blue',linewidth=0.5) for tangle in tangle_annos if tangle.partial_inside(roi_anno)]
             plt.savefig(os.path.join(odir,'%s_TANGLE_ANNO.png') %os.path.basename(self.fname).replace('.svs',''),dpi=500)
-
-            if self.logger.plots:
-                plt.show()
             plt.close()
 
 
@@ -379,22 +378,27 @@ class AT8Processor(HDABProcessor):
 
         if len(tangle_annos)>0 and self.logger.plots:
             # frame resizing 
-            orig_img = cv2.resize(self.frame.img.copy(), wc_probs[2,:,:].transpose((1,0)).shape, interpolation=cv2.INTER_NEAREST)
+            orig_img = cv2.resize(self.frame.img.copy(), wc_probs[tangle_idx,:,:].transpose((1,0)).shape, interpolation=cv2.INTER_NEAREST)
             orig_frame = Frame(orig_img,lvl=self.frame.lvl,converter=self.frame.converter)
 
             # debug WC activations for each of the classes
-            class_dict = {
-                0: 'Background',
-                1: 'GM NP',
-                2: 'GM Tangle',
-            }
-            fig, axs = plt.subplots(2,2,sharex=True,sharey=True)
+            # class_dict = {
+            #     0: 'Artifact',
+            #     1: 'Background',
+            #     2: 'GM NP',
+            #     3: 'GM Tangle',
+            #     4: 'GM Thread'
+            # }
+            
+            fig, axs = plt.subplots(1,3,sharex=True,sharey=True)
             axs = axs.ravel()
-            [ax.set_axis_off() for ax in axs]
-            axs[0].imshow(orig_img)
+            fig.suptitle('Orig. Frame to Compare WildCat Activation Maps')
+            axs[0].imshow(self.frame.img)
             axs[0].set_title('Orig. Frame')
+            plot_poly(axs[0],orig_anno,color='red')
             for i in range(len(axs)-1):
-                axs[i+1].imshow(wc_probs[i,:,:])
+                plot_poly(axs[i+1],orig_anno,color='red')
+                axs[i+1].imshow(cv2.resize(wc_probs[i,:,:],self.frame.img[:,:,0].transpose((1,0)).shape,interpolation=cv2.INTER_NEAREST))
                 axs[i+1].set_title(class_dict[i])
             fig.suptitle('WildCat Class Activation Maps')
             plt.tight_layout()
@@ -415,13 +419,13 @@ class AT8Processor(HDABProcessor):
             axs[1].set_title('DAB mask')
 
             alpha = 0.4
-            tangle_preds = frame_like(orig_frame, wc_activation[2,:,:] > softmax_prob_thresh)
+            tangle_preds = frame_like(orig_frame, wc_probs[tangle_idx,:,:] > softmax_prob_thresh)
             overlay = overlay_thresh(orig_frame, tangle_preds, alpha=alpha, color='red')
             overlay.img = cv2.resize(overlay.img, self.frame.size(), interpolation=cv2.INTER_NEAREST)
             axs[2].imshow(overlay.img)
             axs[2].set_title('WC Pixel Predictions')
 
-            axs[3].imshow(cv2.resize(wc_probs[2,:,:],self.frame.size()))
+            axs[3].imshow(cv2.resize(wc_activation[tangle_idx,:,:],self.frame.size()))
             axs[3].set_title('Polygons on WC Activation Map')
             [plot_poly(axs[3], tangle, color='red') for tangle in tangles]
 
@@ -435,14 +439,14 @@ class AT8Processor(HDABProcessor):
                 # plot_poly(axs,orig_anno,color='red',linewidth=0.6)
                 # [plot_poly(axs,tangle,color='blue') for tangle in tangle_annos]
                 # plt.savefig(os.path.join(odir,'%s_anno_heatmap.png') %os.path.basename(self.fname).replace('.svs',''),dpi=500)
-                # self.save_frame(odir, overlay, 'TANGLE_QC')
+                self.save_frame(odir, overlay, 'TANGLE_QC')
 
             fig, axs = plt.subplots(1,1)
             axs.set_axis_off()
             fig.suptitle('Final SANA Polygons')
             axs.imshow(self.frame.img)
             plot_poly(axs,main_roi,color='red')
-            [plot_poly(axs,tangle,color='red') for tangle in tangle_annos if tangle.partial_inside(main_roi)]
+            [plot_poly(axs,tangle,color='red') for tangle in tangle_annos]
 
             plt.show()
         #
@@ -482,139 +486,106 @@ class AT8Processor(HDABProcessor):
         # debugging
         # loads in anno file that was just written out
         # if self.logger.plots and len(tangle_annos)>0:
-        if False:
-            slides = sana_io.read_list_file('C:/Users/eteun/dev/data/AD_tangle/lists/sanaz_test_AT8.list')
-            img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
+        # if self.logger.plots:
+        #     slides = sana_io.read_list_file('C:/Users/eteun/dev/data/MN423_tangles/lists/MN4232_SA_annos_test.list')
+        #     img_dir = [s for s in slides if os.path.basename(s) == os.path.basename(anno_fname).replace('.json','.svs')][0]
 
-            # initialize loader, this will allow us to load slide data into memory
-            image = sana_io.create_filepath(img_dir)
+        #     # initialize loader, this will allow us to load slide data into memory
+        #     image = sana_io.create_filepath(img_dir)
 
-            loader = Loader(image)
-            loader.set_lvl(0)
+        #     loader = Loader(image)
+        #     loader.set_lvl(0)
 
-            thumb_frame = loader.load_thumbnail()
-            roiname = ['Tile *']
-            refclass = ['Mature Tangle']
-            hypclass = ['tangle detection']
+        #     thumb_frame = loader.load_thumbnail()
+        #     roiname = ['Tile *']
+        #     refclass = ['Mature Tangle']
+        #     hypclass = ['tangle detection']
 
-            ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/AD_tangle/annotations/LBD_SMTC_AT8/')
+        #     ref_anno = sana_io.create_filepath(anno_fname, ext='.json', fpath='C:/Users/eteun/dev/data/MN423_tangles/annotations/')
 
-            ROIS = []
-            for roi_name in roiname:
-                ROIS += sana_io.read_annotations(ref_anno, name=roi_name)
+        #     ROIS = []
+        #     for roi_name in roiname:
+        #         ROIS += sana_io.read_annotations(ref_anno, name=roi_name)
 
-            # load all reference annotations with matching class name
-            REF_ANNOS = []
-            for ref_class in refclass:
-                # load the annotations from the annotation file
-                REF_ANNOS += sana_io.read_annotations(ref_anno, class_name=ref_class)
+        #     # load all reference annotations with matching class name
+        #     REF_ANNOS = []
+        #     for ref_class in refclass:
+        #         # load the annotations from the annotation file
+        #         REF_ANNOS += sana_io.read_annotations(ref_anno, class_name=ref_class)
 
-            # load hypothesis annotations with matching class name
-            HYP_ANNOS = []
-            for hyp_class in hypclass:
-                # load the annotations from the annotation file
-                HYP_ANNOS += sana_io.read_annotations(anno_fname, class_name=hyp_class)
+        #     # load hypothesis annotations with matching class name
+        #     HYP_ANNOS = []
+        #     for hyp_class in hypclass:
+        #         # load the annotations from the annotation file
+        #         HYP_ANNOS += sana_io.read_annotations(anno_fname, class_name=hyp_class)
 
-            # rescale the ROI annotations to the given pixel resolution
-            for ROI in ROIS:
-                if ROI.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(ROI, self.frame.lvl)
-            for REF_ANNO in REF_ANNOS:
-                if REF_ANNO.lvl != self.frame.lvl:
-                    self.dab.converter.rescale(REF_ANNO, self.frame.lvl)
-            for HYP_ANNO in HYP_ANNOS:
-                if HYP_ANNO.lvl != self.frame.lvl:
-                    self.dab.converter.rescale(HYP_ANNO, self.frame.lvl)
+        #     # rescale the ROI annotations to the given pixel resolution
+        #     for ROI in ROIS:
+        #         if ROI.lvl != thumb_frame.lvl:
+        #             self.dab.converter.rescale(ROI, self.frame.lvl)
+        #     for REF_ANNO in REF_ANNOS:
+        #         if REF_ANNO.lvl != self.frame.lvl:
+        #             self.dab.converter.rescale(REF_ANNO, self.frame.lvl)
+        #     for HYP_ANNO in HYP_ANNOS:
+        #         if HYP_ANNO.lvl != self.frame.lvl:
+        #             self.dab.converter.rescale(HYP_ANNO, self.frame.lvl)
             
-            # # create new plot w/ zoom in of ROI (self.frame)
-            # fig, axs = plt.subplots(1,2,sharex=True,sharey=True)
-            # for ROI in ROIS:
-            #      # Plotting the processed frame and processed frame with clusters
-            #     axs[0].imshow(self.frame.img, cmap='gray')
-            #     axs[0].set_title('Ref. Annos')
-            #     for REF_ANNO in REF_ANNOS:
-            #         # REF_ANNO.translate(params.data['loc'])
-            #         plot_poly(axs[0], REF_ANNO, color='red')
+        #     # # create new plot w/ zoom in of ROI (self.frame)
+        #     # fig, axs = plt.subplots(1,2,sharex=True,sharey=True)
+        #     # for ROI in ROIS:
+        #     #      # Plotting the processed frame and processed frame with clusters
+        #     #     axs[0].imshow(self.frame.img, cmap='gray')
+        #     #     axs[0].set_title('Ref. Annos')
+        #     #     for REF_ANNO in REF_ANNOS:
+        #     #         # REF_ANNO.translate(params.data['loc'])
+        #     #         plot_poly(axs[0], REF_ANNO, color='red')
 
-            #     axs[1].imshow(self.frame.img, cmap='gray')
-            #     axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
-            #     for HYP_ANNO in HYP_ANNOS:
-            #         # HYP_ANNO.translate(params.data['loc'])
-            #         plot_poly(axs[1], HYP_ANNO, color='blue')
+        #     #     axs[1].imshow(self.frame.img, cmap='gray')
+        #     #     axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
+        #     #     for HYP_ANNO in HYP_ANNOS:
+        #     #         # HYP_ANNO.translate(params.data['loc'])
+        #     #         plot_poly(axs[1], HYP_ANNO, color='blue')
 
 
-            # rescale the ROI annotations to the given pixel resolution
-            for ROI in ROIS:
-                if ROI.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(ROI, thumb_frame.lvl)
-            for REF_ANNO in REF_ANNOS:
-                if REF_ANNO.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(REF_ANNO, thumb_frame.lvl)
-            for HYP_ANNO in HYP_ANNOS:
-                if HYP_ANNO.lvl != thumb_frame.lvl:
-                    self.dab.converter.rescale(HYP_ANNO, thumb_frame.lvl)
+        #     # rescale the ROI annotations to the given pixel resolution
+        #     for ROI in ROIS:
+        #         if ROI.lvl != thumb_frame.lvl:
+        #             self.dab.converter.rescale(ROI, thumb_frame.lvl)
+        #     for REF_ANNO in REF_ANNOS:
+        #         if REF_ANNO.lvl != thumb_frame.lvl:
+        #             self.dab.converter.rescale(REF_ANNO, thumb_frame.lvl)
+        #     for HYP_ANNO in HYP_ANNOS:
+        #         if HYP_ANNO.lvl != thumb_frame.lvl:
+        #             self.dab.converter.rescale(HYP_ANNO, thumb_frame.lvl)
             
-            # TODO: if you plot the raw annotations that are just rescaled to level 2 then plotting the level 2 thumbnail image should fix the left plot
-            # just use loader.thumbnail as the image you're plotting
-            # plot the annotations
-            # get the top left coordinate and the size of the bounding centroid
+        #     # TODO: if you plot the raw annotations that are just rescaled to level 2 then plotting the level 2 thumbnail image should fix the left plot
+        #     # just use loader.thumbnail as the image you're plotting
+        #     # plot the annotations
+        #     # get the top left coordinate and the size of the bounding centroid
             
 
-            fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
-            for ROI in ROIS:
-                # Plotting the processed frame and processed frame with clusters
-                axs[0].imshow(thumb_frame.img, cmap='gray')
-                axs[0].set_title('Ref. Annos | Poly Count: %d' %len(REF_ANNOS))
-                for REF_ANNO in REF_ANNOS:
-                    # REF_ANNO.translate(params.data['loc'])
-                    plot_poly(axs[0], REF_ANNO, color='red')
+        #     fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
+        #     for ROI in ROIS:
+        #         # Plotting the processed frame and processed frame with clusters
+        #         axs[0].imshow(thumb_frame.img, cmap='gray')
+        #         axs[0].set_title('Ref. Annos | Poly Count: %d' %len(REF_ANNOS))
+        #         for REF_ANNO in REF_ANNOS:
+        #             # REF_ANNO.translate(params.data['loc'])
+        #             plot_poly(axs[0], REF_ANNO, color='red')
 
-                axs[1].imshow(thumb_frame.img, cmap='gray')
-                axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
-                for HYP_ANNO in HYP_ANNOS:
-                    # HYP_ANNO.translate(params.data['loc'])
-                    plot_poly(axs[1], HYP_ANNO, color='blue')
-            plt.show()
+        #         axs[1].imshow(thumb_frame.img, cmap='gray')
+        #         axs[1].set_title('Hyp. Annos | Poly Count: %d' %len(HYP_ANNOS))
+        #         for HYP_ANNO in HYP_ANNOS:
+        #             # HYP_ANNO.translate(params.data['loc'])
+        #             plot_poly(axs[1], HYP_ANNO, color='blue')
+        #     plt.show()
         # -------------------------------------------------------------
         # overlay the annotations onto the original frame       
     # 
     # end of run_tangle_detection
 
- 
-    # TODO: don't want to create the model everytime, should be it's own class maybe?
-    def run_tangle(self, odir, params):
-
-        model = TangleClassifier(self.frame)
-        probs = model.run()
-
-        # save the output probabilities
-        ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_TANGLE.npy'))
-        np.save(ofname, probs)
-    #
-    # end of run_tangle
-
-    def run_multiclass(self, odir, params):
-
-        model = MulticlassClassifier(self.frame)
-        probs = model.run()
-
-        sm_probs = softmax(probs, axis=0)
-        neuronal_preds = sm_probs[1] > 0.5
-        glial_preds = sm_probs[0] > 0.5
-        neuronal_ofname = os.path.join(odir, os.path.basename(self.fname).replace('.tif', '_NEURONAL.png'))
-        glial_ofname = os.path.join(odir, os.path.basename(self.fname).replace('.tif', '_GLIAL.png'))
-        
-        Image.fromarray(neuronal_preds).save(neuronal_ofname)
-        Image.fromarray(glial_preds).save(glial_ofname)        
-        
-        # save the output probabilities
-        #ofname = os.path.join(odir, os.path.basename(self.fname).replace('.svs', '_WILDCAT.npy'))
-        #np.save(ofname, probs)
-    #
-    # end of run_wildcat
-
 #
-# end of AT8Processor
+# end of TauC3Processor
 
 #
 # end of file
