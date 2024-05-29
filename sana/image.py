@@ -12,8 +12,7 @@ from matplotlib import colors
 
 # sana packages
 from sana import geo
-from sana_tiler import Tiler
-
+import sana_tiler
 
 # TODO: check parameter usage
 class Frame:
@@ -273,7 +272,7 @@ class Frame:
 
         tsize = geo.Point(200, 200, is_micron=True)
         tstep = geo.Point(10, 10, is_micron=True)
-        tiler = Tiler(level, self.converter, tsize, tstep)
+        tiler = sana_tiler.Tiler(level, self.converter, tsize, tstep)
 
         # run the downsampling
         ds_frame = self.copy()
@@ -319,7 +318,7 @@ class Frame:
             axs[1].imshow(background_frame.img)
             axs[2].imshow(self.img)
 
-    def rotate(self, angle):
+    def rotate(self, angle, interpolation=cv2.INTER_LINEAR):
         """
         Rotates the image TODO around it's center
         :param angle: rotation angle in degrees
@@ -328,7 +327,7 @@ class Frame:
         M, w, h = self.get_rotation_matrix(angle)
 
         # perform the affine transformation
-        self.warp_affine(M, w, h)
+        self.warp_affine(M, w, h, interpolation=interpolation)
 
     def get_rotation_matrix(self, angle):
         """
@@ -355,7 +354,7 @@ class Frame:
 
         return M, new_w, new_h
     
-    def warp_affine(self, M, w, h):
+    def warp_affine(self, M, w, h, interpolation=cv2.INTER_LINEAR):
         """
         Performs an affine transformation using the transformation matrix and the dimensions
         :param M: tranformation matrix
@@ -368,6 +367,7 @@ class Frame:
             border_value = (255,255,255)
         self.img = cv2.warpAffine(self.img, M,
                                   dsize=(w, h),
+                                  flags=interpolation,
                                   borderValue=border_value)
         self.check_channels() # TODO
 

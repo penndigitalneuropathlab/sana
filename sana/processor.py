@@ -3,10 +3,8 @@
 import numpy as np
 from matplotlib import pyplot as plt
 import cv2
+import skfmm
 from tqdm import tqdm
-from copy import copy
-import multiprocessing as mp
-from pathos.multiprocessing import ProcessPool
 
 # sana modules
 from sana.image import ImageTypeException, create_mask, frame_like, Frame
@@ -177,72 +175,71 @@ class Processor:
     
     def detect_somas(self, pos, minimum_soma_radius=1, min_max_filter_iterations=1):
 
-        # mask out background
-        dab_masked = self.dab.copy()
-        dab_masked.mask(pos)
+        # apply the distance transform
+        img_dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
 
         # apply min-max filter to find centers of somas
-        img_minmax = sana.filter.min_max_filter(self.frame, dab_masked.img, minimum_soma_radius, min_max_filter_iterations, debug=self.logger.generate_plots)
+        if min_max_filter_iterations > 0:
+            img_minmax = sana.filter.min_max_filter(self.frame, img_dist, minimum_soma_radius, min_max_filter_iterations, debug=self.logger.generate_plots)
 
-        # create an image containing areas that are definitely part of a soma
-        candidates = np.where(img_minmax == 1)
-        r0 = 3
-        sure_fg = np.zeros_like(self.frame.img, dtype=np.uint8)
-        for i in range(len(candidates[0])):
-            sure_fg = cv2.circle(
-                sure_fg, 
-                (candidates[1][i], candidates[0][i]), 
-                r0, color=255, thickness=-1)
+            # get the coordinates of the soma centers
+            soma_ctrs = np.array(np.where(img_minmax == 1)).T[:,::-1]
+        else:
+            soma_blobs = [x.polygon for x in pos.get_contours()[0]]
+            soma_ctrs = np.rint(np.array([blob.get_centroid()[0] for blob in soma_blobs])).astype(int)
 
-        # areas not close to the sure_fg are definitely background
-        # TODO: clean up and use sana.filter
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9,9))
-        sure_bg = cv2.dilate(pos.img, kern, iterations=3)
+        if self.logger.generate_plots:
+            fig, ax = plt.subplots(1,1)
+            ax.imshow(self.frame.img)
+            ax.plot(*soma_ctrs.T, '*', color='red')
 
-        # areas close to sure_fg are unknown
-        unknown_pixels = cv2.subtract(sure_bg, sure_fg[:,:,0])
-
-        # run the connected components algorithm to get markers for each unique soma
-        ret, markers = cv2.connectedComponents(sure_fg[:,:,0])
-        markers += 1
-        markers[unknown_pixels == 1] = 0
-
-        # watershed segmentation to get soma segmentation
-        # TODO: what to use here for segmentation
-        seg_rgb = np.concatenate([pos.img, pos.img, pos.img], axis=-1) 
-        markers = cv2.watershed(seg_rgb, markers)
-        markers[markers <= 1] = 0
-
-        # convert the marker image to polygons
-        njobs = 8
-        somas = self.markers_to_polygons(markers, njobs)
-
-        return somas
-
-    def markers_to_polygons(self, markers, njobs):
+        return soma_ctrs
+    
+    def segment_somas(self, pos, soma_ctrs, n_directions, sigma_x, sigma_y, fm_threshold):
         
-        # get the the height of each section of the frame to split into
-        step = int(self.frame.size()[1]/njobs)
-        args_list = []
+        # define the directions to test
+        thetas = np.linspace(0, np.pi, n_directions)
+        filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=sigma_x, sg_y=sigma_y) for th in thetas]
 
-        # TODO: this needs to be windowed to avoid boundary issues
-        for n in range(njobs):
-            st = n*step
-            en = st+step
-            args_list.append({
-                'markers': markers[st:en, :],
-                'st': st,
-                'en': en,
-            })
-        pool = mp.Pool(njobs)
-        polygons = pool.map(run_segment_markers, args_list)
-        polygons = [poly for polys in polygons for poly in polys]
-        for p in polygons:
-            p.is_micron = False
-            p.level = self.frame.level
-            p.order = 1
+        # apply the filters to the image
+        self.logger.debug('Applying anisotropic filters...')
+        directions = np.zeros((n_directions, pos.size()[1], pos.size()[0]), dtype=float)
+        for k in tqdm(range(n_directions)):
+            directions[k] = filters[k].apply(pos.img[:,:,0])
 
-        return polygons
+        # calculate the directional ratio of the image
+        mi = np.min(directions, axis=0)
+        mx = np.max(directions, axis=0)
+        directional_ratio = np.divide(mi**3, mx, where=mx!=0)
+
+        # apply fast march algorithm using soma centers as the 
+        phi = np.full_like(pos.img[:,:,0], -1, dtype=int)
+        phi[soma_ctrs[:,1], soma_ctrs[:,0]] = 1
+
+        speed = directional_ratio
+        speed[pos.img[:,:,0] == 0] = 0
+
+        t = skfmm.travel_time(phi, speed)
+        t[t.mask] = np.inf
+
+        soma_mask = sana.image.frame_like(pos, (t < fm_threshold).astype(np.uint8))
+
+        if self.logger.generate_plots:
+            fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
+            axs = axs.ravel()
+            ax = axs[0]
+            ax.imshow(self.frame.img)
+            ax.plot(*soma_ctrs.T, '*', color='red')
+            ax = axs[1]
+            ax.imshow(speed, cmap='gray')
+            ax.plot(*soma_ctrs.T, '*', color='red')
+            ax = axs[2]
+            ax.imshow(t, cmap='gray', vmax=fm_threshold*1.5, vmin=0)
+            overlay = sana.image.overlay_mask(self.frame, soma_mask)
+            ax = axs[3]
+            ax.imshow(overlay.img)
+
+        return soma_mask
 
 class HDABProcessor(Processor):
     """
@@ -313,9 +310,14 @@ class HDABProcessor(Processor):
             max_dev_scaler=1.0,
             max_dev_endpoint=255,
             morphology_filters=[],
+            run_soma_detection=False,
             minimum_soma_radius=1,
             min_max_filter_iterations=1,
-            run_soma_detection=False,
+            run_soma_segmentation=False,
+            n_directions=12,
+            fm_threshold=10,
+            directional_sigma=5,
+            run_object_segmentation=False,
             sta_sigma=(10,10),
             run_sta=False,
             run_model=False,
@@ -340,15 +342,28 @@ class HDABProcessor(Processor):
             pass
 
         if run_soma_detection:
-            self.somas = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
 
-            # get the pixel classifications for the soma detections
-            self.soma_mask = sana.image.create_mask_cv2(self.somas, self.frame)
-            ret.append(['soma_mask', self.soma_mask])
+            # find the centers of each soma using min-max filter
+            self.logger.debug('Finding centers of somas...')
+            self.soma_ctrs = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
+            ret.append(['soma_ctrs', self.soma_ctrs])
 
-            # TODO: segment objects based on somas
+            if run_soma_segmentation:
 
-            # TODO: mask pos_dab by soma mask
+                # segment the somas using directional radius and fast march
+                # NOTE: using only threshold here no morphology filters
+                self.logger.debug('Segmenting somas...')
+                pos_pix = self.dab.copy()
+                self.classify_pixels(pos_pix, threshold, mask=self.main_mask)
+                self.soma_mask = self.segment_somas(pos_pix, self.soma_ctrs, n_directions=n_directions, sigma_x=directional_sigma/3, sigma_y=directional_sigma, fm_threshold=fm_threshold)
+                ret.append(['soma_mask', self.soma_mask])
+
+                # TODO: fast march combines nearby somas, probably need to watershed using the result of fast march
+
+            if run_object_segmentation:
+                # TODO: segment using soma_ctrs
+                # TODO: add process connection
+                pass
 
         # run the specified wildcat model
         if run_model:
@@ -357,20 +372,3 @@ class HDABProcessor(Processor):
 
         # return all of the processed images
         return ret
-
-def run_segment_markers(args):
-    return segment_markers(**args)
-    
-def segment_markers(markers, st, en):
-    cells = []
-    z = np.zeros((markers.shape[0], markers.shape[1]), np.uint8)
-    o = z.copy() + 1
-    marker_vals = np.sort(np.unique(markers))[1:]
-    for i, val in enumerate(marker_vals):
-        f = Frame(np.where(markers == val, o, z))
-        bodies, holes = f.get_contours()
-        if len(bodies) != 0:
-            cell = bodies[0].polygon.connect()
-            cell[:,1] += st
-            cells.append(cell)
-    return cells

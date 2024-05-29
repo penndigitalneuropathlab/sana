@@ -2,12 +2,14 @@
 # system modules
 import os
 import sys
+import ast
 
 # installed modules
 import numpy as np
 import cv2
 import numba
 import cv2
+from scipy import signal
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -118,6 +120,20 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
 #
 # end of minmax_filter
 
+class AnisotropicGaussianFilter:
+    def __init__(self, th, sg_x, sg_y):
+        n = int(round(sg_y*3))
+        self.kernel = np.zeros((n, n), dtype=float)
+        for j in range(n):
+            y = j - n // 2
+            for i in range(n):
+                x = i - n // 2
+
+                self.kernel[j,i] = (1/(2*np.pi*sg_x*sg_y)) * \
+            np.exp(-( ( (x * np.cos(th) + y * np.sin(th))**2/(sg_x)**2 ) + ( (-x*np.sin(th) + y*np.cos(th))**2/(sg_y)**2 ) )/2)
+                
+        self.apply = lambda x: signal.convolve2d(x, self.kernel, mode='same') / np.sum(self.kernel)
+
 
 class MorphologyFilter:
     """
@@ -142,15 +158,16 @@ class MorphologyFilter:
         self.kernel_type = self.NAME_TO_KERNEL[self.kernel_type_name]
 
         if type(kernel_radius) is int:
-            self.kernel_radius = (2*kernel_radius+1, 2*kernel_radius+1)
+            self.kernel_diameter = (2*kernel_radius+1, 2*kernel_radius+1)
         else:
-            self.kernel_radius = (2*kernel_radius[0]+1,2*kernel_radius[1]+1)
+            kernel_radius = ast.literal_eval(kernel_radius)
+            self.kernel_diameter = (2*kernel_radius[0]+1,2*kernel_radius[1]+1)
 
         self.n_iterations = n_iterations
 
-        self.kernel = cv2.getStructuringElement(self.kernel_type, self.kernel_radius)
+        self.kernel = cv2.getStructuringElement(self.kernel_type, self.kernel_diameter)
 
         self.apply = lambda x: cv2.morphologyEx(x, self.filter_type, self.kernel, iterations=self.n_iterations)
 
     def __str__(self):
-        return f"{self.n_iterations} iteration(s) of {self.filter_type_name} filter -- {self.kernel_radius} {self.kernel_type_name}"
+        return f"{self.n_iterations} iteration(s) of {self.filter_type_name} filter -- {self.kernel_diameter} {self.kernel_type_name}"
