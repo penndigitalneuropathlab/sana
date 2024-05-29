@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 import cv2
 import skfmm
 from tqdm import tqdm
+from shapely import geometry
 
 # sana modules
 from sana.image import ImageTypeException, create_mask, frame_like, Frame
@@ -361,9 +362,62 @@ class HDABProcessor(Processor):
                 # TODO: fast march combines nearby somas, probably need to watershed using the result of fast march
 
             if run_object_segmentation:
-                # TODO: segment using soma_ctrs
+
+                sure_fg = np.zeros_like(self.pos_dab.img)[:,:,0]
+                sure_fg[self.soma_ctrs[:,1], self.soma_ctrs[:,0]] = 1
+                _, markers = cv2.connectedComponents(sure_fg)
+
+                # watershed based on the already thresholded image
+                pos_tiled = np.tile(self.pos_dab.img, 3)
+                markers = cv2.watershed(pos_tiled, markers)
+
+                # remove the background segmentation
+                markers += 1
+                bg = np.argmax(np.bincount(markers.flatten()))
+                markers[markers == bg] = 0
+
+                # convert to binary image
+                binary_markers = markers.copy()
+                binary_markers[binary_markers != 0] = 1
+                binary_markers = binary_markers.astype(np.uint8)
+
+                # contour detection to convert markers to polygons
+                objs = []
+                c, h = cv2.findContours(binary_markers, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
+
+                # look for body contours
+                # TODO: this doesn't split if exactly 1 touching diagonal connection
+                # TODO: looks like there are some objects missing?
+                for i in range(len(c)):
+                    if h[0][i][3] == -1:
+
+                        # create the body polygon
+                        body = geometry.Polygon(np.squeeze(c[i]))
+
+                        # look for holes in this body
+                        for j in range(len(c)):
+                            if h[0][j][3] == i:
+
+                                # create the hole polygon
+                                hole = geometry.Polygon(np.squeeze(c[j]))
+
+                                # remove the hole from the body
+                                body = body.difference(hole)
+
+                        res = sana.geo.from_shapely(body)
+                        if type(res) is list:
+                            objs += [x for x in res if not x is None]
+                        elif not res is None:
+                            objs.append(res)
+
+                if self.logger.generate_plots:
+                    fig, axs = plt.subplots(1,3)
+                    axs[0].imshow(self.frame.img)
+                    axs[1].imshow(markers)
+                    axs[2].imshow(self.frame.img)
+                    [axs[2].plot(*obj.T) for obj in objs]
+
                 # TODO: add process connection
-                pass
 
         # run the specified wildcat model
         if run_model:

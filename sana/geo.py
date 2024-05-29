@@ -6,6 +6,7 @@ import math
 import numpy as np
 from scipy.spatial import ConvexHull
 import shapely.geometry
+
 from numba import jit
 
 class Converter:
@@ -468,8 +469,7 @@ class Polygon(Array):
         """
         Converts the Polygon to a Shapely object for access to certain functions not worth implementing
         """
-        return shapely.geometry.Polygon([[self[i,0], self[i,1]] \
-                                         for i in range(self.shape[0])])
+        return shapely.geometry.Polygon(self)
         
     def to_annotation(self, class_name="", annotation_name="", confidence=1.0, connect=True):
         """
@@ -751,18 +751,20 @@ def inverse_transform_array(x, loc, M, crop_loc):
 #
 # end of transform_inv_poly
 
- # this function converts shapely.Polygon's and shapely.MultiPolygon's to sana_geo.Polygon's
-# NOTE: Multi -> Poly takes the portion of the Multi w/ the largest area
-# TODO: EDIT this!
-def from_shapely(p, is_micron=False, lvl=0, order=1):
-    if type(p) is MultiPolygon:
-        areas = [geom.area for geom in p.geoms]
-        return from_shapely(p.geoms[np.argmax(areas)])
-    else:
+def from_shapely(p, is_micron=False, level=0, order=1):
+    """
+    this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
+    """
+    if type(p) is shapely.geometry.MultiPolygon:
+        polygons = []
+        for geom in p.geoms:
+            polygons.append(from_shapely(geom, is_micron=is_micron, level=level, order=order))
+        return polygons
+    elif type(p) is shapely.geometry.Polygon:
         xs, ys = p.exterior.xy
-        return Polygon(xs, ys, is_micron, lvl, order)
-#
-# end of from_shapely
+        return Polygon(xs, ys, is_micron=is_micron, level=level, order=order)
+    else:
+        return None
 
 # removes self-intersecting points and returns a new Polygon
 # NOTE: supports sana_geo.Polygon or shapely.Polygon
