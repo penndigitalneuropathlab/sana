@@ -411,7 +411,7 @@ class HDABProcessor(Processor):
                             objs.append(res)
 
                 if self.logger.generate_plots:
-                    fig, axs = plt.subplots(1,3)
+                    fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
                     axs[0].imshow(self.frame.img)
                     axs[1].imshow(markers)
                     axs[2].imshow(self.frame.img)

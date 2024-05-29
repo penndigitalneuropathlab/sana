@@ -9,6 +9,7 @@ import numpy as np
 from PIL import Image, ImageDraw
 import nibabel as nib
 from matplotlib import colors
+from matplotlib import pyplot as plt
 
 # sana packages
 from sana import geo
@@ -242,7 +243,7 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = filter.apply(self.img)[:,:,None]
 
-    # TODO: maybe look at histogram to auto-set the min/max values?
+    # TODO: tiler is not lining up properly i think
     def remove_background(self, min_background=1, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by creating a background image, which is then subtracted by the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
@@ -258,7 +259,7 @@ class Frame:
             raise ChannelException('Cannot apply background removal in RGB images')
 
         if debug:
-            fig, axs = plt.subplots(1,3, figsize=(20,20))
+            fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
             axs[0].imshow(self.img)
 
         # TODO: check this, or maybe make it an argument
@@ -270,7 +271,7 @@ class Frame:
         # we will tile the image during the convolution with the gaussian kernel
         # TODO: check these params, make them arguments?
 
-        tsize = geo.Point(200, 200, is_micron=True)
+        tsize = geo.Point(100, 100, is_micron=True)
         tstep = geo.Point(10, 10, is_micron=True)
         tiler = sana_tiler.Tiler(level, self.converter, tsize, tstep)
 
@@ -288,7 +289,7 @@ class Frame:
 
         # 2D gaussian kernel to apply to the tiles
         kern_length = tiles[0][0].shape[0]
-        kern_sigma = 1.0 # TODO: make this a parameter
+        kern_sigma = kern_length/5
         kern = gaussian_kernel(kern_length, kern_sigma)
 
         # start the convolution
@@ -299,13 +300,18 @@ class Frame:
                 tile = tiles[i][j]
                 valid = (tile >= min_background) & (tile <= max_background)
 
+                # fig, axs = plt.subplots(1,2)
+                # axs[0].imshow(tile)
+                # axs[1].imshow(tile*kern)
+                # plt.show()
+
                 # background is calculated as the sum of valid pixels after applying the gaussian kernel
                 background_value = np.sum((tile * kern)[valid])
                 background_image[i][j] = background_value
 
         # resize the background frame back to original resolution
         background_frame = frame_like(self, background_image)
-        background_frame.resize(self.size())
+        background_frame.resize(self.size(), interpolation=cv2.INTER_CUBIC)
 
         # finally, subtract the background
         # NOTE: we clip to 0 here, this is okay since this will be background data which we don't care about
@@ -317,6 +323,7 @@ class Frame:
         if debug:
             axs[1].imshow(background_frame.img)
             axs[2].imshow(self.img)
+            plt.show()
 
     def rotate(self, angle, interpolation=cv2.INTER_LINEAR):
         """
