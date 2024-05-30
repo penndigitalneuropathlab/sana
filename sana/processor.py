@@ -8,11 +8,11 @@ from tqdm import tqdm
 from shapely import geometry
 
 # sana modules
-from sana.image import ImageTypeException, create_mask, frame_like, Frame
-from sana.color_deconvolution import StainSeparator
+import sana.color_deconvolution
+import sana.image
+import sana.threshold
+import sana.color_deconvolution
 import sana.filter
-
-from sana_thresholds import max_dev
 
 class Processor:
     """
@@ -35,7 +35,7 @@ class Processor:
 
         # generate the main mask
         self.main_roi = main_roi.to_polygon()
-        self.main_mask = create_mask([self.main_roi], self.frame, x=0, y=1)
+        self.main_mask = sana.image.create_mask([self.main_roi], self.frame, x=0, y=1)
 
         # generate the sub masks
         self.sub_rois = []
@@ -46,13 +46,13 @@ class Processor:
                 self.sub_masks.append(None)
             else:
                 self.sub_rois.append(sub_rois[i].to_polygon())
-                self.sub_masks.append(create_mask([self.sub_rois[i]], self.frame, x=0, y=1))
+                self.sub_masks.append(sana.image.create_mask([self.sub_rois[i]], self.frame, x=0, y=1))
         #
         # end of sub_masks loop
 
         # generate the ignore mask
         self.ignore_rois = [ignore_roi.to_polygon() for ignore_roi in ignore_rois]
-        self.ignore_mask = create_mask(self.ignore_rois, self.frame, x=1, y=0)
+        self.ignore_mask = sana.image.create_mask(self.ignore_rois, self.frame, x=1, y=0)
 
         # apply the ignore mask to the other masks
         self.main_mask.mask(self.ignore_mask)
@@ -64,7 +64,7 @@ class Processor:
         :param frame: input frame, not necessarily self.frame, since multiple Frames could be generated from self.frame and various %AO values can be calculated
         """
         if not frame.is_binary():
-            raise ImageTypeException("Input frame must be a binary image for %AO quantitation")
+            raise sana.image.ImageTypeException("Input frame must be a binary image for %AO quantitation")
 
         # apply the mask
         frame.mask(self.main_mask)
@@ -256,11 +256,11 @@ class HDABProcessor(Processor):
         self.run_background_subtraction = run_background_subtraction
         self.subtract_dab = subtract_dab
 
-        self.ss = StainSeparator('H-DAB', self.stain_vector)
+        self.ss = sana.color_deconvolution.StainSeparator('H-DAB', self.stain_vector)
         self.stains = self.ss.separate(self.frame.img)
-        self.hem = frame_like(self.frame, self.stains[:,:,0])
-        self.dab = frame_like(self.frame, self.stains[:,:,1])
-        self.res = frame_like(self.frame, self.stains[:,:,2])
+        self.hem = sana.image.frame_like(self.frame, self.stains[:,:,0])
+        self.dab = sana.image.frame_like(self.frame, self.stains[:,:,1])
+        self.res = sana.image.frame_like(self.frame, self.stains[:,:,2])
 
         if logger.generate_plots:
             fig, axs = plt.subplots(2, 3, sharex=True, sharey=True)
@@ -308,8 +308,7 @@ class HDABProcessor(Processor):
             ax.set_title('DAB (Preprocessed)')
 
     def run(self,
-            max_dev_scaler=1.0,
-            max_dev_endpoint=255,
+            triangular_strictness=0.0,
             morphology_filters=[],
             run_soma_detection=False,
             minimum_soma_radius=1,
@@ -330,7 +329,11 @@ class HDABProcessor(Processor):
 
         # get the threshold for the DAB
         hist = self.dab.get_histogram()
-        threshold = max_dev(hist, scale=max_dev_scaler, mx=max_dev_endpoint, debug=self.logger.generate_plots)
+        threshold = sana.threshold.triangular_method(
+            hist, 
+            strictness=triangular_strictness,
+            debug=self.logger.generate_plots
+        )
 
         # perform pixel classification by thresholding and morphology filters
         self.pos_dab = self.dab.copy()
