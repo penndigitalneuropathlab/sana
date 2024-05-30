@@ -10,8 +10,8 @@ import numpy as np
 from matplotlib import pyplot as plt
 
 # sana packages
-from sana import geo
-from sana.image import Frame
+import sana.image
+import sana.geo
 
 class FileNotSupported(Exception):
     def __init__(self, f):
@@ -60,7 +60,7 @@ class Loader(openslide.OpenSlide):
                 self.mpp = 1.0
 
         # define the converter object to convert units and rescale data
-        self.converter = geo.Converter(self.mpp, self.ds)
+        self.converter = sana.geo.Converter(self.mpp, self.ds)
         self.slide_threshold = None
         self.slide_color = (255, 255, 255)
 
@@ -92,8 +92,8 @@ class Loader(openslide.OpenSlide):
         """
         self.thumbnail_level = self.lc - 1
         h, w = self.dim[self.thumbnail_level]
-        loc = geo.Point(0, 0, False, self.thumbnail_level)
-        size = geo.Point(h, w, False, self.thumbnail_level)
+        loc = sana.geo.Point(0, 0, False, self.thumbnail_level)
+        size = sana.geo.Point(h, w, False, self.thumbnail_level)
         return self.load_frame(loc, size, self.thumbnail_level)
 
     def load_frame(self, loc, size, level=None, pad_color=0):
@@ -158,7 +158,7 @@ class Loader(openslide.OpenSlide):
         img = np.concatenate((padx1, img, padx2), axis=1)
 
         # convert to Frame object
-        return Frame(
+        return sana.image.Frame(
             img, level=level, converter=self.converter,
             slide_threshold=self.slide_threshold,
             slide_color=self.slide_color,
@@ -265,13 +265,13 @@ class Loader(openslide.OpenSlide):
             angle += 180
 
         # create a bounding box ROI from the rotated curves
-        roi = geo.get_polygon_from_curves(c1, c2)
+        roi = sana.geo.get_polygon_from_curves(c1, c2)
         loc, size = roi.bounding_box()
 
         # apply the padding to get the final roi which we will crop to in the rotated coordinate space
         loc -= padding
         size += 2*padding
-        roi = geo.rectangle_like(loc, size, c1)
+        roi = sana.geo.rectangle_like(loc, size, c1)
 
         # rotate the roi back to the original coordinate space
         roi.rotate(center, angle)
@@ -347,7 +347,7 @@ class Loader(openslide.OpenSlide):
         angle = v.get_angle()+90
 
         # rotate the vector to be vertical
-        c = geo.Point(0, 0, False, self.level)
+        c = sana.geo.Point(0, 0, False, self.level)
         v.rotate(c, -angle)
 
         # define the coords of the rotated frame to load in using the extreme y values
@@ -359,7 +359,7 @@ class Loader(openslide.OpenSlide):
         pmax = v[np.argmax(v[:,1])]
         y0 = pmin[1]
         y1 = pmax[1]
-        roi = geo.Polygon([x0, x1, x1, x0], [y0, y0, y1, y1], is_micron=False, level=self.level)
+        roi = sana.geo.Polygon([x0, x1, x1, x0], [y0, y0, y1, y1], is_micron=False, level=self.level)
 
         # rotate back to the origin
         v.rotate(c, angle)
@@ -383,7 +383,7 @@ class Loader(openslide.OpenSlide):
         frame.frame_padding = padding
 
         # get the tiles centered on the 2 extreme vertices
-        size = geo.Point(50, 50, is_micron=True)
+        size = sana.geo.Point(50, 50, is_micron=True)
         self.converter.to_pixels(size, self.level)
         t1 = frame.get_tile(pmin-size//2, size)
         t2 = frame.get_tile(pmax-size//2, size)
@@ -493,3 +493,54 @@ class Loader(openslide.OpenSlide):
         # finally, return the orthogonalized frame
         return frame
     
+
+# loads a series of Frames into memory from a slide image
+# use locs argument to define a list of locations to load at
+class Framer:
+    """ Loads a series of Frames into memory from the slide Loader. 
+    :param loader: Loader object
+    :param size: (M,N) Point, specifies size of Frame to load
+    :param step: (x,y) Point, distance between Frames, defaults to size
+    :param fpad: (x,y) Point, amount to pad to the frame
+    """
+    def __init__(self, loader, size, step=None, fpad=None, rois=[]):
+
+        # store the slide loader
+        self.loader = loader
+        self.converter = self.loader.converter
+        self.level = self.loader.level
+        
+        # set the frame size
+        self.size = size
+        self.converter.to_pixels(self.size, self.level)
+        self.size = self.converter.to_int(self.size)
+
+        # set the frame step
+        if step is None:
+            self.step = copy(self.size)
+        else:
+            self.step = step
+        self.converter.to_pixels(self.step, self.lvl)
+        self.step = self.converter.to_int(self.step)
+
+        # set the frame pad amount
+        if fpad is None:
+            fpad = sana.geo.Point(0, 0, False, self.loader.lvl)
+        self.converter.to_pixels(fpad, self.lvl)
+        self.fpad = self.converter.to_int(fpad)
+
+        # calculate the number of frames in the slide
+        slide_size = self.loader.get_dim()
+        self.converter.to_pixels(slide_size, self.level)
+        slide_size = self.converter.to_int(slide_size)
+        self.nframes = np.ceil(slide_size / self.step)
+
+    def load(self, i, j):
+        x = i * self.step[0]
+        y = j * self.step[1]
+        loc = sana.geo.point_like(x, y, self.size) - self.fpad
+        size = self.size + 2*self.fpad
+        frame = self.loader.load_frame(loc, size)
+        frame.frame_padding = self.fpad
+
+        return frame
