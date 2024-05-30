@@ -13,7 +13,6 @@ from matplotlib import pyplot as plt
 
 # sana packages
 from sana import geo
-import sana_tiler
 
 # TODO: check parameter usage
 class Frame:
@@ -243,7 +242,6 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = filter.apply(self.img)[:,:,None]
 
-    # TODO: tiler is not lining up properly i think
     def remove_background(self, min_background=1, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by creating a background image, which is then subtracted by the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
@@ -262,27 +260,20 @@ class Frame:
             fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
             axs[0].imshow(self.img)
 
-        # TODO: check this, or maybe make it an argument
         # run this function at a lower resolution to make it run faster
         level = 1
         ds = self.converter.ds[level] / self.converter.ds[self.level]
-        ds_size = self.size() / ds # TODO: is this int?
-
-        # we will tile the image during the convolution with the gaussian kernel
-        # TODO: check these params, make them arguments?
-
-        tsize = geo.Point(100, 100, is_micron=True)
-        tstep = geo.Point(10, 10, is_micron=True)
-        tiler = sana_tiler.Tiler(level, self.converter, tsize, tstep)
+        ds_size = self.size() / ds
 
         # run the downsampling
         ds_frame = self.copy()
-        ds_frame.resize(ds_size, interpolation=cv2.INTER_NEAREST) # TODO: check interpolation
-        tiler.set_frame(ds_frame)
+        ds_frame.resize(ds_size, interpolation=cv2.INTER_LINEAR)
 
-        # load the tiles
-        tiles = tiler.load_tiles()
-        tds = tiler.ds
+        # get the tiles for the convolution
+        # TODO: check the parameters, make these arg
+        tsize = geo.Point(100, 100, is_micron=True)
+        tstep = geo.Point(10, 10, is_micron=True)
+        tiles = ds_frame.to_tiles(tsize, tstep)
 
         # image array that stores the background values for each tile
         background_image = np.zeros([tiles.shape[0], tiles.shape[1]], dtype=float)
@@ -299,11 +290,6 @@ class Frame:
                 # get the pixels within the value range in the tile
                 tile = tiles[i][j]
                 valid = (tile >= min_background) & (tile <= max_background)
-
-                # fig, axs = plt.subplots(1,2)
-                # axs[0].imshow(tile)
-                # axs[1].imshow(tile*kern)
-                # plt.show()
 
                 # background is calculated as the sum of valid pixels after applying the gaussian kernel
                 background_value = np.sum((tile * kern)[valid])
@@ -391,13 +377,14 @@ class Frame:
         elif alignment == 'center':
             before = pad//2
             after = pad - before
-        elif alignment == 'right':
+        elif alignment == 'after':
             before = geo.point_like(pad, (0,0))
             after = pad
-        self.img = np.pad(self.img, ((before[1], after[1]), # y
+        img = np.pad(self.img, ((before[1], after[1]), # y
                                      (before[0], after[0]), # x
                                      (0, 0),                # c
                                      ), mode=mode)
+        return frame_like(self, img)
         
     def save(self, fpath, invert_sform=False, spacing=None):
         """
@@ -625,6 +612,45 @@ class Frame:
         bodies = [c for c in self.contours if c.body]
         holes = [c for c in self.contours if c.hole]
         return bodies, holes
+
+    def to_tiles(self, tsize, tstep):
+        if not self.is_gray():
+            raise ChannelException(f"Must be a 1 channel image to tile -- dtype={self.frame.img.dtype}")
+        
+        # convert to correct units
+        if not self.converter is None:
+            self.converter.to_pixels(tsize, self.level)
+            self.converter.to_pixels(tstep, self.level)
+            tsize = self.converter.to_int(tsize)
+            tstep = self.converter.to_int(tstep)
+
+        # make sure the tile size is odd
+        if tsize[0] % 2 == 0: tsize[0] += 1
+        if tsize[1] % 2 == 0: tsize[1] += 1
+
+        # pad the frame so that we have center aligned tiles
+        padsize = tsize - 1
+        padded_frame = self.pad(padsize, alignment='center', mode='constant')
+
+        # calculate the stride lengths
+        w, h = padded_frame.size()
+        strides = (
+            padded_frame.img.itemsize * w * tstep[1], # num bytes between tiles in y direction
+            padded_frame.img.itemsize * tstep[0], # num bytes between tiles in x direction
+            padded_frame.img.itemsize * w, # num bytes between elements in y direction
+            padded_frame.img.itemsize * 1, # num bytes between elements in x direction
+        )
+
+        # calculate the output shape
+        shape = (
+            int(round((h-tsize[1]) // tstep[1])) + 1,
+            int(round((w-tsize[0]) // tstep[0])) + 1,
+            tsize[1],
+            tsize[0],
+        )
+
+        # perform the tiling
+        return np.lib.stride_tricks.as_strided(padded_frame.img, shape=shape, strides=strides)
 
 class Contour:
     """
