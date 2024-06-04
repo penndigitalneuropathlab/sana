@@ -11,7 +11,7 @@ from shapely import geometry
 import sana.color_deconvolution
 import sana.image
 import sana.threshold
-import sana.color_deconvolution
+import sana.sta
 import sana.filter
 
 class Processor:
@@ -318,8 +318,9 @@ class HDABProcessor(Processor):
             fm_threshold=10,
             directional_sigma=5,
             run_object_segmentation=False,
-            sta_sigma=(10,10),
             run_sta=False,
+            sta_sigma=(10,10),
+            sta_strictness=0.0,
             run_model=False,
             **kwargs):
         super().run(**kwargs)
@@ -341,9 +342,37 @@ class HDABProcessor(Processor):
         ret.append(['pos_dab', self.pos_dab])
 
         # run the structure tensor analysis to find the orientation of the DAB
+        # TODO: move to function
         if run_sta:
-            # TODO: this can save the V/H/D sta data
-            pass
+            # get the coherence of the image, and the "strength" of each direction
+            coh, ang = sana.sta.run_directional_sta(self.dab, sta_sigma)
+            
+            # generate a probability image using coh, DAB, and angular strength
+            prob = coh * ang * self.dab.img.astype(float)
+            prob /= np.max(prob)
+
+            angular_thresholds = []
+            for i in range(prob.shape[2]):
+                p = prob[:,:,i].flatten()
+                hist = np.histogram(p, 255)[0].astype(float)
+                angular_thresholds.append(sana.threshold.triangular_method(hist, strictness=sta_strictness) / 255)
+
+            V = sana.image.Frame(((prob[:,:,0] >= angular_thresholds[0]) & (np.argmax(prob, axis=2) == 0)).astype(np.uint8))
+            H = sana.image.Frame(((prob[:,:,1] >= angular_thresholds[1]) & (np.argmax(prob, axis=2) == 1)).astype(np.uint8))
+            D = sana.image.Frame(((prob[:,:,2] >= angular_thresholds[2]) & (np.argmax(prob, axis=2) == 2)).astype(np.uint8))
+            ret.append(['vertical', V])
+            ret.append(['horizontal', H])
+            ret.append(['diagonal', D])
+
+            if self.logger.generate_plots:
+                overlay = self.frame.copy()
+                overlay = sana.image.overlay_mask(overlay, V, color='red')
+                overlay = sana.image.overlay_mask(overlay, H, color='blue')
+                overlay = sana.image.overlay_mask(overlay, D, color='orange')
+                fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
+                axs[0].imshow(self.frame.img)
+                axs[1].imshow(prob)
+                axs[2].imshow(overlay.img)
 
         if run_soma_detection:
 
@@ -352,6 +381,7 @@ class HDABProcessor(Processor):
             self.soma_ctrs = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
             ret.append(['soma_ctrs', self.soma_ctrs])
 
+            # TODO: move to function
             if run_soma_segmentation:
 
                 # segment the somas using directional radius and fast march
@@ -364,6 +394,7 @@ class HDABProcessor(Processor):
 
                 # TODO: fast march combines nearby somas, probably need to watershed using the result of fast march
 
+            # TODO: move to function
             if run_object_segmentation:
 
                 sure_fg = np.zeros_like(self.pos_dab.img)[:,:,0]
@@ -422,8 +453,14 @@ class HDABProcessor(Processor):
 
                 # TODO: add process connection
 
-        # run the specified wildcat model
+                # TODO: append object mask
+                
+                # TODO: append polygon list
+
+        # run the specified machine learning model
         if run_model:
+
+            # TODO: if microglia, 
             # TODO: these functions will store PYR/GRAN/Tangle specific AOs
             pass
 
