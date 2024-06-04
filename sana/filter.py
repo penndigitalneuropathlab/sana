@@ -2,11 +2,14 @@
 # system modules
 import os
 import sys
+import ast
 
 # installed modules
 import numpy as np
 import cv2
 import numba
+import cv2
+from scipy import signal
 
 # debugging modules
 from matplotlib import pyplot as plt
@@ -81,33 +84,35 @@ def _minmax(img, D, debug=False):
 #         and all pixels greater than or equal to o we get N-0/N = 1
 #       the background of the image goes to 1, as all surrounding pixels equal 0
 #       the centers of cells go to -1, as all surrounding pixels are less than the center
-def minmax_filter(dist, r, sigma, n_iterations=1, debug=False):
-
-    # make sure image is a float
-    img = dist.copy().astype(float)
+def min_max_filter(frame, img, r, n_iterations=1, debug=False):
 
     # define the disk
     n = 2*r+1
     D = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (n,n))
     D[r,r] = 0
 
+    if debug:
+        fig, axs = plt.subplots(1,1+2*n_iterations, sharex=True, sharey=True)
+        axs[0].imshow(frame.img)
+
     # perform the N iterations of the filter
     for i in range(n_iterations):
 
         # gauss blur the image
-        img_blur = cv2.GaussianBlur(img, (r,r), sigma)
+        k = int(r//2)
+        if k % 2 == 0:
+            k += 1
+        img_blur = cv2.GaussianBlur(img, (2*k+1,2*k+1), 0)
 
         # perform an iteration of the min - max algorithm        
-        img = _minmax(img_blur, D, debug)
+        img = -1 * _minmax(img_blur, D, debug)
 
-        centers = np.where(img == -1)
+        centers = np.where(img == 1)
         if debug:
-            fig, axs = plt.subplots(1,2)
-            axs[0].imshow(img_blur)
-            axs[1].imshow(img)
-            axs[1].plot(centers[1], centers[0], 'x', color='red')
-            axs[0].set_title('iteration=%d' % i)
-            plt.show()
+            axs[1+2*i].imshow(img_blur)
+            axs[1+2*i].set_title('iteration=%d' % i)
+            axs[1+2*i+1].imshow(img)
+            axs[1+2*i+1].plot(centers[1], centers[0], 'x', color='red')
     #
     # end of iterations
 
@@ -115,3 +120,54 @@ def minmax_filter(dist, r, sigma, n_iterations=1, debug=False):
 #
 # end of minmax_filter
 
+class AnisotropicGaussianFilter:
+    def __init__(self, th, sg_x, sg_y):
+        n = int(round(sg_y*3))
+        self.kernel = np.zeros((n, n), dtype=float)
+        for j in range(n):
+            y = j - n // 2
+            for i in range(n):
+                x = i - n // 2
+
+                self.kernel[j,i] = (1/(2*np.pi*sg_x*sg_y)) * \
+            np.exp(-( ( (x * np.cos(th) + y * np.sin(th))**2/(sg_x)**2 ) + ( (-x*np.sin(th) + y*np.cos(th))**2/(sg_y)**2 ) )/2)
+                
+        self.apply = lambda x: signal.convolve2d(x, self.kernel, mode='same') / np.sum(self.kernel)
+
+
+class MorphologyFilter:
+    """
+    Wrapper for OpenCV's morphology filters
+    """
+    NAME_TO_FILTER = {
+        'erosion': cv2.MORPH_ERODE,
+        'dilation': cv2.MORPH_DILATE,
+        'opening': cv2.MORPH_OPEN,
+        'closing': cv2.MORPH_CLOSE,
+    }
+    NAME_TO_KERNEL = {
+        'ellipse': cv2.MORPH_ELLIPSE,
+        'rectangle': cv2.MORPH_RECT,
+    }
+    def __init__(self, filter_type, kernel_type, kernel_radius, n_iterations=1):
+
+        self.filter_type_name = filter_type
+        self.filter_type = self.NAME_TO_FILTER[self.filter_type_name]
+
+        self.kernel_type_name = kernel_type
+        self.kernel_type = self.NAME_TO_KERNEL[self.kernel_type_name]
+
+        if type(kernel_radius) is int:
+            self.kernel_diameter = (2*kernel_radius+1, 2*kernel_radius+1)
+        else:
+            kernel_radius = ast.literal_eval(kernel_radius)
+            self.kernel_diameter = (2*kernel_radius[0]+1,2*kernel_radius[1]+1)
+
+        self.n_iterations = n_iterations
+
+        self.kernel = cv2.getStructuringElement(self.kernel_type, self.kernel_diameter)
+
+        self.apply = lambda x: cv2.morphologyEx(x, self.filter_type, self.kernel, iterations=self.n_iterations)
+
+    def __str__(self):
+        return f"{self.n_iterations} iteration(s) of {self.filter_type_name} filter -- {self.kernel_diameter} {self.kernel_type_name}"
