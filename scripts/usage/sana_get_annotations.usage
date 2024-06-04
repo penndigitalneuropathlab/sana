@@ -1,3 +1,0 @@
-usage:
-  sana_get_annotations.py annos.list -target ROI -odir /path/to/out
-  sana_get_annotations.py annos.list -target ROI -odir /path/to/out -rdir /path/to/replace

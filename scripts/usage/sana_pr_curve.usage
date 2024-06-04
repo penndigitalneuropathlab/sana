@@ -1,4 +1,0 @@
-sana_pr_curve -refdir /path/to/ref -hypdir /path/to/hyp
-sana_pr_curve -refdir /path/to/ref -hypdir /path/to/hyp -refclass X1 X2 -hypclass Y1
-sana_pr_curve -refdir /path/to/ref -hypdir /path/to/hyp -roiclass X1 X2 X3
-sana_pr_curve -refdir /path/to/ref -hypdir /path/to/hyp -iouthresh 0.25 0.50 0.75
