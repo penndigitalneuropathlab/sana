@@ -122,13 +122,14 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
 
 class AnisotropicGaussianFilter:
     def __init__(self, th, sg_x, sg_y):
-        n = int(round(sg_y*3))
+        n = int(round(sg_y*6))
+        if n % 2 == 0:
+            n += 1
         self.kernel = np.zeros((n, n), dtype=float)
         for j in range(n):
             y = j - n // 2
             for i in range(n):
                 x = i - n // 2
-
                 self.kernel[j,i] = (1/(2*np.pi*sg_x*sg_y)) * \
             np.exp(-( ( (x * np.cos(th) + y * np.sin(th))**2/(sg_x)**2 ) + ( (-x*np.sin(th) + y*np.cos(th))**2/(sg_y)**2 ) )/2)
                 
