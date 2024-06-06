@@ -10,9 +10,10 @@ from PIL import Image, ImageDraw
 import nibabel as nib
 from matplotlib import colors
 from matplotlib import pyplot as plt
+import shapely.geometry
 
 # sana packages
-from sana import geo
+import sana.geo
 
 # TODO: check parameter usage
 class Frame:
@@ -66,7 +67,7 @@ class Frame:
         :returns: Point object
         """
         (h, w) = self.img.shape[:2]
-        return geo.Point(w, h, level=self.level)
+        return sana.geo.Point(w, h, level=self.level)
 
     def copy(self):
         """
@@ -271,8 +272,8 @@ class Frame:
 
         # get the tiles for the convolution
         # TODO: check the parameters, make these arg
-        tsize = geo.Point(100, 100, is_micron=True)
-        tstep = geo.Point(10, 10, is_micron=True)
+        tsize = sana.geo.Point(100, 100, is_micron=True)
+        tstep = sana.geo.Point(10, 10, is_micron=True)
         tiles = ds_frame.to_tiles(tsize, tstep)
 
         # image array that stores the background values for each tile
@@ -373,12 +374,12 @@ class Frame:
         """
         if alignment == 'before':
             before = pad
-            after = geo.point_like(pad, (0,0))
+            after = sana.geo.point_like(pad, (0,0))
         elif alignment == 'center':
             before = pad//2
             after = pad - before
         elif alignment == 'after':
-            before = geo.point_like(pad, (0,0))
+            before = sana.geo.point_like(pad, (0,0))
             after = pad
         img = np.pad(self.img, ((before[1], after[1]), # y
                                      (before[0], after[0]), # x
@@ -473,6 +474,77 @@ class Frame:
         if self.is_rgb() and type(mask_value) is int:
             mask_value = (mask_value, mask_value, mask_value)
         self.img[mask_frame.img[:,:,0] == 0] = mask_value
+
+    def to_polygons(self):
+        if not self.is_binary():
+            raise ImageTypeException('Image must be a binary image')
+
+        # run contour detection to find boundaries between objects
+        c, h = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
+
+        # TODO: this doesn't split if exactly 1 touching diagonal connection
+        # TODO: looks like there are some objects missing?
+        objs = []
+
+        # loop through the body contours
+        for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
+            if c[i].shape[0] < 3:
+                continue
+
+            # create the body polygon
+            body = shapely.geometry.Polygon(np.squeeze(c[i]))
+
+            # loop through the hole contours in this body contour
+            for j in [j for j in range(len(c)) if h[0][j][3] == i]:
+
+                # create the hole polygon
+                hole = shapely.geometry.Polygon(np.squeeze(c[j]))
+
+                # remove the hole from the body
+                body = body.difference(hole)
+
+            # store the resulting body polygons
+            res = sana.geo.from_shapely(body)
+            if type(res) is list:
+                objs += [x for x in res if not x is None]
+            elif not res is None:
+                objs.append(res)
+                            
+        return objs
+
+    def instance_segment(self, ctrs, debug=False):
+        
+        # generate a foreground image using the soma centers
+        fg = np.zeros_like(self.img)[:,:,0]
+        fg[ctrs[:,1], ctrs[:,0]] = 1
+
+        # create an RGB image for the watershed algorithm, if necessary
+        if self.is_gray():
+            rgb = np.tile(self.img, 3)
+        else:
+            rgb = self.img
+
+        # get the unique components
+        _, markers = cv2.connectedComponents(fg)
+
+        # run the watershed algorithm on the unique components
+        markers = cv2.watershed(rgb, markers)
+            
+        # remove the background segmentation
+        markers += 1
+        bg = np.argmax(np.bincount(markers.flatten()))
+        markers[markers == bg] = 0
+
+        # convert to markers binary image, preserving boundaries between objects
+        binary_markers = markers.copy()
+        binary_markers[binary_markers != 0] = 1
+        binary_markers = binary_markers.astype(np.uint8)
+        binary_markers = frame_like(self, binary_markers)
+
+        # get the object polygons from the instance segmented binary mask
+        objs = binary_markers.to_polygons()
+
+        return objs
 
     # TODO: check parameters
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
@@ -675,7 +747,7 @@ class Contour:
     def contour_to_polygon(self, contour):
         x = np.array([float(v[0][0]) for v in contour])
         y = np.array([float(v[0][1]) for v in contour])
-        polygon = geo.Polygon(x, y, False, self.level)
+        polygon = sana.geo.Polygon(x, y, False, self.level)
         return polygon
 #
 # end of Detection
@@ -727,6 +799,7 @@ def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewi
     # convert the Polygons to lists of values that PIL can handle
     polys = []
     for p in polygons:
+        p = p.connect()
         if not frame.converter is None:
             frame.converter.to_pixels(p, frame.level)
             p = frame.converter.to_int(p)

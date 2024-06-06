@@ -5,7 +5,6 @@ from matplotlib import pyplot as plt
 import cv2
 import skfmm
 from tqdm import tqdm
-from shapely import geometry
 
 # sana modules
 import sana.color_deconvolution
@@ -52,89 +51,17 @@ class Processor:
 
         # generate the ignore mask
         self.ignore_rois = [ignore_roi.to_polygon() for ignore_roi in ignore_rois]
-        self.ignore_mask = sana.image.create_mask(self.ignore_rois, self.frame, x=1, y=0)
+        self.ignore_mask = sana.image.create_mask(self.ignore_rois, self.frame, x=0, y=1)
+        self.keep_mask = sana.image.create_mask(self.ignore_rois, self.frame, x=1, y=0)
 
         # apply the ignore mask to the other masks
-        self.main_mask.mask(self.ignore_mask)
-        [sub_mask.mask(self.ignore_mask) for sub_mask in self.sub_masks if not sub_mask is None]
+        self.main_mask.mask(self.keep_mask)
+        [sub_mask.mask(self.keep_mask) for sub_mask in self.sub_masks if not sub_mask is None]
 
-    def calculate_ao(self, frame):
-        """
-        Calculates the %Area Occupied of the input frame. This is the percentage of positively classified pixels in the image. It is calculated over the provided main and sub ROIs.
-        :param frame: input frame, not necessarily self.frame, since multiple Frames could be generated from self.frame and various %AO values can be calculated
-        """
-        if not frame.is_binary():
-            raise sana.image.ImageTypeException("Input frame must be a binary image for %AO quantitation")
-
-        # apply the mask
-        frame.mask(self.main_mask)
-
-        # get the total area of the roi
-        main_area = np.sum(self.main_mask.img)
-
-        # get the positive classified area in the frame
-        pos = np.sum(frame.img)
-
-        # calculate %AO of the main ROI
-        main_ao = pos / main_area
-
-        # apply the sub masks and get the %AO of each
-        sub_aos, sub_areas = [], []
-        for sub_mask in self.sub_masks:
-            if sub_mask is None:
-                sub_aos.append(np.nan)
-                sub_areas.append(np.nan)
-            else:
-                tmp_frame = frame.copy()
-                tmp_frame.mask(sub_mask)
-                sub_area = np.sum(sub_mask.img)
-                pos = np.sum(tmp_frame.img)
-                sub_ao = pos / sub_area
-                sub_aos.append(sub_ao)
-                sub_areas.append(sub_area)
-
-        return main_ao, main_area, sub_aos, sub_areas
-    
-    # TODO: refactor to fit Convolver
-    # def calculate_heatmaps(self, frame, tsize, tstep, detections=[]):
-    #     """
-    #     This function calculates various quantitative values during a convolution process. The result is a heatmap of each variable, and when the roi_type='GM', also outputs signal representing the features as a function of GM depth
-    #     :param frame: input Frame, see calculate_ao() for more info
-    #     :param tsize: tile size used during convolution
-    #     :param tstep: tile step length used during convolution
-    #     :param detections: list of Polygons detected in the Frame
-    #     """
-
-    #     # calculate the feature heatmaps (nfeats,H,W)
-    #     # TODO: other features to generate add functions here!
-    #     heatmap = Heatmap(frame, detections, tsize, tstep)
-    #     featuremaps = heatmap.run([heatmap.ao, heatmap.density, heatmap.area])
-
-    #     # special deformation and averaging done only on GM ROIs
-    #     if self.roi_type == 'GM':
-
-    #         # calculate the cortical profiles (1,nfeats,H)
-    #         signals = np.mean(featuremaps, axis=2)[None,...]
-
-    #         # deform the heatmap to the main mask, then calculate cortical profile (1,nfeats,nsamp)
-    #         main_deformed_featuremaps = heatmap.deform(featuremaps, [self.main_mask])
-    #         main_deformed_signals = np.mean(main_deformed_featuremaps, axis=3)
-
-    #         # deform the heatmap to the sub masks and calculate profile (nmasks,nfeats,nsamp)
-    #         if len(self.sub_masks) != 0:
-    #             sub_deformed_featuremaps = heatmap.deform(featuremaps, self.sub_masks)
-    #             sub_deformed_signals = np.mean(sub_deformed_featuremaps, axis=3)
-    #         else:
-    #             sub_deformed_featuremaps = None
-    #             sub_deformed_signals = None
-    #     else:
-    #         signals = None
-    #         main_deformed_featuremaps = None
-    #         main_deformed_signals = None
-    #         sub_deformed_featuremaps = None
-    #         sub_deformed_signals = None
-
-    #     return featuremaps, signals, main_deformed_featuremaps, main_deformed_signals, sub_deformed_featuremaps, sub_deformed_signals
+    def plot_roi(self, ax):
+        ax.plot(*self.main_roi.T, color='black')
+        [ax.plot(*x.T, color='gray') for x in self.sub_rois]
+        [ax.plot(*x.T, color='black') for x in self.ignore_rois]
 
     def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[]):
         """
@@ -213,17 +140,23 @@ class Processor:
         mx = np.max(directions, axis=0)
         directional_ratio = np.divide(mi**3, mx, where=mx!=0)
 
-        # apply fast march algorithm using soma centers as the 
+        # apply fast march algorithm using soma centers as the starting points
         phi = np.full_like(pos.img[:,:,0], -1, dtype=int)
         phi[soma_ctrs[:,1], soma_ctrs[:,0]] = 1
 
+        # speed of the march is based on the directional ratio algorithm
         speed = directional_ratio
         speed[pos.img[:,:,0] == 0] = 0
 
+        # run the fast march
         t = skfmm.travel_time(phi, speed)
         t[t.mask] = np.inf
 
+        # threshold the fast march
         soma_mask = sana.image.frame_like(pos, (t < fm_threshold).astype(np.uint8))
+
+        # perform instance segmentation to separate nearby somas
+        soma_polygons = soma_mask.instance_segment(self.soma_ctrs)
 
         if self.logger.generate_plots:
             fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
@@ -235,12 +168,13 @@ class Processor:
             ax.imshow(speed, cmap='gray')
             ax.plot(*soma_ctrs.T, '*', color='red')
             ax = axs[2]
-            ax.imshow(t, cmap='gray', vmax=fm_threshold*1.5, vmin=0)
-            overlay = sana.image.overlay_mask(self.frame, soma_mask)
+            ax.imshow(t, cmap='gray', vmax=fm_threshold*2.0, vmin=0)
+            [ax.plot(*x.T, color='red', linewidth=1) for x in soma_polygons]
             ax = axs[3]
-            ax.imshow(overlay.img)
+            ax.imshow(self.frame.img)
+            [ax.plot(*x.T, color='red') for x in soma_polygons]
 
-        return soma_mask
+        return soma_polygons
 
 class HDABProcessor(Processor):
     """
@@ -337,8 +271,10 @@ class HDABProcessor(Processor):
         )
 
         # perform pixel classification by thresholding and morphology filters
+        self.thr_dab = self.dab.copy()
+        self.classify_pixels(self.thr_dab, threshold, mask=self.keep_mask)
         self.pos_dab = self.dab.copy()
-        self.classify_pixels(self.pos_dab, threshold, mask=self.main_mask, morphology_filters=morphology_filters)
+        self.classify_pixels(self.pos_dab, threshold, mask=self.keep_mask, morphology_filters=morphology_filters)
         ret.append(['pos_dab', self.pos_dab])
 
         # run the structure tensor analysis to find the orientation of the DAB
@@ -381,81 +317,33 @@ class HDABProcessor(Processor):
             self.soma_ctrs = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
             ret.append(['soma_ctrs', self.soma_ctrs])
 
-            # TODO: move to function
-            if run_soma_segmentation:
+        if run_soma_segmentation:
+            if not hasattr(self, 'soma_ctrs'):
+                raise ProcessingException("Must run Soma Detection before Soma Segmentation")
 
-                # segment the somas using directional radius and fast march
-                # NOTE: using only threshold here no morphology filters
-                self.logger.debug('Segmenting somas...')
-                pos_pix = self.dab.copy()
-                self.classify_pixels(pos_pix, threshold, mask=self.main_mask)
-                self.soma_mask = self.segment_somas(pos_pix, self.soma_ctrs, n_directions=n_directions, sigma_x=directional_sigma/3, sigma_y=directional_sigma, fm_threshold=fm_threshold)
-                ret.append(['soma_mask', self.soma_mask])
+            # segment the somas using directional radius, fast march, watershed, and soma centers
+            self.logger.debug('Segmenting somas...')
+            self.soma_polygons = self.segment_somas(self.dab, self.soma_ctrs, n_directions=n_directions, sigma_x=directional_sigma/3, sigma_y=directional_sigma, fm_threshold=fm_threshold)
+            ret.append(['soma_polygons', self.soma_polygons])
 
-                # TODO: fast march combines nearby somas, probably need to watershed using the result of fast march
+        if run_object_segmentation:
+            if not hasattr(self, 'soma_ctrs'):
+                raise ProcessingException("Must run Soma Detection before Object Segmentation")
 
-            # TODO: move to function
-            if run_object_segmentation:
+            # segment the objects using watershed and the soma centers
+            self.object_polygons = self.thr_dab.instance_segment(self.soma_ctrs, debug=self.logger.generate_plots)
+            ret.append(['object_polygons', self.object_polygons])
 
-                sure_fg = np.zeros_like(self.pos_dab.img)[:,:,0]
-                sure_fg[self.soma_ctrs[:,1], self.soma_ctrs[:,0]] = 1
-                _, markers = cv2.connectedComponents(sure_fg)
+            if self.logger.generate_plots:
+                fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
+                ax = axs[0]
+                ax.imshow(self.frame.img)
+                [ax.plot(*x.T, color='red') for x in self.object_polygons]
+                self.plot_roi(ax)
+                ax = axs[1]
+                ax.imshow(self.thr_dab.img)
 
-                # watershed based on the already thresholded image
-                pos_tiled = np.tile(self.pos_dab.img, 3)
-                markers = cv2.watershed(pos_tiled, markers)
-
-                # remove the background segmentation
-                markers += 1
-                bg = np.argmax(np.bincount(markers.flatten()))
-                markers[markers == bg] = 0
-
-                # convert to binary image
-                binary_markers = markers.copy()
-                binary_markers[binary_markers != 0] = 1
-                binary_markers = binary_markers.astype(np.uint8)
-
-                # contour detection to convert markers to polygons
-                objs = []
-                c, h = cv2.findContours(binary_markers, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
-
-                # look for body contours
-                # TODO: this doesn't split if exactly 1 touching diagonal connection
-                # TODO: looks like there are some objects missing?
-                for i in range(len(c)):
-                    if h[0][i][3] == -1:
-
-                        # create the body polygon
-                        body = geometry.Polygon(np.squeeze(c[i]))
-
-                        # look for holes in this body
-                        for j in range(len(c)):
-                            if h[0][j][3] == i:
-
-                                # create the hole polygon
-                                hole = geometry.Polygon(np.squeeze(c[j]))
-
-                                # remove the hole from the body
-                                body = body.difference(hole)
-
-                        res = sana.geo.from_shapely(body)
-                        if type(res) is list:
-                            objs += [x for x in res if not x is None]
-                        elif not res is None:
-                            objs.append(res)
-
-                if self.logger.generate_plots:
-                    fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
-                    axs[0].imshow(self.frame.img)
-                    axs[1].imshow(markers)
-                    axs[2].imshow(self.frame.img)
-                    [axs[2].plot(*obj.T) for obj in objs]
-
-                # TODO: add process connection
-
-                # TODO: append object mask
-                
-                # TODO: append polygon list
+            # TODO: add skeletonization and process connection
 
         # run the specified machine learning model
         if run_model:
@@ -466,3 +354,7 @@ class HDABProcessor(Processor):
 
         # return all of the processed images
         return ret
+    
+class ProcessingException(Exception):
+    def __init__(self, message):
+        self.message = message

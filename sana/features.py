@@ -7,7 +7,6 @@ import tqdm
 # sana modules
 import sana.image
 from sana.geo import Point, Polygon
-from sana_tiler import Tiler
 
 class Convolver:
     """
@@ -28,9 +27,7 @@ class Convolver:
         self.objs = objs
 
         # create the tiles
-        self.tiler = Tiler(self.frame.level, self.frame.converter, self.tsize, step=self.tstep)
-        self.tiler.set_frame(self.frame)
-        self.tiles = self.tiler.load_tiles()
+        self.tiles = self.frame.to_tiles(self.tsize, self.tstep)
 
         # pre-calculate the centers of each object to speed up finding them
         # TODO: use a better metric than the mean of vertices (i.e. center of gravity)
@@ -56,10 +53,10 @@ class Convolver:
                 # TODO: debug message?
 
                 # get the location and size of the current tile
-                loc = Point(j * self.tiler.step[1], 
-                            i * self.tiler.step[0], 
+                loc = Point(j * self.tstep[1], 
+                            i * self.tstep[0], 
                             is_micron=False, level=self.frame.level)
-                size = self.tiler.size
+                size = self.tsize
 
                 # center align the tile
                 loc -= size // 2
@@ -75,7 +72,7 @@ class Convolver:
                 
                 else:
                     tile_mask = sana.image.frame_like(self.mask, self.mask.get_tile(loc, size, pad=True))
-                    c, h = tile_mask.get_contours()
+                    c, h = tile_mask.get_caontours()
                     if len(c) != 0:
                         tile = c[0].polygon.connect()
                         tile.translate(-loc)
