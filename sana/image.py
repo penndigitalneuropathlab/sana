@@ -492,7 +492,8 @@ class Frame:
                 continue
 
             # create the body polygon
-            body = shapely.geometry.Polygon(np.squeeze(c[i]))
+            orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+            new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
 
             # loop through the hole contours in this body contour
             for j in [j for j in range(len(c)) if h[0][j][3] == i]:
@@ -501,14 +502,17 @@ class Frame:
                 hole = shapely.geometry.Polygon(np.squeeze(c[j]))
 
                 # remove the hole from the body
-                body = body.difference(hole)
+                new_body = new_body.difference(hole)
 
             # store the resulting body polygons
-            res = sana.geo.from_shapely(body)
-            if type(res) is list:
-                objs += [x for x in res if not x is None]
-            elif not res is None:
-                objs.append(res)
+            orig_res = sana.geo.from_shapely(orig_body)
+            new_res = sana.geo.from_shapely(new_body)
+            if type(new_res) is list:
+                objs += [x for x in new_res if not x is None]
+            elif not new_res is None:
+                objs.append(new_res)
+            else:
+                objs.append(orig_res)
                             
         return objs
 

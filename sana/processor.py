@@ -60,10 +60,10 @@ class Processor:
 
     def plot_roi(self, ax):
         ax.plot(*self.main_roi.T, color='black')
-        [ax.plot(*x.T, color='gray') for x in self.sub_rois]
+        [ax.plot(*x.T, color='gray') for x in self.sub_rois if not x is None]
         [ax.plot(*x.T, color='black') for x in self.ignore_rois]
 
-    def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[]):
+    def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[], debug=True):
         """
         Classifies pixels as foreground/background based on a threshold and morphological filtering
         :param img: input Frame
@@ -78,7 +78,7 @@ class Processor:
             frame.mask(mask)
 
         # DEBUG:
-        if self.logger.generate_plots:
+        if self.logger.generate_plots and debug:
             fig, axs = plt.subplots(1, 2+len(morphology_filters), sharex=True, sharey=True)
             axs = axs.ravel()
             axs[0].imshow(frame.img)
@@ -88,7 +88,7 @@ class Processor:
         frame.threshold(threshold, 0, 1)
 
         # DEBUG:
-        if self.logger.generate_plots:
+        if self.logger.generate_plots and debug:
             axs[1].imshow(frame.img)
             axs[1].set_title('Threshold')
 
@@ -97,7 +97,7 @@ class Processor:
             frame.apply_morphology_filter(morphology_filter)
 
             # DEBUG:
-            if self.logger.generate_plots:
+            if self.logger.generate_plots and debug:
                 axs[2+i].imshow(frame.img)
                 axs[2+i].set_title(str(morphology_filter))
     
@@ -120,6 +120,7 @@ class Processor:
             fig, ax = plt.subplots(1,1)
             ax.imshow(self.frame.img)
             ax.plot(*soma_ctrs.T, '*', color='red')
+            ax.set_title('Frame w/ Soma Detections')
 
         return soma_ctrs
     
@@ -128,6 +129,12 @@ class Processor:
         # define the directions to test
         thetas = np.linspace(0, np.pi, n_directions)
         filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=sigma_x, sg_y=sigma_y) for th in thetas]
+        if self.logger.generate_plots:
+            fig, axs = plt.subplots(4,int(np.ceil(len(filters)/4)))
+            axs = axs.ravel()
+            for i, f in enumerate(filters):
+                axs[i].imshow(f.kernel, cmap='gray')
+            fig.suptitle('Rotated Anisotropic Gaussian Kernels')
 
         # apply the filters to the image
         self.logger.debug('Applying anisotropic filters...')
@@ -164,15 +171,19 @@ class Processor:
             ax = axs[0]
             ax.imshow(self.frame.img)
             ax.plot(*soma_ctrs.T, '*', color='red')
+            ax.set_title('Frame')
             ax = axs[1]
-            ax.imshow(speed, cmap='gray')
+            ax.imshow(speed, cmap='coolwarm')
             ax.plot(*soma_ctrs.T, '*', color='red')
+            ax.set_title('Directional Ratio')
             ax = axs[2]
-            ax.imshow(t, cmap='gray', vmax=fm_threshold*2.0, vmin=0)
+            ax.imshow(t, cmap='coolwarm', vmax=fm_threshold*2.0, vmin=0)
             [ax.plot(*x.T, color='red', linewidth=1) for x in soma_polygons]
+            ax.set_title('Fast March Algorithm')
             ax = axs[3]
             ax.imshow(self.frame.img)
             [ax.plot(*x.T, color='red') for x in soma_polygons]
+            ax.set_title('Soma Segmentations')
 
         return soma_polygons
 
@@ -201,7 +212,7 @@ class HDABProcessor(Processor):
             axs = axs.ravel()
             ax = axs[0]
             ax.imshow(self.frame.img)
-            ax.set_title('Original Frame')
+            ax.set_title('Frame')
             ax = axs[1]
             ax.imshow(self.hem.img)
             ax.set_title('HEM (OD)')
@@ -252,6 +263,7 @@ class HDABProcessor(Processor):
             fm_threshold=10,
             directional_sigma=5,
             run_object_segmentation=False,
+            use_watershed=False,
             run_sta=False,
             sta_sigma=(10,10),
             sta_strictness=0.0,
@@ -272,7 +284,7 @@ class HDABProcessor(Processor):
 
         # perform pixel classification by thresholding and morphology filters
         self.thr_dab = self.dab.copy()
-        self.classify_pixels(self.thr_dab, threshold, mask=self.keep_mask)
+        self.classify_pixels(self.thr_dab, threshold, mask=self.keep_mask, debug=False)
         self.pos_dab = self.dab.copy()
         self.classify_pixels(self.pos_dab, threshold, mask=self.keep_mask, morphology_filters=morphology_filters)
         ret.append(['pos_dab', self.pos_dab])
@@ -329,19 +341,39 @@ class HDABProcessor(Processor):
         if run_object_segmentation:
             if not hasattr(self, 'soma_ctrs'):
                 raise ProcessingException("Must run Soma Detection before Object Segmentation")
+            
+            if use_watershed:
 
-            # segment the objects using watershed and the soma centers
-            self.object_polygons = self.thr_dab.instance_segment(self.soma_ctrs, debug=self.logger.generate_plots)
+                # segment the objects using watershed and the soma centers
+                self.object_polygons = self.thr_dab.instance_segment(self.soma_ctrs, debug=self.logger.generate_plots)
+            
+            else:
+                polygons = self.thr_dab.to_polygons()
+
+                # filter the polygons by the soma centers
+                self.object_polygons = []
+                for (x,y) in self.soma_ctrs:
+                    for i in range(len(polygons)):
+                        if sana.geo.ray_tracing(x, y, polygons[i]):
+                            self.object_polygons.append(polygons[i])
+                            break
+                    else:
+                        continue
+                    # polygons.pop(i)
+
             ret.append(['object_polygons', self.object_polygons])
 
             if self.logger.generate_plots:
-                fig, axs = plt.subplots(1,2, sharex=True, sharey=True)
-                ax = axs[0]
+                fig, ax = plt.subplots(1,1, sharex=True, sharey=True)
                 ax.imshow(self.frame.img)
                 [ax.plot(*x.T, color='red') for x in self.object_polygons]
+                if hasattr(self, "soma_polygons"):
+                    [ax.plot(*x.T, color='blue') for x in self.soma_polygons]
+                else:
+                    [ax.plot(*self.soma_ctrs.T, '*', color='blue')]
+                
+                ax.set_title('Frame w/ Object Segmentations')
                 self.plot_roi(ax)
-                ax = axs[1]
-                ax.imshow(self.thr_dab.img)
 
             # TODO: add skeletonization and process connection
 
