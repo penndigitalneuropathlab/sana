@@ -91,9 +91,9 @@ class Loader(openslide.OpenSlide):
         Loads the thumbnail using the image stored at the top of the pyramid
         """
         self.thumbnail_level = self.lc - 1
-        h, w = self.dim[self.thumbnail_level]
+        w, h = self.dim[self.thumbnail_level]
         loc = sana.geo.Point(0, 0, False, self.thumbnail_level)
-        size = sana.geo.Point(h, w, False, self.thumbnail_level)
+        size = sana.geo.Point(w, h, False, self.thumbnail_level)
         return self.load_frame(loc, size, self.thumbnail_level)
 
     def load_frame(self, loc, size, level=None, pad_color=0):
@@ -116,7 +116,7 @@ class Loader(openslide.OpenSlide):
         size = self.converter.to_pixels(size, level)
 
         # prepare variables to calculate padding
-        h, w = self.dim[level]
+        w, h = self.dim[level]
         padx1, pady1, padx2, pady2 = 0, 0, 0, 0
 
         # special case: requested frame is entirely outside slide coordinates
