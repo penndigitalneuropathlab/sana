@@ -694,13 +694,27 @@ def ray_tracing(x,y,poly):
         p1x,p1y = p2x,p2y
     return inside
 
-def get_polygon_from_curves(c1, c2):
+def get_polygon_from_curves(a, b):
     """
     Creates a polygon by connecting 2 curves at both ends
     """
-    x = np.concatenate([c1[:,0], c2[:,0][::-1], [c1[0,0]]], axis=0)
-    y = np.concatenate([c1[:,1], c2[:,1][::-1], [c1[0,1]]], axis=0)
-    return polygon_like(x, y, c1)
+
+    # create the polygon
+    x1 = np.concatenate([a[:,0], b[:,0], [a[0,0]]], axis=0)
+    y1 = np.concatenate([a[:,1], b[:,1], [a[0,1]]], axis=0)
+    p1 = polygon_like(x1, y1, a)
+
+    # create a polygon with the 2nd curve in reversed order
+    x2 = np.concatenate([a[:,0], b[:,0][::-1], [a[0,0]]], axis=0)
+    y2 = np.concatenate([a[:,1], b[:,1][::-1], [a[0,1]]], axis=0)
+    p2 = polygon_like(x2, y2, a)
+
+    # pick which polygon yields the largest area (so that the sides of the ROI aren't crossing)
+    if p1.get_area() > p2.get_area():
+        return p1
+    else:
+        return p2
+    
 
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level, order=obj.order)
