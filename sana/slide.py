@@ -119,22 +119,38 @@ class Loader(openslide.OpenSlide):
         h, w = self.dim[level]
         padx1, pady1, padx2, pady2 = 0, 0, 0, 0
 
-        # make sure the location isn't negative
-        if loc[0] < 0:
-            padx1 = int(0 - loc[0])
+        # special case: requested frame is entirely outside slide coordinates
+        if (loc[0] + size[0]) <= 0: # left bound
+            padx1 += int(size[0])
+            loc[0] = 0
+            size[0] = 0
+        if (loc[1] + size[1]) <= 0: # upper bound
+            pady1 += int(size[1])
+            loc[1] = 0
+            size[1] = 0
+        if (loc[0] - size[0]) >= w: # right bound
+            padx2 += int(size[0])
+            loc[0] = w
+            size[0] = 0
+        if (loc[1] - size[1]) >= h: # lower bound
+            pady2 += int(size[1])
+            loc[1] = h
+            size[1] = 0
+
+        # normal case: requested frame is partially outside slide coordinates
+        if loc[0] < 0: # left bound
+            padx1 -= int(loc[0])
             loc[0] = 0
             size[0] -= padx1
-        if loc[1] < 0:
-            pady1 = int(0 - loc[1])
+        if loc[1] < 0: # upper bound
+            pady1 -= int(loc[1])
             loc[1] = 0
             size[1] -= pady1
-
-        # make sure the size isn't past the image boundary
-        if loc[0] + size[0] > h:
-            padx2 = int(loc[0] + size[0] - h)
+        if (loc[0] + size[0]) > w: # right bound
+            padx2 += int(loc[0] + size[0] - w)
             size[0] -= padx2
-        if loc[1] + size[1] > w:
-            pady2 = int(loc[1] + size[1] - w)
+        if (loc[1] + size[1]) > h: # lower bound
+            pady2 = int(loc[1] + size[1] - h)
             size[1] -= pady2
 
         # load the region of interest via OpenSlide
@@ -244,7 +260,7 @@ class Loader(openslide.OpenSlide):
         c2 = c2.to_curve()
 
         # get the center of the 2 curves
-        roi = geo.get_polygon_from_curves(c1, c2)
+        roi = sana.geo.get_polygon_from_curves(c1, c2)
         center = np.mean(roi, axis=0)
 
         # get the average of the angles of both curves
