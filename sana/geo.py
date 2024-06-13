@@ -556,13 +556,12 @@ class Curve(Array):
         self.angle = angle
         return self.angle
     
-    def to_annotation(self, file_name, class_name,
-                      annotation_name="", confidence=1.0, connect=True):
+    def to_annotation(self, class_name, annotation_name="", confidence=1.0):
         """
         Converts the Curve to an Annotation using the LineString format in geojson
         """
         x, y = self.get_xy()
-        return Annotation(x=x, y=y, geo=None, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order, object_type='LineString')
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order, object_type='LineString')
     
 class Annotation(Array):
     """
