@@ -25,7 +25,7 @@ class Frame:
     :param slide_color: color of slide background to use when needed
     :param padding: amount of padding added to the frame
     """
-    def __init__(self, img, level=-1, converter=None, slide_threshold=None, slide_color=None, padding=0):
+    def __init__(self, img, level=None, converter=None, slide_threshold=None, slide_color=None, padding=0):
 
         # load/store the image array
         if type(img) is str:
@@ -150,16 +150,18 @@ class Frame:
             histogram[:,i] = np.histogram(self.img[:,:,i], bins=256, range=(0,256))[0]
         return histogram
 
+    # TODO: what is pad doing here
     def get_tile(self, loc, size, pad=False):
         """
         Gets a cropped rectangular tile from the frame
         :param loc: top left of rectangle
         :param size: size of rectangle
         """
-        self.converter.to_pixels(loc, self.level)
-        self.converter.to_pixels(size, self.level)
-        loc = self.converter.to_int(loc)
-        size = self.converter.to_int(size)
+        if not self.converter is None:
+            self.converter.to_pixels(loc, self.level)
+            self.converter.to_pixels(size, self.level)
+            loc = self.converter.to_int(loc)
+            size = self.converter.to_int(size)
         w, h = self.size()
         (x0, y0) = loc[0], loc[1]
         (x1, y1) = x0+size[0], y0+size[1]
@@ -181,7 +183,6 @@ class Frame:
             
         img = self.img[y0:y1, x0:x1, :]
         if pad:
-
             img = np.pad(img, [
                 [pad_y0, pad_y1],
                 [pad_x0, pad_x1],
@@ -489,31 +490,32 @@ class Frame:
         # loop through the body contours
         for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
             if c[i].shape[0] < 3:
-                continue
-
-            # create the body polygon
-            orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-            new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-
-            # loop through the hole contours in this body contour
-            for j in [j for j in range(len(c)) if h[0][j][3] == i]:
-
-                # create the hole polygon
-                hole = shapely.geometry.Polygon(np.squeeze(c[j]))
-
-                # remove the hole from the body
-                new_body = new_body.difference(hole)
-
-            # store the resulting body polygons
-            orig_res = sana.geo.from_shapely(orig_body)
-            new_res = sana.geo.from_shapely(new_body)
-            if type(new_res) is list:
-                objs += [x for x in new_res if not x is None]
-            elif not new_res is None:
-                objs.append(new_res)
+                objs.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
             else:
-                objs.append(orig_res)
-                            
+
+                # create the body polygon
+                orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+                new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+                
+                # loop through the hole contours in this body contour
+                for j in [j for j in range(len(c)) if h[0][j][3] == i]:
+
+                    # create the hole polygon
+                    hole = shapely.geometry.Polygon(np.squeeze(c[j]))
+
+                    # remove the hole from the body
+                    new_body = new_body.difference(hole)
+
+                # store the resulting body polygons
+                orig_res = sana.geo.from_shapely(orig_body)
+                new_res = sana.geo.from_shapely(new_body)
+                if type(new_res) is list:
+                    objs += [x for x in new_res if not x is None]
+                elif not new_res is None:
+                    objs.append(new_res)
+                else:
+                    objs.append(orig_res)
+                                
         return objs
 
     def instance_segment(self, ctrs, debug=False):
@@ -549,7 +551,76 @@ class Frame:
         objs = binary_markers.to_polygons()
 
         return objs
+    
+    # NOTE: this function works okay, but heavily relies on the center detection being accurate. For most cells normal segmentation should be fine. For combined cells, we should have an option instead of watershed, segment the combined cells together using ellipses or something like that
+    def fit_ellipses(self, ctrs):
 
+        # minimum and maximum radii to search
+        min_r = 4
+        max_r = 10
+
+        ellipses = []
+        for ctr in ctrs:
+
+            # get the local tile of the object
+            loc = sana.geo.Point(ctr[0]-max_r, ctr[1]-max_r, is_micron=False, level=self.level)
+            size = sana.geo.Point(2*max_r+1, 2*max_r+1, is_micron=False, level=self.level)
+            tile = self.get_tile(loc, size)[:,:,0]
+            (cx, cy) = (size // 2).astype(int)
+
+            # find the minor axis by inflating a circle until it reaches an edge
+            seg = np.zeros_like(tile)
+            for minor_r in range(min_r, max_r+1):
+                # create the circle segmentation
+                circle = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*minor_r+1, 2*minor_r+1))
+
+                # place the circle in the tile space
+                seg[:,:] = 0
+                seg[cy-circle.shape[0]//2:cy+circle.shape[0]//2+1, cx-circle.shape[1]//2:cx+circle.shape[1]//2+1] = circle
+
+                # stop growing once the circle finds negative pixels
+                if np.sum((seg == 1) & (tile == 1)) < np.sum(seg):
+                    break
+
+            # initial best segmentation is just a circle
+            best = np.sum(seg == tile)
+            best_seg = seg.copy()
+            best_angle = 0
+            best_major = minor_r
+
+            # generate new segmentations using rotations and major axis values
+            n_directions = 12
+            for angle in np.linspace(0, 180, n_directions):
+                for major_r in range(minor_r+1, max_r+1):
+
+                    # create the rotated ellipse
+                    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*minor_r+1, 2*major_r+1))
+                    (h, w) = ellipse.shape
+                    center = (w / 2, h / 2)
+                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
+                    ellipse = cv2.warpAffine(ellipse, M, (w, h))
+
+                    # place the ellipse in the tile space
+                    seg[:,:] = 0
+                    seg[cy-ellipse.shape[0]//2:cy+ellipse.shape[0]//2+1, cx-ellipse.shape[1]//2:cx+ellipse.shape[1]//2+1] = ellipse
+
+                    # store the best scoring segmentation
+                    score = np.sum(seg == tile)
+                    if score > best:
+                        best = score
+                        best_seg = seg.copy()
+                        best_angle = angle
+                        best_major = major_r
+
+            # convert the segmentation to a polygon
+            c = cv2.findContours(best_seg, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0][:,0,:]
+            p = sana.geo.Polygon(*c.T, is_micron=False, level=self.level).connect()
+            p.translate(-loc)
+
+            ellipses.append(p)
+
+        return ellipses
+    
     # TODO: check parameters
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
         """
@@ -691,7 +762,7 @@ class Frame:
 
     def to_tiles(self, tsize, tstep):
         if not self.is_gray():
-            raise ChannelException(f"Must be a 1 channel image to tile -- dtype={self.frame.img.dtype}")
+            raise ChannelException(f"Must be a 1 channel image to tile -- dtype={self.img.dtype}")
         
         # convert to correct units
         if not self.converter is None:

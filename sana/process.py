@@ -5,6 +5,7 @@ from matplotlib import pyplot as plt
 import cv2
 import skfmm
 from tqdm import tqdm
+import skimage.feature
 
 # sana modules
 import sana.color_deconvolution
@@ -101,26 +102,48 @@ class Processor:
                 axs[2+i].imshow(frame.img)
                 axs[2+i].set_title(str(morphology_filter))
     
-    def detect_somas(self, pos, minimum_soma_radius=1, min_max_filter_iterations=1):
+    def detect_somas(self, stain, pos, minimum_soma_radius=1):
 
-        # apply the distance transform
-        img_dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+        # apply the distance transform on the positive pixels convert centers of objects into peaks
+        img_proc = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
 
-        # apply min-max filter to find centers of somas
-        if min_max_filter_iterations > 0:
-            img_minmax = sana.filter.min_max_filter(self.frame, img_dist, minimum_soma_radius, min_max_filter_iterations, debug=self.logger.generate_plots)
+        # min-max filter iterations are used to further help separate images
+        img_proc = sana.filter.min_max_filter(
+            img_proc,
+            r=minimum_soma_radius, 
+            n_iterations=1,
+        )
 
-            # get the coordinates of the soma centers
-            soma_ctrs = np.array(np.where(img_minmax == 1)).T[:,::-1]
-        else:
-            soma_blobs = [x.polygon for x in pos.get_contours()[0]]
-            soma_ctrs = np.rint(np.array([blob.get_centroid()[0] for blob in soma_blobs])).astype(int)
+        # set the peak distance to be between 1 radius and 1 diameter
+        # NOTE: accounts for overlapping somas and ellipsoid objects
+        min_distance = int(round(1.5*minimum_soma_radius))
+
+        # set the peak threshold to be pixel is greater than 75% of nearby pixels
+        threshold_abs = 0.75
+
+        # 2d peak detection to find the centers of somas
+        soma_ctrs = skimage.feature.peak_local_max(
+            img_proc,
+            min_distance=min_distance,
+            threshold_abs=threshold_abs,
+        )
+
+        # inverse the (x,y) points to (y,x) for future processing
+        soma_ctrs = soma_ctrs[:,::-1]
 
         if self.logger.generate_plots:
-            fig, ax = plt.subplots(1,1)
-            ax.imshow(self.frame.img)
-            ax.plot(*soma_ctrs.T, '*', color='red')
-            ax.set_title('Frame w/ Soma Detections')
+            fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
+            axs = axs.ravel()
+            axs[0].imshow(stain.img)
+            axs[0].set_title('Original Stain')
+            axs[1].imshow(pos.img)
+            axs[1].set_title('Classified Pixels')
+            axs[2].imshow(img_proc)
+            axs[2].plot(*soma_ctrs.T, '*', color='red')
+            axs[2].set_title('Soma Peaks')
+            axs[3].imshow(self.frame.img)
+            axs[3].plot(*soma_ctrs.T, '*', color='red')
+            axs[3].set_title('Frame w/ Soma Detections')
 
         return soma_ctrs
     
@@ -163,7 +186,8 @@ class Processor:
         soma_mask = sana.image.frame_like(pos, (t < fm_threshold).astype(np.uint8))
 
         # perform instance segmentation to separate nearby somas
-        soma_polygons = soma_mask.instance_segment(self.soma_ctrs)
+        # soma_polygons = soma_mask.instance_segment(self.soma_ctrs)
+        soma_polygons = soma_mask.to_polygons()
 
         if self.logger.generate_plots:
             fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
@@ -184,6 +208,7 @@ class Processor:
             ax.imshow(self.frame.img)
             [ax.plot(*x.T, color='red') for x in soma_polygons]
             ax.set_title('Soma Segmentations')
+
 
         return soma_polygons
 
@@ -240,7 +265,7 @@ class HDABProcessor(Processor):
 
         # subtract the bacgkround image from the stains
         # NOTE: this is always good for hematoxylin
-        self.hem.remove_background()
+        # self.hem.remove_background()
         if self.run_background_subtraction:
             self.dab.remove_background()
 
@@ -324,9 +349,9 @@ class HDABProcessor(Processor):
 
         if run_soma_detection:
 
-            # find the centers of each soma using min-max filter
+            # find the centers of each soma using distance transform and peak detection
             self.logger.debug('Finding centers of somas...')
-            self.soma_ctrs = self.detect_somas(self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
+            self.soma_ctrs = self.detect_somas(self.dab, self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
             ret.append(['soma_ctrs', self.soma_ctrs])
 
         if run_soma_segmentation:
