@@ -28,6 +28,8 @@ class Convolver:
 
         # create the tiles
         self.tiles = self.frame.to_tiles(self.tsize, self.tstep)
+        self.ntiles = np.array(self.tiles.shape[:2])
+        self.ds = np.array(frame.img.shape[:2]) / self.ntiles
 
         # pre-calculate the centers of each object to speed up finding them
         # TODO: use a better metric than the mean of vertices (i.e. center of gravity)
@@ -80,7 +82,12 @@ class Convolver:
                     else:
                         tile = None
                         self.tile_area = 0
-                                        
+
+                # TODO: make a anisotropic gaussian kernel (or just regular), and then mask by the tile polygon
+                # ao: kernel applied to classified image
+                # density: create image of 0's w/ 1's as soma_ctrs
+                # area: ao / density
+
                 # find the objects that are inside this polygon
                 curr_inds = np.zeros(self.obj_ctrs.shape[0])
                 if not tile is None:

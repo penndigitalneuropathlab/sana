@@ -46,7 +46,7 @@ class Converter:
     def rescale(self, x, level):
         """
         Rescales the Array to a new pixel resolution using the following equation:
-        $y = x{\frac{ds_current}{ds_new}}^{order}$
+        $y = x{\frac{ds_current}{ds_new}}$
         :param x: sana.geo.Array
         :param level: pixel resolution level to rescale to
         """
@@ -57,7 +57,7 @@ class Converter:
             x = self.to_float(x)
         
         # rescale the Array
-        x *= (self.ds[x.level] / self.ds[level])**x.order
+        x *= (self.ds[x.level] / self.ds[level])
         x.level = level
 
         return x
@@ -65,7 +65,7 @@ class Converter:
     def to_microns(self, x):
         """
         Converts the Array from pixels to microns. This is done by converting the pixels to the original resolution, then to microns.
-        $y = x{\frac{ds_current}{ds_original}}^{order}{mpp}^{order}$
+        $y = x{\frac{ds_current}{ds_original}}{mpp}$
         :param x: sana.geo.Array
         """
         if x.is_micron:
@@ -75,7 +75,7 @@ class Converter:
         x = self.rescale(x, 0)
 
         # apply the microns per pixel constant
-        x *= (self.mpp)**x.order
+        x *= (self.mpp)
         x.is_micron = True
 
         return x
@@ -83,7 +83,7 @@ class Converter:
     def to_pixels(self, x, level):
         """
         Converts the Array from microns to pixel units at a given resolution level.
-        $y = \frac{x}{{mpp}^{order}}{\frac{ds_original}{ds_new}}^{order}$
+        $y = \frac{x}{{mpp}^}{\frac{ds_original}{ds_new}}$
         :param x: sana.geo.Array
         :param level: new pixel resolution level
         """
@@ -93,8 +93,9 @@ class Converter:
             if x.dtype == int:
                 x = self.to_float(x)
 
-            x /= (self.mpp)**x.order
+            x /= (self.mpp)
             x.is_micron = False
+            x.level = 0
 
         # rescale to new pixel resolution
         x = self.rescale(x, level)
@@ -103,23 +104,20 @@ class Converter:
 
 class Array(np.ndarray):
     """
-    Wrapper class to a Numpy array which only allows (n,2) arrays, while also storing units, resolution, and order. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
+    Wrapper class to a Numpy array which only allows (n,2) arrays, while also storing units and resolution. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=True, level=0, order=1):
+    def __new__(cls, x, y, is_micron=None, level=None):
         arr = np.array([x, y]).T
         obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
         obj.level = level
-        obj.order = order
         return obj
     def __array_finalize__(self, obj):
         if obj is None: return
         self.is_micron = getattr(obj, 'is_micron', None)
         self.level = getattr(obj, 'level', None)
-        self.order = getattr(obj, 'order', None)
 
     def get_xy(self):
         return self[:,0], self[:,1]
@@ -177,21 +175,18 @@ class Point(Array):
     :param y: y value
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=False, level=0, order=1):
+    def __new__(cls, x, y, is_micron=None, level=None):
         # TODO: need to check validity of x and y, same in Array
         arr = np.array((x, y))
         obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
         obj.level = level
-        obj.order = order
         return obj
     def __array_finalize__(self, obj):
         if obj is None: return
         self.is_micron = getattr(obj, 'is_micron', None)
         self.level = getattr(obj, 'level', None)
-        self.order = getattr(obj, 'order', None)
     
     def get_xy(self):
         return self[0], self[1]
@@ -219,10 +214,9 @@ class Polygon(Array):
     :param y: (n,1) array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=True, level=0, order=1):
-        obj = Array(x, y, is_micron, level, order).view(cls)
+    def __new__(cls, x, y, is_micron=None, level=None):
+        obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
     def get_xy(self):
@@ -263,7 +257,7 @@ class Polygon(Array):
         r = np.max(d)
 
         return c, r
-
+    
     def get_axes(self):
         """
         Calculates the major and minor axes based on the minimum bounding rectangle of the Polygon
@@ -483,7 +477,7 @@ class Polygon(Array):
             x, y = self.connect().get_xy()
         else:
             x, y = self.get_xy()
-        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order)
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level)
 
     def to_polygon(self):
         """
@@ -499,10 +493,9 @@ class Curve(Array):
     :param y: (n,1) array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, is_micron=True, level=0, order=1):
-        obj = Array(x, y, is_micron, level, order).view(cls)
+    def __new__(cls, x, y, is_micron=None, level=None):
+        obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
     def get_xy(self):
@@ -561,7 +554,7 @@ class Curve(Array):
         Converts the Curve to an Annotation using the LineString format in geojson
         """
         x, y = self.get_xy()
-        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, order=self.order, object_type='LineString')
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, object_type='LineString')
     
 class Annotation(Array):
     """
@@ -575,10 +568,9 @@ class Annotation(Array):
     :param object_type: string denoting the type of object to use in a geojson file format
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
-    :param order: order of the data, usually used for calculating areas
     """
-    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", confidence=1.0, object_type='Polygon', is_micron=True, level=0, order=1):
-        obj = Array(x, y, is_micron, level, order).view(cls)
+    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", confidence=1.0, object_type='Polygon', is_micron=None, level=None):
+        obj = Array(x, y, is_micron, level).view(cls)
         
         # store attributes
         obj.class_name = class_name
@@ -595,7 +587,6 @@ class Annotation(Array):
         self.confidence = getattr(obj, 'confidence', None)
         self.is_micron = getattr(obj, 'is_micron', None)
         self.level = getattr(obj, 'level', None)
-        self.order = getattr(obj, 'order', None)
         self.object_type = getattr(obj, 'object_type', None)
     
     def to_geojson(self):
@@ -717,13 +708,13 @@ def get_polygon_from_curves(a, b):
     
 
 def array_like(arr, obj):
-    return Array(arr, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+    return Array(arr, is_micron=obj.is_micron, level=obj.level)
 def point_like(x, y, obj):
-    return Point(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+    return Point(x, y, is_micron=obj.is_micron, level=obj.level)
 def polygon_like(x, y, obj):
-    return Polygon(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+    return Polygon(x, y, is_micron=obj.is_micron, level=obj.level)
 def curve_like(x, y, obj):
-    return Curve(x, y, is_micron=obj.is_micron, level=obj.level, order=obj.order)
+    return Curve(x, y, is_micron=obj.is_micron, level=obj.level)
 def rectangle_like(loc, size, obj):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
@@ -764,18 +755,18 @@ def inverse_transform_array(x, loc, M, crop_loc):
 #
 # end of transform_inv_poly
 
-def from_shapely(p, is_micron=False, level=0, order=1):
+def from_shapely(p, is_micron=None, level=None):
     """
     this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
     """
     if type(p) is shapely.geometry.MultiPolygon:
         polygons = []
         for geom in p.geoms:
-            polygons.append(from_shapely(geom, is_micron=is_micron, level=level, order=order))
+            polygons.append(from_shapely(geom, is_micron=is_micron, level=level))
         return polygons
     elif type(p) is shapely.geometry.Polygon:
         xs, ys = p.exterior.xy
-        return Polygon(xs, ys, is_micron=is_micron, level=level, order=order)
+        return Polygon(xs, ys, is_micron=is_micron, level=level)
     else:
         return None
 
@@ -787,7 +778,7 @@ def from_shapely(p, is_micron=False, level=0, order=1):
 def fix_polygon(p):
     was_sana_poly = type(p) is Polygon
     if was_sana_poly:
-        is_micron, lvl, order = p.is_micron, p.lvl, p.order
+        is_micron, lvl = p.is_micron, p.lvl
         p = p.to_shapely()
 
     if not p.is_valid:
@@ -796,7 +787,7 @@ def fix_polygon(p):
         pass
 
     if was_sana_poly:
-        p = from_shapely(p, is_micron, lvl, order)
+        p = from_shapely(p, is_micron, lvl)
         
     return p
 #
@@ -815,7 +806,7 @@ def get_overlap(x, y):
     if i.is_empty:
         return None
     else:
-        return from_shapely(i, orig_x.is_micron, orig_x.lvl, orig_x.order)
+        return from_shapely(i, orig_x.is_micron, orig_x.lvl)
 
 # calculates the IOU score of 2 Polygons
 # NOTE: this uses Shapely, converts to shapely objects for easy calculations

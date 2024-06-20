@@ -92,8 +92,8 @@ class Loader(openslide.OpenSlide):
         """
         self.thumbnail_level = self.lc - 1
         w, h = self.dim[self.thumbnail_level]
-        loc = sana.geo.Point(0, 0, False, self.thumbnail_level)
-        size = sana.geo.Point(w, h, False, self.thumbnail_level)
+        loc = sana.geo.Point(0, 0, is_micron=False, level=self.thumbnail_level)
+        size = sana.geo.Point(w, h, is_micron=False, level=self.thumbnail_level)
         return self.load_frame(loc, size, self.thumbnail_level)
 
     def load_frame(self, loc, size, level=None, pad_color=0):

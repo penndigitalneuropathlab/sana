@@ -52,7 +52,7 @@ def _minmax(img, D, debug=False):
             for Dj in range(D.shape[0]):
                 for Di in range(D.shape[1]):
                     if D[Dj,Di] == 1:
-                        if patch[Dj,Di] < o:
+                        if patch[Dj,Di] <= o and patch[Dj,Di] > 0:
                             below_o += 1
                         else:
                             above_o += 1
@@ -84,7 +84,7 @@ def _minmax(img, D, debug=False):
 #         and all pixels greater than or equal to o we get N-0/N = 1
 #       the background of the image goes to 1, as all surrounding pixels equal 0
 #       the centers of cells go to -1, as all surrounding pixels are less than the center
-def min_max_filter(frame, img, r, n_iterations=1, debug=False):
+def min_max_filter(img, r, n_iterations=1, debug=False):
 
     # define the disk
     n = 2*r+1
@@ -93,7 +93,7 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
 
     if debug:
         fig, axs = plt.subplots(1,1+2*n_iterations, sharex=True, sharey=True)
-        axs[0].imshow(frame.img)
+        axs[0].imshow(img)
 
     # perform the N iterations of the filter
     for i in range(n_iterations):
@@ -102,7 +102,10 @@ def min_max_filter(frame, img, r, n_iterations=1, debug=False):
         k = int(r//2)
         if k % 2 == 0:
             k += 1
-        img_blur = cv2.GaussianBlur(img, (2*k+1,2*k+1), 0)
+        if i != 0:
+            img_blur = cv2.GaussianBlur(img, (2*k+1,2*k+1), 0)
+        else:
+            img_blur = img.copy()
 
         # perform an iteration of the min - max algorithm        
         img = -1 * _minmax(img_blur, D, debug)
