@@ -244,6 +244,21 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = filter.apply(self.img)[:,:,None]
 
+    def convolve(self, kernel, tile_step=None):
+        if not self.is_gray():
+            raise ImageTypeException('Convolution only supported on single-channel images')
+        
+        if tile_step is None:
+            tile_step = sana.geo.Point(1, 1, is_micron=False, level=self.level)
+
+        tile_size = sana.geo.Point(kernel.shape[1], kernel.shape[0], is_micron=False, level=self.level)
+
+        # generate the tile views to convolve the kernel over
+        tiles = self.to_tiles(tile_size, tile_step)
+
+        # perform the convolution
+        return np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
+
     def remove_background(self, min_background=1, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by creating a background image, which is then subtracted by the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.

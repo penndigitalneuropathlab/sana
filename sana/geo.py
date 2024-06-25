@@ -706,7 +706,6 @@ def get_polygon_from_curves(a, b):
     else:
         return p2
     
-
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level)
 def point_like(x, y, obj):
@@ -719,8 +718,6 @@ def rectangle_like(loc, size, obj):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
     return polygon_like(x, y, obj)
-
-
 
 def transform_array_with_logger(x, logger, inverse=False):
     if inverse:
