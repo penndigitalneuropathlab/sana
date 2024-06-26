@@ -350,13 +350,17 @@ class Loader(openslide.OpenSlide):
 
         return frame
     
-    def load_frame_with_landmarks(self, v, w, padding=0):
+    def load_frame_with_landmarks(self, v, w, padding=None):
         """
         Loads a Frame into memory using the extreme points in a landmark vector. First, the extreme points are identified. Then, a rectangle with a given width is found orthogonal to the input vector
         :param v: landmark vector
         :param w: width (in microns) of rectangle to load into memory
         :param padding: amount of padding to apply to the Frame
         """
+        if padding is None:
+            padding = (0,0)
+        elif type(padding) is int:
+            padding = (padding, padding)
 
         # get the angle of the vector based on linear representation
         # NOTE: adding 90 degrees makes it vertical rather than horizontal
@@ -369,12 +373,12 @@ class Loader(openslide.OpenSlide):
         # define the coords of the rotated frame to load in using the extreme y values
         # TODO: w is in microns not pixels!! need to rescale
         xc = np.mean(v[:,0])
-        x0 = xc - w//2 - padding//2
-        x1 = xc + w//2 + padding//2
+        x0 = xc - w//2 - padding[0]//2
+        x1 = xc + w//2 + padding[0]//2
         pmin = v[np.argmin(v[:,1])]
         pmax = v[np.argmax(v[:,1])]
-        y0 = pmin[1]
-        y1 = pmax[1]
+        y0 = pmin[1] - padding[1]//2
+        y1 = pmax[1] - padding[1]//2
         roi = sana.geo.Polygon([x0, x1, x1, x0], [y0, y0, y1, y1], is_micron=False, level=self.level)
 
         # rotate back to the origin

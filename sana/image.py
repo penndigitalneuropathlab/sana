@@ -14,6 +14,7 @@ import shapely.geometry
 
 # sana packages
 import sana.geo
+import sana.filter
 
 # TODO: check parameter usage
 class Frame:
@@ -244,7 +245,10 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = filter.apply(self.img)[:,:,None]
 
-    def convolve(self, kernel, tile_step=None):
+    def convolve(self, kernel, tile_step=None, do_pad=False, normalize=False):
+        """
+        Performs a (downsampled) convolution of the given kernel over the image. This is done by creating tile views into the frame, then applying the kernel to each of the views
+        """
         if not self.is_gray():
             raise ImageTypeException('Convolution only supported on single-channel images')
         
@@ -254,12 +258,19 @@ class Frame:
         tile_size = sana.geo.Point(kernel.shape[1], kernel.shape[0], is_micron=False, level=self.level)
 
         # generate the tile views to convolve the kernel over
-        tiles = self.to_tiles(tile_size, tile_step)
+        tiles = self.to_tiles(tile_size, tile_step, do_pad=do_pad)
 
         # perform the convolution
-        return np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
+        result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
 
-    def remove_background(self, min_background=1, max_background=255, debug=False):
+        if normalize:
+            ones = frame_like(self, np.ones_like(self.img))
+            norm_factor = ones.convolve(kernel, tile_step=tile_step, do_pad=do_pad, normalize=False)
+            result /= norm_factor
+
+        return result
+
+    def remove_background(self, min_background=0, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by creating a background image, which is then subtracted by the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
 
@@ -278,39 +289,33 @@ class Frame:
             axs[0].imshow(self.img)
 
         # run this function at a lower resolution to make it run faster
+        # TODO: if not available, what do we do?
         level = 1
         ds = self.converter.ds[level] / self.converter.ds[self.level]
         ds_size = self.size() / ds
 
         # run the downsampling
-        ds_frame = self.copy()
-        ds_frame.resize(ds_size, interpolation=cv2.INTER_LINEAR)
+        frame_downsampled = self.copy()
+        frame_downsampled.resize(ds_size, interpolation=cv2.INTER_LINEAR)
+        frame_downsampled.level = level
 
         # get the tiles for the convolution
         # TODO: check the parameters, make these arg
-        tsize = sana.geo.Point(100, 100, is_micron=True)
+        tsize = self.converter.to_int(self.converter.to_pixels(
+            sana.geo.Point(100, 100, is_micron=True), 
+            self.level
+        ))
+        if tsize[0] % 2 == 0: tsize[0] += 1
+        if tsize[1] % 2 == 0: tsize[1] += 1
         tstep = sana.geo.Point(10, 10, is_micron=True)
-        tiles = ds_frame.to_tiles(tsize, tstep)
+        kern_sigma = tsize[0]/5
+        kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
+        fig, ax = plt.subplots(1,1)
+        ax.imshow(kernel)
 
-        # image array that stores the background values for each tile
-        background_image = np.zeros([tiles.shape[0], tiles.shape[1]], dtype=float)
-
-        # 2D gaussian kernel to apply to the tiles
-        kern_length = tiles[0][0].shape[0]
-        kern_sigma = kern_length/5
-        kern = gaussian_kernel(kern_length, kern_sigma)
-
-        # start the convolution
-        for i in range(tiles.shape[0]):
-            for j in range(tiles.shape[1]):
-
-                # get the pixels within the value range in the tile
-                tile = tiles[i][j]
-                valid = (tile >= min_background) & (tile <= max_background)
-
-                # background is calculated as the sum of valid pixels after applying the gaussian kernel
-                background_value = np.sum((tile * kern)[valid])
-                background_image[i][j] = background_value
+        # find the background simply by gaussian blurring the image
+        # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
+        background_image = frame_downsampled.convolve(kernel, tstep, do_pad=True, normalize=True)
 
         # resize the background frame back to original resolution
         background_frame = frame_like(self, background_image)
@@ -522,8 +527,8 @@ class Frame:
                     new_body = new_body.difference(hole)
 
                 # store the resulting body polygons
-                orig_res = sana.geo.from_shapely(orig_body)
-                new_res = sana.geo.from_shapely(new_body)
+                orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
+                new_res = sana.geo.from_shapely(new_body, is_micron=False, level=self.level)
                 if type(new_res) is list:
                     objs += [x for x in new_res if not x is None]
                 elif not new_res is None:
@@ -775,7 +780,7 @@ class Frame:
         holes = [c for c in self.contours if c.hole]
         return bodies, holes
 
-    def to_tiles(self, tsize, tstep):
+    def to_tiles(self, tsize, tstep, do_pad=False):
         if not self.is_gray():
             raise ChannelException(f"Must be a 1 channel image to tile -- dtype={self.img.dtype}")
         
@@ -791,16 +796,19 @@ class Frame:
         if tsize[1] % 2 == 0: tsize[1] += 1
 
         # pad the frame so that we have center aligned tiles
-        padsize = tsize - 1
-        padded_frame = self.pad(padsize, alignment='center', mode='constant')
+        if do_pad:
+            padsize = tsize - 1
+            frame = self.pad(padsize, alignment='center', mode='constant')
+        else:
+            frame = self
 
         # calculate the stride lengths
-        w, h = padded_frame.size()
+        w, h = frame.size()
         strides = (
-            padded_frame.img.itemsize * w * tstep[1], # num bytes between tiles in y direction
-            padded_frame.img.itemsize * tstep[0], # num bytes between tiles in x direction
-            padded_frame.img.itemsize * w, # num bytes between elements in y direction
-            padded_frame.img.itemsize * 1, # num bytes between elements in x direction
+            frame.img.itemsize * w * tstep[1], # num bytes between tiles in y direction
+            frame.img.itemsize * tstep[0], # num bytes between tiles in x direction
+            frame.img.itemsize * w, # num bytes between elements in y direction
+            frame.img.itemsize * 1, # num bytes between elements in x direction
         )
 
         # calculate the output shape
@@ -812,7 +820,8 @@ class Frame:
         )
 
         # perform the tiling
-        return np.lib.stride_tricks.as_strided(padded_frame.img, shape=shape, strides=strides)
+        # NOTE: setting writeable=False is advised by numpy docs
+        return np.lib.stride_tricks.as_strided(frame.img, shape=shape, strides=strides, writeable=False)
 
 class Contour:
     """
@@ -977,24 +986,6 @@ def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_ro
     overlay.to_short()
         
     return overlay
-
-def gaussian_kernel(length, sigma):
-    """
-    Builds a 2D gaussian kernel
-    :param length: side length of the square kernel image
-    :param sigma: standard deviation of the gaussian
-    :returns: 2D image array
-    """
-
-    # calculate the 1D gaussian
-    x = np.linspace(-(length-1)/2, (length-1)/2, length)
-    g1 = np.exp(-0.5 * np.square(x) / np.square(sigma))
-
-    # get the 2D gaussian and normalize
-    g2 = np.outer(g1,g1)
-    g2 = g2 / np.sum(g2)
-
-    return g2
 
 def load_compressed(filename):
     arr = np.load(filename)

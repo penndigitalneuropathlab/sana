@@ -123,6 +123,24 @@ def min_max_filter(img, r, n_iterations=1, debug=False):
 #
 # end of minmax_filter
 
+def get_gaussian_kernel(length, sigma):
+    """
+    Builds a 2D gaussian kernel
+    :param length: side length of the square kernel image
+    :param sigma: standard deviation of the gaussian
+    :returns: 2D image array
+    """
+    
+    # calculate the 1D gaussian
+    x = np.linspace(-(length-1)/2, (length-1)/2, length)
+    g1 = np.exp(-0.5 * np.square(x) / np.square(sigma))
+
+    # get the 2D gaussian and normalize
+    g2 = np.outer(g1,g1)
+    g2 = g2 / np.sum(g2)
+
+    return g2
+
 class AnisotropicGaussianFilter:
     def __init__(self, th, sg_x, sg_y):
         n = int(round(sg_y*6))
