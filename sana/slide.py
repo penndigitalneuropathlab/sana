@@ -378,7 +378,7 @@ class Loader(openslide.OpenSlide):
         pmin = v[np.argmin(v[:,1])]
         pmax = v[np.argmax(v[:,1])]
         y0 = pmin[1] - padding[1]//2
-        y1 = pmax[1] - padding[1]//2
+        y1 = pmax[1] + padding[1]//2
         roi = sana.geo.Polygon([x0, x1, x1, x0], [y0, y0, y1, y1], is_micron=False, level=self.level)
 
         # rotate back to the origin

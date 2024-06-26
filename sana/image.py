@@ -266,7 +266,7 @@ class Frame:
         if normalize:
             ones = frame_like(self, np.ones_like(self.img))
             norm_factor = ones.convolve(kernel, tile_step=tile_step, do_pad=do_pad, normalize=False)
-            result /= norm_factor
+            result = result.astype(float) / norm_factor
 
         return result
 
@@ -310,8 +310,6 @@ class Frame:
         tstep = sana.geo.Point(10, 10, is_micron=True)
         kern_sigma = tsize[0]/5
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
-        fig, ax = plt.subplots(1,1)
-        ax.imshow(kernel)
 
         # find the background simply by gaussian blurring the image
         # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
