@@ -465,19 +465,19 @@ class Polygon(Array):
         """
         return shapely.geometry.Polygon(self)
         
-    def to_annotation(self, class_name="", annotation_name="", confidence=1.0, connect=True):
+    def to_annotation(self, class_name="", annotation_name="", attributes={}, connect=True):
         """
         Converts the Polygon to an Annotation
         :param class_name: class name to store
         :param annotation_name: annotation name to store
-        :param confidence: confidence of annotation
+        :param attributes: dictionary of attributes to store
         :param connect: whether or not to connect the Annotation
         """
         if connect:
             x, y = self.connect().get_xy()
         else:
             x, y = self.get_xy()
-        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level)
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, attributes=attributes, is_micron=self.is_micron, level=self.level)
 
     def to_polygon(self):
         """
@@ -549,12 +549,12 @@ class Curve(Array):
         self.angle = angle
         return self.angle
     
-    def to_annotation(self, class_name, annotation_name="", confidence=1.0):
+    def to_annotation(self, class_name, annotation_name="", attributes={}):
         """
         Converts the Curve to an Annotation using the LineString format in geojson
         """
         x, y = self.get_xy()
-        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, confidence=confidence, is_micron=self.is_micron, level=self.level, object_type='LineString')
+        return Annotation(x=x, y=y, class_name=class_name, annotation_name=annotation_name, attributes=attributes, is_micron=self.is_micron, level=self.level, object_type='LineString')
     
 class Annotation(Array):
     """
@@ -564,18 +564,18 @@ class Annotation(Array):
     :param y: (n,1) input array, not needed if providing geo
     :param class_name: class name of the object in the geojson
     :param annotation_name: name of the object in the geojson
-    :param confidence: floating point value, usually from a machine learning model
+    :param attributes: dictionary of attributes to store in the object
     :param object_type: string denoting the type of object to use in a geojson file format
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", confidence=1.0, object_type='Polygon', is_micron=None, level=None):
+    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", attributes={}, object_type='Polygon', is_micron=None, level=None):
         obj = Array(x, y, is_micron, level).view(cls)
         
         # store attributes
         obj.class_name = class_name
         obj.annotation_name = annotation_name
-        obj.confidence = confidence
+        obj.attributes = attributes
         obj.object_type = object_type
     
         return obj
@@ -584,7 +584,7 @@ class Annotation(Array):
         if obj is None: return
         self.class_name = getattr(obj, 'class_name', None)
         self.annotation_name = getattr(obj, 'annotation_name', None)
-        self.confidence = getattr(obj, 'confidence', None)
+        self.attributes = getattr(obj, 'attributes', None)
         self.is_micron = getattr(obj, 'is_micron', None)
         self.level = getattr(obj, 'level', None)
         self.object_type = getattr(obj, 'object_type', None)
@@ -616,7 +616,7 @@ class Annotation(Array):
                     "name": self.class_name,
                     "color": [255, 0, 0],
                 },
-                "confidence": self.confidence,
+                "attributes": self.attributes,
             }
         }
         return annotation
