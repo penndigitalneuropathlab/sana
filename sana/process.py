@@ -351,7 +351,7 @@ class HDABProcessor(Processor):
 
             # find the centers of each soma using distance transform and peak detection
             self.logger.debug('Finding centers of somas...')
-            self.soma_ctrs = self.detect_somas(self.dab, self.pos_dab, minimum_soma_radius, min_max_filter_iterations)
+            self.soma_ctrs = self.detect_somas(self.dab, self.pos_dab, minimum_soma_radius)
             ret.append(['soma_ctrs', self.soma_ctrs])
 
         if run_soma_segmentation:

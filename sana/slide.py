@@ -5,17 +5,18 @@ from copy import copy
 import time
 
 # openslide importing
-OPENSLIDE_PATH = os.environ.get('OPENSLIDE_DLL_DIRECTORY')
-if hasattr(os, 'add_dll_directory'):
-    # Windows
-    with os.add_dll_directory(OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
+# OPENSLIDE_PATH = os.environ.get('OPENSLIDE_DLL_DIRECTORY')
+# if hasattr(os, 'add_dll_directory'):
+#     # Windows
+#     with os.add_dll_directory(OPENSLIDE_PATH):
+#         import openslide
+# else:
+import openslide
     
 # installed packages
 import numpy as np
 from matplotlib import pyplot as plt
+from scipy.interpolate import interp1d
 
 # sana packages
 import sana.image
@@ -257,51 +258,60 @@ class Loader(openslide.OpenSlide):
 
         return frame
 
-    def load_frame_with_segmentations(self, c0, c1, c2, c3, padding=0):
+    def load_frame_with_segmentations(self, c0, c1, padding=0):
         """
         Loads a Frame into memory using 2 input boundaries. First we get the bounding box of the 2 boundaries, then rotates the image so that c1 is horizontal and at the top of the image
         TODO: add link to example image for docs
         :param c0: geo.Curve that will be rotated to the top of the Frame
         :param c1: geo.Curve that is semi-parallel to c1
-        :param c2: geo.Curve that is the left side of the quadrilateral
-        :param c3: geo.Curve that is the right side of the quadrilateral
         :param padding: amount of padding to apply to the Frame
         """
         angle = c0.attributes.get('angle',None)
         c0 = c0.to_curve()
         c1 = c1.to_curve()
-        c2 = c2.to_curve()
-        c3 = c3.to_curve()
 
-        # get the center of the 2 curves
-        roi = sana.geo.get_polygon_from_curves(c0, c1, c2, c3)
+        # get the center of the roi
+        roi = sana.geo.get_polygon_from_curves(c0, c1)
         center = np.mean(roi, axis=0)
 
-        # get the angle to use for orientation
+        # get the best angle for the ROI
         if angle is None:
-            c0_angle = c0.get_angle()
-            c1_angle = c1.get_angle()
-            # TODO: if using average, need to resolve quadrants!!
-            #angle = (c1_angle + c2_angle) / 2
-            angle = c0_angle
 
-            # make sure c1 is on top of c2 after rotating
+            # rotate to make the curves mostly horizontal
+            angle = (c0.get_angle() + c1.get_angle()) / 2
             c0.rotate(center, -angle)
             c1.rotate(center, -angle)
+            
+            # get the centers of the curves by interpolating
+            x = c0[:,0]
+            y = c0[:,1]
+            ctrx = (x[0]+x[-1])/2
+            ctry = interp1d(x,y)(ctrx)
+            ctr0 = sana.geo.point_like(ctrx, ctry, c0)
+            x = c1[:,0]
+            y = c1[:,1]
+            ctrx = (x[0]+x[-1])/2
+            ctry = interp1d(x,y)(ctrx)
+            ctr1 = sana.geo.point_like(ctrx, ctry, c0)
+
+            # # rotate so that the spine is vertical
+            # spine = sana.geo.curve_like([ctr0[0], ctr1[0]], [ctr0[1], ctr1[1]], c0)
+            # extra_angle = spine.get_angle()-90
+            # c0.rotate(center, -extra_angle)
+            # c1.rotate(center, -extra_angle)
+            # angle += extra_angle
+
+            # make sure c1 is on top of c2 after rotating
             if np.mean(c0[:,1]) > np.mean(c1[:,1]):
                 c0.rotate(center, 180)
                 c1.rotate(center, 180)
                 angle += 180
-            
-            self.logger.debug('Orthogonal Angle Found: (%.2f, %.2f) -- %.2f' % (c0_angle, c1_angle, angle))
         else:
             c0.rotate(center, -angle)
             c1.rotate(center, -angle)
-            c2.rotate(center, -angle)
-            c3.rotate(center, -angle)            
     
         # create a bounding box ROI from the rotated curves
-        roi = sana.geo.get_polygon_from_curves(c0, c1, c2, c3)
+        roi = sana.geo.get_polygon_from_curves(c0, c1)
         loc, size = roi.bounding_box()
 
         # apply the padding to get the final roi which we will crop to in the rotated coordinate space
@@ -313,8 +323,6 @@ class Loader(openslide.OpenSlide):
         roi.rotate(center, angle)
         c0.rotate(center, angle)
         c1.rotate(center, angle)
-        c2.rotate(center, angle)
-        c3.rotate(center, angle)
 
         # load the frame from the ROI
         # NOTE: we've already performed the padding
@@ -322,16 +330,12 @@ class Loader(openslide.OpenSlide):
         roi.translate(self.logger.data['loc'])
         c0.translate(self.logger.data['loc'])
         c1.translate(self.logger.data['loc'])
-        c2.translate(self.logger.data['loc'])
-        c3.translate(self.logger.data['loc'])
         if self.logger.generate_plots:
             fig, axs = plt.subplots(1,3)
             ax = axs[0]
             ax.imshow(frame.img)
             ax.plot(*c0.T, color='red', label='c0')
             ax.plot(*c1.T, color='blue', label='c1')
-            ax.plot(*c2.T, color='orange', label='c2')
-            ax.plot(*c3.T, color='green', label='c3')
             ax.set_title('Original Frame loaded from Curves')
             ax.legend()
 
@@ -344,15 +348,11 @@ class Loader(openslide.OpenSlide):
         roi.transform(M)
         c0.transform(M)
         c1.transform(M)
-        c2.transform(M)
-        c3.transform(M)
         if self.logger.generate_plots:
             ax = axs[1]
             ax.imshow(frame.img)
             ax.plot(*c0.T, color='red', label='c0')
             ax.plot(*c1.T, color='blue', label='c1')
-            ax.plot(*c2.T, color='orange', label='c2')
-            ax.plot(*c3.T, color='green', label='c3')
             ax.set_title('Rotated horizontally with c0 on top')
             ax.legend()
 
@@ -362,18 +362,16 @@ class Loader(openslide.OpenSlide):
         roi.translate(crop_loc)
         c0.translate(crop_loc)
         c1.translate(crop_loc)
-        c2.translate(crop_loc)
-        c3.translate(crop_loc)
         if self.logger.generate_plots:
             ax = axs[2]
             ax.imshow(frame.img)
             ax.plot(*c0.T, color='red', label='c0')
             ax.plot(*c1.T, color='blue', label='c1')
-            ax.plot(*c2.T, color='orange', label='c2')
-            ax.plot(*c3.T, color='green', label='c3')
             ax.set_title('Final Rotated/Cropped Frame')
             ax.legend()
 
+        plt.show()
+        
         # store the processing parameters
         self.logger.data['angle'] = angle
         self.logger.data['M'] = M
