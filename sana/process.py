@@ -279,6 +279,7 @@ class HDABProcessor(Processor):
 
     def run(self,
             triangular_strictness=0.0,
+            minimum_threshold=0,            
             morphology_filters=[],
             run_soma_detection=False,
             minimum_soma_radius=1,
@@ -306,6 +307,8 @@ class HDABProcessor(Processor):
             strictness=triangular_strictness,
             debug=self.logger.generate_plots
         )
+        if threshold < minimum_threshold:
+            threshold = minimum_threshold
 
         # perform pixel classification by thresholding and morphology filters
         self.thr_dab = self.dab.copy()
@@ -317,25 +320,29 @@ class HDABProcessor(Processor):
         # run the structure tensor analysis to find the orientation of the DAB
         # TODO: move to function
         if run_sta:
-            # get the coherence of the image, and the "strength" of each direction
-            coh, ang = sana.sta.run_directional_sta(self.dab, sta_sigma)
+            coh, ang = sana.sta.run_sta(self.dab, sta_sigma)
             
-            # generate a probability image using coh, DAB, and angular strength
-            prob = coh * ang * self.dab.img.astype(float)
-            prob /= np.max(prob)
+            # # get the coherence of the image, and the "strength" of each direction
+            # coh, ang = sana.sta.run_directional_sta(self.dab, sta_sigma)
+            
+            # # generate a probability image using coh, DAB, and angular strength
+            # prob = coh * ang * self.dab.img.astype(float)
+            # prob /= np.max(prob)
 
-            angular_thresholds = []
-            for i in range(prob.shape[2]):
-                p = prob[:,:,i].flatten()
-                hist = np.histogram(p, 255)[0].astype(float)
-                angular_thresholds.append(sana.threshold.triangular_method(hist, strictness=sta_strictness) / 255)
+            # angular_thresholds = []
+            # for i in range(prob.shape[2]):
+            #     p = prob[:,:,i].flatten()
+            #     hist = np.histogram(p, 255)[0].astype(float)
+            #     angular_thresholds.append(sana.threshold.triangular_method(hist, strictness=sta_strictness) / 255)
 
-            V = sana.image.Frame(((prob[:,:,0] >= angular_thresholds[0]) & (np.argmax(prob, axis=2) == 0)).astype(np.uint8))
-            H = sana.image.Frame(((prob[:,:,1] >= angular_thresholds[1]) & (np.argmax(prob, axis=2) == 1)).astype(np.uint8))
-            D = sana.image.Frame(((prob[:,:,2] >= angular_thresholds[2]) & (np.argmax(prob, axis=2) == 2)).astype(np.uint8))
-            ret.append(['vertical', V])
-            ret.append(['horizontal', H])
-            ret.append(['diagonal', D])
+            # V = sana.image.Frame(((prob[:,:,0] >= angular_thresholds[0]) & (np.argmax(prob, axis=2) == 0)).astype(np.uint8))
+            # H = sana.image.Frame(((prob[:,:,1] >= angular_thresholds[1]) & (np.argmax(prob, axis=2) == 1)).astype(np.uint8))
+            # D = sana.image.Frame(((prob[:,:,2] >= angular_thresholds[2]) & (np.argmax(prob, axis=2) == 2)).astype(np.uint8))
+            # ret.append(['vertical', V])
+            # ret.append(['horizontal', H])
+            # ret.append(['diagonal', D])
+            ret.append(['coh', coh*self.dab.img.astype(float)])
+            ret.append(['ang', ang])
 
             if self.logger.generate_plots:
                 overlay = self.frame.copy()
