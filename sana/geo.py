@@ -549,14 +549,16 @@ class Curve(Array):
 
         ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
         ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        if ss_xx == 0:
-            if ss_xy > 0:
+        if ss_xx != 0:
+            m = ss_xy/ss_xx
+            b = np.mean(y) - m * np.mean(x)
+        else:
+            if np.sign(ss_xy) == 1:
                 m = np.inf
             else:
                 m = -np.inf
-        else:
-            m = ss_xy/ss_xx
-        b = np.mean(y) - m * np.mean(x)
+            b = np.nan
+            
         self.slope = m
         self.intercept = b
 
@@ -571,8 +573,15 @@ class Curve(Array):
         if not hasattr(self, 'slope'):
             self.linear_regression()
 
+<<<<<<< HEAD
         #self.slope = (self[-1,1] - self[0,1]) / (self[-1,0] - self[0,0])
         
+=======
+        if self.slope == np.inf:
+            angle = 90
+        elif self.slope == -np.inf:
+            angle = 270
+>>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 
         # calculate the angle of rotation in degrees
 
@@ -726,10 +735,11 @@ def ray_tracing(x,y,poly):
         p1x,p1y = p2x,p2y
     return inside
 
-def get_polygon_from_curves(a, b, c=None, d=None):
+def get_polygon_from_curves(a, b):
     """
     Creates a polygon by connecting 2 curves at both ends
     """
+<<<<<<< HEAD
     # top side, left->right
     if a[0,0] < a[-1,0]:
         a_direction = 1
@@ -746,29 +756,20 @@ def get_polygon_from_curves(a, b, c=None, d=None):
         b_direction = 1
     else:
         b_direction = -1
+=======
+    x = np.concatenate([a[:,0], b[:,0]], axis=0)
+    y = np.concatenate([a[:,1], b[:,1]], axis=0)
+    p = polygon_like(x, y, a).connect()
+>>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 
-    # left side, bottom->top
-    if not c is None:
-        if c[0,1] > c[-1,1]:
-            c_direction = 1
-        else:
-            c_direction = -1
-        
-    # create the polygon
-    if not c is None:
-        x = np.concatenate([
-            a[::a_direction,0],
-            d[::d_direction,0],
-            b[::b_direction,0],
-            c[::c_direction,0],            
-        ], axis=0)
-        y = np.concatenate([
-            a[::a_direction,1],
-            d[::d_direction,1],
-            b[::b_direction,1],
-            c[::c_direction,1],            
-        ], axis=0)
+    x = np.concatenate([a[:,0], b[::-1,0]], axis=0)
+    y = np.concatenate([a[:,1], b[::-1,1]], axis=0)
+    p_reverse = polygon_like(x, y, a).connect()
+
+    if p.get_area() > p_reverse.get_area():
+        return p
     else:
+<<<<<<< HEAD
         x = np.concatenate([
             a[::a_direction,0],
             b[::b_direction,0],
@@ -779,6 +780,10 @@ def get_polygon_from_curves(a, b, c=None, d=None):
         ], axis=0)
     return polygon_like(x, y, a).connect()
 
+=======
+        return p_reverse
+    
+>>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level)
 def point_like(x, y, obj):
