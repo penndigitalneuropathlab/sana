@@ -279,11 +279,11 @@ class Loader(openslide.OpenSlide):
         angle = c0.attributes.get('angle',None)
         c0 = c0.to_curve()
         c1 = c1.to_curve()
-        c2 = c0.to_curve()
-        c3 = c1.to_curve()
+        c2 = c2.to_curve()
+        c3 = c3.to_curve()
 
         # get the center of the 2 curves
-        roi = sana.geo.get_polygon_from_curves(c0, c1, c2, c3)
+        roi = sana.geo.get_polygon_from_curves(c0, c1)
         center = np.mean(roi, axis=0)
 
         # get the best angle for the ROI

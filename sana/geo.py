@@ -573,15 +573,10 @@ class Curve(Array):
         if not hasattr(self, 'slope'):
             self.linear_regression()
 
-<<<<<<< HEAD
-        #self.slope = (self[-1,1] - self[0,1]) / (self[-1,0] - self[0,0])
-        
-=======
         if self.slope == np.inf:
             angle = 90
         elif self.slope == -np.inf:
             angle = 270
->>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 
         # calculate the angle of rotation in degrees
 
@@ -739,28 +734,9 @@ def get_polygon_from_curves(a, b):
     """
     Creates a polygon by connecting 2 curves at both ends
     """
-<<<<<<< HEAD
-    # top side, left->right
-    if a[0,0] < a[-1,0]:
-        a_direction = 1
-    else:
-        a_direction = -1
-    # right side, top->bottom
-    if not d is None:
-        if d[0,1] < d[-1,1]:
-            d_direction = 1
-        else:
-            d_direction = -1
-    # bottom side, right->left
-    if b[0,0] > b[-1,0]:
-        b_direction = 1
-    else:
-        b_direction = -1
-=======
     x = np.concatenate([a[:,0], b[:,0]], axis=0)
     y = np.concatenate([a[:,1], b[:,1]], axis=0)
     p = polygon_like(x, y, a).connect()
->>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 
     x = np.concatenate([a[:,0], b[::-1,0]], axis=0)
     y = np.concatenate([a[:,1], b[::-1,1]], axis=0)
@@ -769,21 +745,8 @@ def get_polygon_from_curves(a, b):
     if p.get_area() > p_reverse.get_area():
         return p
     else:
-<<<<<<< HEAD
-        x = np.concatenate([
-            a[::a_direction,0],
-            b[::b_direction,0],
-        ], axis=0)
-        y = np.concatenate([
-            a[::a_direction,1],
-            b[::b_direction,1],
-        ], axis=0)
-    return polygon_like(x, y, a).connect()
-
-=======
         return p_reverse
     
->>>>>>> 36acb1cf9b54d851a8bae36ad4ab4cb737ee6642
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level)
 def point_like(x, y, obj):
