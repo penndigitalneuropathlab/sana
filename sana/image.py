@@ -234,8 +234,9 @@ class Frame:
         """
         Resizes the image array to the specified size
         """
-        size = self.converter.to_pixels(size, self.level)
-        size = self.converter.to_int(size)
+        if not self.converter is None:
+            size = self.converter.to_pixels(size, self.level)
+            size = self.converter.to_int(size)
         w, h = size
         self.img = cv2.resize(self.img, dsize=(w, h), interpolation=interpolation)
         self.check_channels()
@@ -290,7 +291,7 @@ class Frame:
 
         # run this function at a lower resolution to make it run faster
         # TODO: if not available, what do we do?
-        level = 1
+        level = np.argmax(self.converter.ds > 3)
         ds = self.converter.ds[level] / self.converter.ds[self.level]
         ds_size = self.size() / ds
 
@@ -307,7 +308,7 @@ class Frame:
         ))
         if tsize[0] % 2 == 0: tsize[0] += 1
         if tsize[1] % 2 == 0: tsize[1] += 1
-        tstep = sana.geo.Point(10, 10, is_micron=True)
+        tstep = sana.geo.Point(50, 50, is_micron=True)
         kern_sigma = tsize[0]/5
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
 
@@ -330,6 +331,8 @@ class Frame:
             axs[1].imshow(background_frame.img)
             axs[2].imshow(self.img)
             plt.show()
+
+        return background_frame
 
     def rotate(self, angle, interpolation=cv2.INTER_LINEAR):
         """
@@ -382,7 +385,11 @@ class Frame:
                                   dsize=(w, h),
                                   flags=interpolation,
                                   borderValue=border_value)
-        self.check_channels() # TODO
+        self.check_channels()
+
+    def warp_perspective(self, H):
+        self.img = cv2.warpPerspective(self.img, H, self.size().astype(int))
+        self.check_channels()
 
     def pad(self, pad, alignment='center', mode='symmetric'):
         """
@@ -522,7 +529,10 @@ class Frame:
                     hole = shapely.geometry.Polygon(np.squeeze(c[j]))
 
                     # remove the hole from the body
-                    new_body = new_body.difference(hole)
+                    try:
+                        new_body = new_body.difference(hole)
+                    except:
+                        pass
 
                 # store the resulting body polygons
                 orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
