@@ -57,16 +57,26 @@ class Loader(openslide.OpenSlide):
         # define the necessary attributes
         self.lc = self.level_count
         self.dim = self.level_dimensions
-        self.ds = self.level_downsamples
-
-        # set the conversion scaler for microns per pixel
-        if not mpp is None:
-            self.mpp = mpp
-        else:
+        self.ds = np.array(self.level_downsamples)
+        try:
+            self.mpp = float(self.properties['aperio.MPP'])
+        except:
             try:
-                self.mpp = float(self.properties['aperio.MPP'])
+                self.mpp = float(self.properties['openslide.mpp-x'])
             except:
-                self.mpp = 1.0
+                self.mpp = 0.5045
+        try:
+            self.bw = float(self.properties['openslide.bounds-width'])
+            self.bh = float(self.properties['openslide.bounds-height'])
+            self.bx = float(self.properties['openslide.bounds-x'])
+            self.by = float(self.properties['openslide.bounds-y'])
+        except:
+            self.bw = self.dim[0][1]
+            self.bh = self.dim[0][0]
+            self.bx = 0
+            self.by = 0
+        self.bloc = sana.geo.Point(self.bx, self.by, is_micron=False, level=0)
+        self.bsize = sana.geo.Point(self.bw, self.bh, is_micron=False, level=0)
 
         # define the converter object to convert units and rescale data
         self.converter = sana.geo.Converter(self.mpp, self.ds)
@@ -257,7 +267,7 @@ class Loader(openslide.OpenSlide):
 
         return frame
 
-    def load_frame_with_segmentations(self, c0, c1, c2, c3, padding=0):
+    def load_frame_with_segmentations(self, c0, c1, c2, c3, padding=0, use_edges=True):
         """
         Loads a Frame into memory using 2 input boundaries. First we get the bounding box of the 2 boundaries, then rotates the image so that c1 is horizontal and at the top of the image
         TODO: add link to example image for docs
@@ -274,7 +284,10 @@ class Loader(openslide.OpenSlide):
         c3 = c3.to_curve()
 
         # get the center of the 2 curves
-        roi = sana.geo.get_polygon_from_curves(c0, c1, c2, c3)
+        if use_edges:
+            roi = sana.geo.get_polygon_from_curves(c0, c1, c2, c3)
+        else:
+            roi = sana.geo.get_polygon_from_curves(c0, c1)
         center = np.mean(roi, axis=0)
 
         # get the angle to use for orientation
@@ -285,12 +298,16 @@ class Loader(openslide.OpenSlide):
             #angle = (c1_angle + c2_angle) / 2
             angle = c0_angle
 
-            # make sure c1 is on top of c2 after rotating
+            # make sure c0 is on top of c1 after rotating
             c0.rotate(center, -angle)
             c1.rotate(center, -angle)
+            c2.rotate(center, -angle)
+            c3.rotate(center, -angle)
             if np.mean(c0[:,1]) > np.mean(c1[:,1]):
                 c0.rotate(center, 180)
                 c1.rotate(center, 180)
+                c2.rotate(center, 180)
+                c3.rotate(center, 180)
                 angle += 180
             
             self.logger.debug('Orthogonal Angle Found: (%.2f, %.2f) -- %.2f' % (c0_angle, c1_angle, angle))
