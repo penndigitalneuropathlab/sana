@@ -6,8 +6,11 @@ import math
 import numpy as np
 from scipy.spatial import ConvexHull
 import shapely.geometry
+from scipy.interpolate import interp1d
 
 from numba import jit
+
+from matplotlib import pyplot as plt
 
 class Converter:
     """
@@ -206,6 +209,36 @@ class Point(Array):
         else:
             self -= M[:,2]
             np.matmul(np.linalg.inv(M[:,:2]), self, out=self)
+            
+class Vector(Array):
+    """
+    (2,2) shaped np.ndarray object, same process as sana.geo.Array
+    :param x1: x value of point a
+    :param y1: y value of point a
+    :param x2: x value of point b
+    :param y2: y value of point b
+    :param is_micron: flag denoting if the Array is micron units or pixel units
+    :param level: pixel resolution level (level=0 when in microns)
+    """
+    def __new__(cls, x1, y1, x2, y2, is_micron=None, level=None):
+        # TODO: need to check validity of x and y, same in Array
+        arr = np.array(((x1,y1), (x2,y2)))
+        obj = np.asarray(arr).view(cls)
+        obj.is_micron = is_micron
+        obj.level = level
+        return obj
+    def __array_finalize__(self, obj):
+        if obj is None: return
+        self.is_micron = getattr(obj, 'is_micron', None)
+        self.level = getattr(obj, 'level', None)
+
+    def get_angle(self):
+        v = self[1] - self[0]
+        return np.arctan2(v[1], v[0])
+
+    def get_length(self):
+        v = self[:,1] - self[:,0]
+        return np.sqrt(np.sum(np.square(v)))
     
 class Polygon(Array):
     """
@@ -516,7 +549,13 @@ class Curve(Array):
 
         ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
         ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        m = ss_xy/ss_xx
+        if ss_xx == 0:
+            if ss_xy > 0:
+                m = np.inf
+            else:
+                m = -np.inf
+        else:
+            m = ss_xy/ss_xx
         b = np.mean(y) - m * np.mean(x)
         self.slope = m
         self.intercept = b
@@ -532,9 +571,11 @@ class Curve(Array):
         if not hasattr(self, 'slope'):
             self.linear_regression()
 
-        self.slope = (self[-1,1] - self[0,1]) / (self[-1,0] - self[0,0])
+        #self.slope = (self[-1,1] - self[0,1]) / (self[-1,0] - self[0,0])
+        
 
         # calculate the angle of rotation in degrees
+
         angle = np.rad2deg(np.arctan(self.slope))
 
         # TODO: check this math!
@@ -690,7 +731,7 @@ def get_polygon_from_curves(a, b, c=None, d=None):
     Creates a polygon by connecting 2 curves at both ends
     """
     # top side, left->right
-    if a[0,0] < a[-1,1]:
+    if a[0,0] < a[-1,0]:
         a_direction = 1
     else:
         a_direction = -1
@@ -737,11 +778,13 @@ def get_polygon_from_curves(a, b, c=None, d=None):
             b[::b_direction,1],
         ], axis=0)
     return polygon_like(x, y, a).connect()
-    
+
 def array_like(arr, obj):
     return Array(arr, is_micron=obj.is_micron, level=obj.level)
 def point_like(x, y, obj):
     return Point(x, y, is_micron=obj.is_micron, level=obj.level)
+def vector_like(x1, y1, x2, y2, obj):
+    return Vector(x1, y1, x2, y2, is_micron=obj.is_micron, level=obj.level)
 def polygon_like(x, y, obj):
     return Polygon(x, y, is_micron=obj.is_micron, level=obj.level)
 def curve_like(x, y, obj):
@@ -776,7 +819,7 @@ def inverse_transform_array(x, loc, M, crop_loc):
     if not crop_loc is None:
         x.translate(-crop_loc)
     if not M is None:
-        x.transform_inv(M)
+        x.transform(M, inverse=True)
     if not loc is None:
         x.translate(-loc)
 
