@@ -891,7 +891,7 @@ def create_mask_cv2(polygons, frame):
     return frame_like(frame, mask_img.astype(np.uint8))
 
 # TODO: PIL is acting weird, merge with cv2 and only use PIL for outline??
-def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1):
+def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1, do_connect=True):
     """
     Generates a binary mask from a list of Polygons
     :param polygons: list of body Polygon
@@ -906,7 +906,8 @@ def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewi
     # convert the Polygons to lists of values that PIL can handle
     polys = []
     for p in polygons:
-        p = p.connect()
+        if do_connect:
+            p = p.connect()
         if not frame.converter is None:
             frame.converter.to_pixels(p, frame.level)
             p = frame.converter.to_int(p)

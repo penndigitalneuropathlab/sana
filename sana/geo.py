@@ -761,6 +761,16 @@ def rectangle_like(loc, size, obj):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
     return polygon_like(x, y, obj)
+def annotation_like(x, y, obj):
+    return Annotation(
+        x, y,
+        class_name=obj.class_name,
+        annotation_name=obj.annotation_name,
+        attributes=obj.attributes,
+        object_type=obj.object_type,
+        is_micron=obj.is_micron,
+        level=obj.level
+    )
 
 def transform_array_with_logger(x, logger, inverse=False):
     if inverse:

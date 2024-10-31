@@ -5,13 +5,13 @@ from copy import copy
 import time
 
 # openslide importing
-# OPENSLIDE_PATH = os.environ.get('OPENSLIDE_DLL_DIRECTORY')
-# if hasattr(os, 'add_dll_directory'):
-#     # Windows
-#     with os.add_dll_directory(OPENSLIDE_PATH):
-#         import openslide
-# else:
-import openslide
+OPENSLIDE_PATH = os.environ.get('OPENSLIDE_DLL_DIRECTORY')
+if hasattr(os, 'add_dll_directory'):
+    # Windows
+    with os.add_dll_directory(OPENSLIDE_PATH):
+        import openslide
+else:
+    import openslide
     
 # installed packages
 import numpy as np
