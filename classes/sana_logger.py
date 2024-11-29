@@ -36,6 +36,8 @@ class SANALogger():
             logger.plots = False
 
         # Setting logging file handler
+        if (logger.hasHandlers()):
+            logger.handlers.clear()
         file_handler = logging.FileHandler('log.log',mode='w')
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)

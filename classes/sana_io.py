@@ -10,6 +10,7 @@ import fnmatch
 # installed packages
 import numpy as np
 import geojson
+import pandas as pd
 
 # sana packages
 from sana_geo import Polygon, Point, Annotation
@@ -61,6 +62,14 @@ def get_anno_files(d,recurse=False):
 #
 # end of get_anno_files
 
+def load_class_mapping(class_map_fname):
+    return json.loads(open(class_map_fname, 'r').read())
+# 
+# end load_class_mapping
+
+def load_manifest(manifest_fname):
+    return pd.read_csv(manifest_fname)
+
 # returns True if Loader can handle the given file
 def is_slide(f):
     return f.endswith('.svs')
@@ -80,9 +89,12 @@ def is_anno(f):
 def get_slide_id(fname):
     return fname.split('_')[0]
 
+def get_slide_name(fname):
+    return os.path.splitext(os.path.basename(fname))[0]
+
 def get_slide_parts(fname):
     if not is_slide(fname):
-        print('ERROR: Cannot get antibody from file: %s' % fname)
+        print('ERROR: Cannot parse slide parts from file: %s' % fname)
         exit()
     fname = ntpath.basename(fname)
     parts = fname.split('_')
@@ -115,7 +127,11 @@ def get_region(fname):
     return get_slide_parts(fname)[2]
 # e.g. SMI32
 def get_antibody(fname):
-    return get_slide_parts(fname)[3]
+    # NOTE: this assumes that we have the file name: *-ANTIBODY.tif
+    if fname.endswith('.tif'):
+        return os.path.splitext(fname)[0].split('-')[-1]
+    else:
+        return get_slide_parts(fname)[3]
 
 def get_fpath(ifpath, fpath="", rpath=""):
 
@@ -170,6 +186,12 @@ def create_filepath(ifile, ext="", suffix="", fpath="", rpath=""):
     return ofile
 #
 # end of create_filepath
+
+def get_slide_odir(odir, slide):
+    return os.path.join(odir, get_bid(slide), get_antibody(slide), get_region(slide))
+
+def get_params_file(odir, slide_name):
+    return os.path.join(odir, slide_name+'.csv')
 
 # creates a subdirectory for the ith ROI in a given json file
 def create_odir(odir, s):

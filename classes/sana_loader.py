@@ -52,7 +52,7 @@ class Loader(openslide.OpenSlide):
 
             # calculate the Slide/Tissue threshold
             # TODO: make this much faster!
-            self.csf_threshold = get_csf_threshold(copy(self.thumbnail))
+            self.csf_threshold = int(get_csf_threshold(copy(self.thumbnail)))
             self.thumbnail.csf_threshold = self.csf_threshold
     #
     # end of constructor
@@ -74,11 +74,11 @@ class Loader(openslide.OpenSlide):
 
     # loads the entire image at the lowest resolution
     def load_thumbnail(self):
-        lvl = self.lc - 1
-        h, w = self.get_dim(lvl)
-        loc = Point(0, 0, False, lvl)
-        size = Point(h, w, False, lvl)
-        return self.load_frame(loc, size, lvl)
+        self.thumbnail_lvl = self.lc - 1
+        h, w = self.get_dim(self.thumbnail_lvl)
+        loc = Point(0, 0, False, self.thumbnail_lvl)
+        size = Point(h, w, False, self.thumbnail_lvl)
+        return self.load_frame(loc, size, self.thumbnail_lvl)
 
     # loads a Frame into memory, uses a location and size coordinate
     #  image is automatically padded if loc or size exceeds the dimensions
@@ -173,6 +173,7 @@ class Loader(openslide.OpenSlide):
         roi.translate(loc)
 
         # store the processing params and return the frame
+        params.data['csf_threshold'] = self.csf_threshold        
         params.data['loc'] = loc
         params.data['size'] = size
         params.data['crop_loc'] = Point(0, 0, loc.is_micron, loc.lvl)
@@ -183,13 +184,26 @@ class Loader(openslide.OpenSlide):
             fig, axs = plt.subplots(1,1)
             axs.imshow(frame.img)
             plot_poly(axs, roi, color='red')
-            fig.suptitle('load_roi_frame')
+            fig.suptitle('Main ROI in slide coordinate system')
             plt.show()
 
         return frame
     #
     # end of load_roi_frame
 
+    def load_from_params(self, params):
+        frame = self.load_frame(params.data['loc'], params.data['size'], frame_padding=params.data['padding'])
+        
+        M, nw, nh = frame.get_rotation_mat(params.data['angle1'])
+        frame.warp_affine(M, nw, nh)
+
+        frame.crop(params.data['crop_loc'], params.data['crop_size'])
+
+        M, nw, nh = frame.get_rotation_mat(params.data['angle2'])
+        frame.warp_affine(M, nw, nh)
+
+        return frame
+    
     # this function loads a frame of slide data using a given GM segmentation
     # it uses the boundaries to orthoganalize the frame, then looks for slide
     # background near the boundaries to orient the CSF to the top of the frame
@@ -207,10 +221,11 @@ class Loader(openslide.OpenSlide):
             axs = axs.ravel()
             axs[0].imshow(frame.img)
             plot_poly(axs[0], roi, color='red')
+            axs[0].set_title('Original Frame')
 
         # get the angle that best orthogonalizes the segmentation
         angle = get_ortho_angle(roi)
-        logger.info('Best Orthog. Angle found:',angle)
+        logger.info('Best Orthog. Angle found: %s' % (str(angle)))
 
         # rotate the image/ROI to be orthogonalized
         M1, nw, nh = frame.get_rotation_mat(angle)
@@ -220,6 +235,7 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[1].imshow(frame.img)
             plot_poly(axs[1], roi, color='red')
+            axs[1].set_title('Rotated to tissue')
 
         # crop the frame/ROI to remove borders
         # TODO: this might affect the amount of slide that is found near boundaries
@@ -231,6 +247,7 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
+            axs[2].set_title('Cropped to ROI')
 
         # figure out if the image is oriented with CSF on top
         # TODO: make sure get_tissue_orientation is good
@@ -248,10 +265,12 @@ class Loader(openslide.OpenSlide):
         if logger.plots:
             axs[3].imshow(frame.img)
             plot_poly(axs[3], roi, color='red')
-            fig.suptitle('load_gm_frame')
+            axs[3].set_title('Ensured CSF is on top')
+            fig.suptitle('Frame orthogonalized to the tissue')
             plt.show()
 
         # store the values used during loading the frame
+        params.data['csf_threshold'] = self.csf_threshold
         params.data['crop_loc'] = crop_loc
         params.data['crop_size'] = crop_size
         params.data['angle1'] = angle
@@ -281,7 +300,7 @@ class Loader(openslide.OpenSlide):
             plot_poly(axs[0], roi, color='red')
 
         # split the ROI into 4 lines and find the line closest to slide background
-        angle = get_gm_zone_angle(frame, roi)
+        angle = get_gm_zone_angle(frame, roi, logger)
         logger.info('Best Orthog. Angle found: %s' % (str(angle)))
 
         # rotate the image/ROI to orthogonalize them to the CSF boundary
@@ -296,10 +315,10 @@ class Loader(openslide.OpenSlide):
         # crop the frame/ROI to remove borders
         # TODO: this might affect the amount of slide that is found near boundaries
         # TODO: do this at the end?
+        orig_size = frame.size()
         crop_loc, crop_size = roi.bounding_box()
         roi.translate(crop_loc)
         frame.crop(crop_loc, crop_size)
-
         if logger.plots:
             axs[2].imshow(frame.img)
             plot_poly(axs[2], roi, color='red')
@@ -309,6 +328,8 @@ class Loader(openslide.OpenSlide):
         M2 = None
 
         # store the values used during loading the frame
+        params.data['csf_threshold'] = self.csf_threshold
+        params.data['orig_size'] = orig_size
         params.data['crop_loc'] = crop_loc
         params.data['crop_size'] = crop_size
         params.data['angle1'] = angle
@@ -335,7 +356,7 @@ class Loader(openslide.OpenSlide):
             w = np.max(l[0][:,0])-np.min(l[0][:,0])
             l[0].rotate(c, -angle)
         else:
-            w = 1600
+            w = 6000 # TODO: make this a args parameter
 
         # sort the vector by the y values
         v = v[np.argsort(v[:,1])]
@@ -353,6 +374,7 @@ class Loader(openslide.OpenSlide):
         # load a bigger frame based on the rotated rect
         rect_loc, rect_size = rect.bounding_box()
         frame = self.load_frame(rect_loc, rect_size)
+        frame.padding = padding
         orig_frame = frame.copy()
 
         # get the local intensities at the vertices
@@ -409,7 +431,7 @@ class Loader(openslide.OpenSlide):
                 l[i].translate(loc)
 
         # store the processing parameters and return the frame
-        # TODO: change the naming convention
+        params.data['csf_threshold'] = self.csf_threshold        
         params.data['loc'] = rect_loc
         params.data['size'] = rect_size
         params.data['crop_loc'] = loc
