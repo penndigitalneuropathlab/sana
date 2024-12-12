@@ -300,8 +300,8 @@ class HDABProcessor(Processor):
         # list of processed images to return
         ret = []
 
-        # get the threshold for the DAB
-        hist = self.dab.get_histogram()
+        # get the threshold for the DAB that inside the main roi
+        hist = self.dab.get_histogram(mask=self.main_mask)
         threshold = sana.threshold.triangular_method(
             hist, 
             strictness=triangular_strictness,

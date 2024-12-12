@@ -142,13 +142,16 @@ class Frame:
         self.img = np.dot(self.img, magnitudes)
         self.check_channels()
 
-    def get_histogram(self):
+    def get_histogram(self, mask=None):
         """
         Generates a 256 bin histogram for each color channel
         """
         histogram = np.zeros((256, self.img.shape[-1]))
         for i in range(histogram.shape[-1]):
-            histogram[:,i] = np.histogram(self.img[:,:,i], bins=256, range=(0,256))[0]
+            if mask is None:
+                histogram[:,i] = np.histogram(self.img[:,:,i], bins=256, range=(0,256))[0]
+            else:
+                histogram[:,i] = np.histogram(self.img[:,:,i][mask.img[:,:,0] != 0], bins=256, range=(0,256))[0]
         return histogram
 
     # TODO: what is pad doing here
@@ -424,7 +427,7 @@ class Frame:
             self.save_nifti(fpath, invert_sform, spacing)
         else:
             # can't write png's etc as floats, just store the image array
-            if self.is_float():
+            if self.is_float() or fpath.endswith('.npy'):
                 np.save(os.path.splitext(fpath)[0]+'.npy', self.img)
             else:
                 im = self.img
