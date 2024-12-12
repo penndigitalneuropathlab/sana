@@ -11,6 +11,15 @@ from torch.nn import functional as tfun
 
 from matplotlib import pyplot as plt
 
+def fit_parabola(c, N):
+    c = interp(c, N)
+    x, y = c[:,0], c[:,1]
+    z = np.polyfit(x, y, 2)
+    p = np.poly1d(z)
+    xnew = np.linspace(np.min(x), np.max(x), N)
+    ynew = p(xnew)
+    return sana.geo.curve_like(xnew, ynew, c)
+
 def interp(c, N, xmi=None, xmx=None):
     x = c[:,0]
     y = c[:,1]
@@ -110,41 +119,86 @@ def grid_sample(frame, sample_grid):
 
     return out_frame
 
-def curved_fan_sample(w, h, top, bot, left, right, ax=None, ret_angle=False, plot_interval=250):
-    # get the output dimensions of the image
-    # NOTE: keeping h constant for now
-    top_len = max(top[:,0]) - min(top[:,0])
-    bot_len = max(bot[:,0]) - min(bot[:,0])
-    nw = int(max(top_len, bot_len))
-    nh = h
+# TODO: sometimes the weird ROIs don't deform properly need a way to clip the sampling curves to the top/bot curves
+def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_interval=250):
 
-    # interpolate the boundaries
-    top_interp = interp(top, nw)
-    bot_interp = interp(bot, nw)
+    # rotate so the ROI is orthogonal
+    angle = top.get_angle()
+    ctrx = np.min([np.min(x[:,0]) for x in [top, bot, left, right]]) + \
+        np.max([np.max(x[:,0]) for x in [top, bot, left, right]])
+    ctry = np.min([np.min(x[:,1]) for x in [top, bot, left, right]]) + \
+        np.max([np.max(x[:,1]) for x in [top, bot, left, right]])
+    p = sana.geo.point_like(ctrx, ctry, top)
+    top.rotate(p, -angle)
+    bot.rotate(p, -angle)
+    left.rotate(p, -angle)
+    right.rotate(p, -angle)
+    if np.mean(top[:,1]) > np.mean(bot[:,1]):
+        top.rotate(p, 180)
+        bot.rotate(p, 180)
+        left.rotate(p, 180)
+        right.rotate(p, 180)
+        angle += 180
+        
+    # set output dimensions to stretch boundaries rather than compress
+    nw = int(max(np.abs(max(top[:,0]) - min(top[:,0])), np.abs(max(bot[:,0]) - min(bot[:,0]))))
+    nh = int(max(np.abs(max(left[:,1]) - min(left[:,1])), np.abs(max(right[:,1]) - min(right[:,1]))))
 
+    # fit parabolas to the boundaries
+    top = fit_parabola(top, nw)
+    bot = fit_parabola(bot, nw)
+    left = fit_parabola(left[:,::-1], nh)[:,::-1]
+    right = fit_parabola(right[:,::-1], nh)[:,::-1]    
+    if not ax is None:
+        [x.rotate(p, angle) for x in [top, bot, left, right]]
+        ax.plot(*top.T/4, color='black', linewidth=0.5)
+        ax.plot(*bot.T/4, color='black', linewidth=0.5)
+        ax.plot(*left.T/4, color='black', linewidth=0.5)
+        ax.plot(*right.T/4, color='black', linewidth=0.5)
+        [x.rotate(p, -angle) for x in [top, bot, left, right]]        
+        
     # prepare arrays for the sampling grid
     sample_grid = np.zeros((nh, nw, 2))
     angles = np.zeros((nh, nw))
 
+    # get the parabola coefficients of the left and right edges
     l_a, l_b, l_c = np.polyfit(left[:,1], left[:,0], 2)
     r_a, r_b, r_c = np.polyfit(right[:,1], right[:,0], 2)
+
+    # sweep the coefficients to morph L into R
     a_sweep = np.linspace(l_a, r_a, nw)
     b_sweep = np.linspace(l_b, r_b, nw)
     c_sweep = np.linspace(l_c, r_c, nw)    
     
     # loop through the columns of the output image
-    for i, (p0, p1, a, b, c) in enumerate(zip(top_interp, bot_interp, a_sweep, b_sweep, c_sweep)):
-        y = np.linspace(p0[1], p1[1], h)
+    for i, (p0, p1, a, b, c) in enumerate(zip(top, bot, a_sweep, b_sweep, c_sweep)):
+
+        # define the input space for this column
+        y = np.linspace(p0[1], p1[1], nh)
+
+        # calculate the output space for the column
         x = a*y**2 + b*y + c
+
+        # differentiate to find the angle of rotation at each output pixel
         xp = 2*a*y + b
-        angle = 90 + np.rad2deg(np.arctan(xp))
-            
+        sampling_angle = np.rad2deg(np.arctan(xp))
+        
+        # rotate the sampling curve back to the original coordinate system
+        sampling_curve = sana.geo.curve_like(x, y, top)
+        sampling_curve.rotate(p, angle)
         if i % plot_interval == 0 and not ax is None:
-            ax.plot(x, y, color='red', linewidth=0.5)
-    
-        sample_grid[:,i,:] = np.array((y,x)).T
-        angles[:,i] = angle
-            
+            ax.plot(*sampling_curve.T/4, color='red', linewidth=0.5)
+
+        # store the sampling curve for this output column
+        sample_grid[:,i,:] = sampling_curve[:,::-1]
+
+        # store the amount of clockwise degrees each pixel is being rotated
+        angles[:,i] = sampling_angle
+
+    # include the amount of rotation being applied by orthogonalizing the top
+    angles -= angle
+    angles = np.where(angles < 0, angles+360, angles)
+        
     return sample_grid, angles
 
 def find_orthogonal_vectors(curve, y_intercept, x_intercept, ds=1):
