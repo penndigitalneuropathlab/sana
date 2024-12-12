@@ -539,13 +539,19 @@ class Curve(Array):
 
     def linear_regression(self):
         """
-        Calculates y = mx + b line of best fit
+        Calculates y = mx + b line of best fit, assuming the Curve is a curvilinear sequence
         """
         if hasattr(self, 'slope'):
             return self.slope, self.intercept
-        
+
         x, y = self.get_xy()
         n = self.shape[0]
+
+        # guess which variable is input and which is output
+        transposed = False
+        if np.max(y) - np.min(y) > np.max(x) - np.min(x):
+            x,y = y,x
+            transposed = True
 
         ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
         ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
@@ -561,6 +567,13 @@ class Curve(Array):
             
         self.slope = m
         self.intercept = b
+
+        if transposed:
+            if self.slope == 0:
+                self.slope = np.inf
+            else:
+                self.slope = 1/self.slope
+            self.intercept = self[0,1] - self.slope*self[0,0]
 
         return self.slope, self.intercept
     
