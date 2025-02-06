@@ -542,6 +542,7 @@ class Curve(Array):
         ss_xx = float(np.sum(x**2))
         ss_yy = float(np.sum(y**2))
         ss_xy = float(np.sum(y*x))
+        print(ss_xx, ss_yy, ss_xy)
         # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
         # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
         # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))
@@ -554,20 +555,18 @@ class Curve(Array):
             transposed = False
             den = ss_xx
 
-        # handle edge cases
-        if den == 0:
-            if np.sign(ss_xy) == 1:
-                angle = 90
-            else:
-                angle = -90
-        else:
-            angle = np.rad2deg(np.arctan2(ss_xy, den))
+        # calculate the angle
+        angle = np.rad2deg(np.arctan2(ss_xy, den))
+        if angle < 0:
+            angle += 180
 
-        # rotate ccw 90 degrees to account for transposing the variables
+        # rotate ccw 90 degrees and inverse angle to account for transposing the variables
         if transposed:
-            angle = ((angle + 90) + 360) % 360
+            angle = ((90 - angle) + 360) % 360
             if angle > 180:
                 angle = angle - 360
+            if angle < 0:
+                angle += 180
 
         return angle
     
