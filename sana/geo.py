@@ -269,12 +269,10 @@ class Polygon(Array):
         """
         Calculates the area of the Polygon
         """
-        if not hasattr(self, 'A'):
-            x0, y0 = self.get_xy()
-            x1, y1 = self.get_rolled_xy()
-            A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-            self.A = A
-        return self.A
+        x0, y0 = self.get_xy()
+        x1, y1 = self.get_rolled_xy()
+        A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        return A
     
     def get_centroid(self):
         """
@@ -354,46 +352,40 @@ class Polygon(Array):
         """
         Calculates the length of the major axis
         """
-        if not hasattr(self, 'major'):
-            self.major, self.minor = self.get_axes()
-        return self.major
+        major, minor = self.get_axes()
+        return major
     
     def get_minor(self):
         """
         Calculates the length of the minor axis
         """
-        if not hasattr(self, 'minor'):
-            self.major, self.minor = self.get_axes()
-        return self.minor
+        major, minor = self.get_axes()
+        return minor
     
     def get_eccentricity(self):
         """
         Calculates the eccentricity feature, measuring the "elliptic" nature of the polygon: 0.0 is a circle, 1.0 is a line
         """
-        if not hasattr(self, 'eccentricity'):
-            major = self.get_major()
-            minor = self.get_minor()
-            self.eccentricity = np.sqrt(1-minor**2/major**2)
-        return self.eccentricity
+        major, minor = self.get_axes()
+        eccentricity = np.sqrt(1-minor**2/major**2)
+        return eccentricity
 
     def get_perimeter(self):
         """
         Calculates the perimeter feature
         """
-        if not hasattr(self, 'perimeter'):
-            x0, y0 = self.get_xy()
-            x1, y1 = self.get_rolled_xy()
-            self.perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
-        return self.perimeter
+        x0, y0 = self.get_xy()
+        x1, y1 = self.get_rolled_xy()
+        perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
+        return perimeter
     
     def get_circularity(self):
         """
         Calculates the circularity feature: 0.0 is a square, 1.0 is a circle
         """
-        if not hasattr(self, 'circularity'):
-            A = self.get_area()
-            perimeter = self.get_perimeter()
-            return (4*A*np.pi) / perimeter**2
+        A = self.get_area()
+        perimeter = self.get_perimeter()
+        return (4*A*np.pi) / perimeter**2
         
     def bounding_box(self):
         """
@@ -537,75 +529,47 @@ class Curve(Array):
         self[:,0] = x
         self[:,1] = y
 
-    def linear_regression(self):
+    def get_angle(self):
         """
-        Calculates y = mx + b line of best fit, assuming the Curve is a curvilinear sequence
+        Calculates the angle of rotation in degrees based on the linear regression
         """
-        if hasattr(self, 'slope'):
-            return self.slope, self.intercept
-
         x, y = self.get_xy()
         n = self.shape[0]
 
-        # guess which variable is input and which is output
-        transposed = False
+        # zeroing the mean avoids overflow errors with very large pixel coordinates
+        x = x - np.mean(x)
+        y = y - np.mean(y)
+        ss_xx = float(np.sum(x**2))
+        ss_yy = float(np.sum(y**2))
+        ss_xy = float(np.sum(y*x))
+        # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
+        # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
+        # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))
+        
+        # guess which variable is the input and which is the output
         if np.max(y) - np.min(y) > np.max(x) - np.min(x):
-            x,y = y,x
             transposed = True
-
-        ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
-        ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        if ss_xx != 0:
-            m = ss_xy/ss_xx
-            b = np.mean(y) - m * np.mean(x)
+            den = ss_yy
         else:
+            transposed = False
+            den = ss_xx
+
+        # handle edge cases
+        if den == 0:
             if np.sign(ss_xy) == 1:
-                m = np.inf
+                angle = 90
             else:
-                m = -np.inf
-            b = np.nan
-            
-        self.slope = m
-        self.intercept = b
+                angle = -90
+        else:
+            angle = np.rad2deg(np.arctan2(ss_xy, den))
 
+        # rotate ccw 90 degrees to account for transposing the variables
         if transposed:
-            if self.slope == 0:
-                self.slope = np.inf
-            else:
-                self.slope = 1/self.slope
-            self.intercept = self[0,1] - self.slope*self[0,0]
+            angle = ((angle + 90) + 360) % 360
+            if angle > 180:
+                angle = angle - 360
 
-        return self.slope, self.intercept
-    
-    def get_angle(self):
-        """
-        Calculates the angle of rotation in degrees based on the line of best fit
-        """
-        if hasattr(self, 'angle'):
-            return self.angle
-        if not hasattr(self, 'slope'):
-            self.linear_regression()
-
-        if self.slope == np.inf:
-            angle = 90
-        elif self.slope == -np.inf:
-            angle = 270
-
-        # calculate the angle of rotation in degrees
-
-        angle = np.rad2deg(np.arctan(self.slope))
-
-        # TODO: check this math!
-        # get only positive angles
-        if angle < 0:
-            angle = 360 + angle
-
-        # only care about angles in quadrants I and II
-        if angle > 180:
-            angle -= 180
-
-        self.angle = angle
-        return self.angle
+        return angle
     
     def to_annotation(self, class_name, annotation_name="", attributes={}):
         """
