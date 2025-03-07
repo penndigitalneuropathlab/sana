@@ -28,7 +28,7 @@ class Logger():
     :param fpath: path to where parameters and measurements should be written/read from
     :param name: name of the Logger instance
     """
-    def __init__(self, debug_level, fpath="", name="SANA"):
+    def __init__(self, debug_level, fpath="", name="SANA", read_data=True):
         self.debug_level = debug_level
         self.fpath = fpath
         self.name = name
@@ -57,8 +57,10 @@ class Logger():
         self.logger.addHandler(stream_handler)
 
         # load the parameters/measurements as a data dictionary
-        if self.fpath != "":
+        if self.fpath != "" and read_data:
             self.data = self.read_data()
+        else:
+            self.data = {}
 
     def read_data(self):
         if os.path.exists(self.fpath):

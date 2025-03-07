@@ -269,11 +269,10 @@ class Polygon(Array):
         """
         Calculates the area of the Polygon
         """
-        if not hasattr(self, 'A'):
-            x0, y0 = self.get_xy()
-            x1, y1 = self.get_rolled_xy()
-            A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-            self.A = A
+        x0, y0 = self.get_xy()
+        x1, y1 = self.get_rolled_xy()
+        A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        self.A = A
         return self.A
     
     def get_centroid(self):
@@ -354,46 +353,41 @@ class Polygon(Array):
         """
         Calculates the length of the major axis
         """
-        if not hasattr(self, 'major'):
-            self.major, self.minor = self.get_axes()
+        self.major, self.minor = self.get_axes()
         return self.major
     
     def get_minor(self):
         """
         Calculates the length of the minor axis
         """
-        if not hasattr(self, 'minor'):
-            self.major, self.minor = self.get_axes()
+        self.major, self.minor = self.get_axes()
         return self.minor
     
     def get_eccentricity(self):
         """
         Calculates the eccentricity feature, measuring the "elliptic" nature of the polygon: 0.0 is a circle, 1.0 is a line
         """
-        if not hasattr(self, 'eccentricity'):
-            major = self.get_major()
-            minor = self.get_minor()
-            self.eccentricity = np.sqrt(1-minor**2/major**2)
+        major = self.get_major()
+        minor = self.get_minor()
+        self.eccentricity = np.sqrt(1-minor**2/major**2)
         return self.eccentricity
 
     def get_perimeter(self):
         """
         Calculates the perimeter feature
         """
-        if not hasattr(self, 'perimeter'):
-            x0, y0 = self.get_xy()
-            x1, y1 = self.get_rolled_xy()
-            self.perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
+        x0, y0 = self.get_xy()
+        x1, y1 = self.get_rolled_xy()
+        self.perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
         return self.perimeter
     
     def get_circularity(self):
         """
         Calculates the circularity feature: 0.0 is a square, 1.0 is a circle
         """
-        if not hasattr(self, 'circularity'):
-            A = self.get_area()
-            perimeter = self.get_perimeter()
-            return (4*A*np.pi) / perimeter**2
+        A = self.get_area()
+        perimeter = self.get_perimeter()
+        return (4*A*np.pi) / perimeter**2
         
     def bounding_box(self):
         """
@@ -541,9 +535,6 @@ class Curve(Array):
         """
         Calculates y = mx + b line of best fit, assuming the Curve is a curvilinear sequence
         """
-        if hasattr(self, 'slope'):
-            return self.slope, self.intercept
-
         x, y = self.get_xy()
         n = self.shape[0]
 
@@ -581,10 +572,7 @@ class Curve(Array):
         """
         Calculates the angle of rotation in degrees based on the line of best fit
         """
-        if hasattr(self, 'angle'):
-            return self.angle
-        if not hasattr(self, 'slope'):
-            self.linear_regression()
+        self.linear_regression()
 
         if self.slope == np.inf:
             angle = 90

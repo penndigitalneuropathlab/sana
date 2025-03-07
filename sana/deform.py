@@ -151,10 +151,10 @@ def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_inte
     right = fit_parabola(right[:,::-1], nh)[:,::-1]    
     if not ax is None:
         [x.rotate(p, angle) for x in [top, bot, left, right]]
-        ax.plot(*top.T/4, color='black', linewidth=0.5)
-        ax.plot(*bot.T/4, color='black', linewidth=0.5)
-        ax.plot(*left.T/4, color='black', linewidth=0.5)
-        ax.plot(*right.T/4, color='black', linewidth=0.5)
+        ax.plot(*top.T, color='black', linewidth=0.5)
+        ax.plot(*bot.T, color='black', linewidth=0.5)
+        ax.plot(*left.T, color='black', linewidth=0.5)
+        ax.plot(*right.T, color='black', linewidth=0.5)
         [x.rotate(p, -angle) for x in [top, bot, left, right]]        
         
     # prepare arrays for the sampling grid
@@ -187,7 +187,7 @@ def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_inte
         sampling_curve = sana.geo.curve_like(x, y, top)
         sampling_curve.rotate(p, angle)
         if i % plot_interval == 0 and not ax is None:
-            ax.plot(*sampling_curve.T/4, color='red', linewidth=0.5)
+            ax.plot(*sampling_curve.T, color='red', linewidth=0.5)
 
         # store the sampling curve for this output column
         sample_grid[:,i,:] = sampling_curve[:,::-1]
@@ -197,7 +197,10 @@ def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_inte
 
     # include the amount of rotation being applied by orthogonalizing the top
     angles -= angle
-    angles = np.where(angles < 0, angles+360, angles)
+
+    angles = angles % 360
+    angles = (angles + 360) % 360
+    angles = np.where(angles <= 180, angles, angles - 360)
         
     return sample_grid, angles
 

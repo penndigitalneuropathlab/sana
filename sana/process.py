@@ -279,7 +279,8 @@ class HDABProcessor(Processor):
 
     def run(self,
             triangular_strictness=0.0,
-            minimum_threshold=0,            
+            minimum_threshold=0,
+            od_threshold=None,
             morphology_filters=[],
             run_soma_detection=False,
             minimum_soma_radius=1,
@@ -301,15 +302,19 @@ class HDABProcessor(Processor):
         ret = []
 
         # get the threshold for the DAB that inside the main roi
-        hist = self.dab.get_histogram(mask=self.main_mask)
-        threshold = sana.threshold.triangular_method(
-            hist, 
-            strictness=triangular_strictness,
-            debug=self.logger.generate_plots
-        )
-        if threshold < minimum_threshold:
-            threshold = minimum_threshold
-
+        if od_threshold is None:
+            hist = self.dab.get_histogram(mask=self.main_mask)
+            threshold = sana.threshold.triangular_method(
+                hist, 
+                strictness=triangular_strictness,
+                debug=self.logger.generate_plots
+            )
+            if threshold < minimum_threshold:
+                threshold = minimum_threshold
+        else:
+            threshold = 255 * (od_threshold - self.ss.min_od[1]) / \
+                (self.ss.max_od[1] - self.ss.min_od[1])
+            
         # perform pixel classification by thresholding and morphology filters
         self.thr_dab = self.dab.copy()
         self.classify_pixels(self.thr_dab, threshold, mask=self.keep_mask, debug=False)

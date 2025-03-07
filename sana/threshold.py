@@ -60,9 +60,11 @@ def triangular_method(hist, strictness=0.0, debug=False):
     thresh = idx + x0
 
     if debug:
-        plot_idx = np.unique(np.rint(np.geomspace(x0, x1-1)).astype(int)) - x0
-        ax.plot([xi[plot_idx], xj[plot_idx]], [yi[plot_idx], yj[plot_idx]], '--', color='red')
-        ax.plot([xi[idx], xj[idx]], [yi[idx], yj[idx]], color='green')
+        print(x0, x1)
+        #plot_idx = np.unique(np.rint(np.geomspace(x0, x1-1)).astype(int)) - x0
+        #ax.plot([xi[plot_idx], xj[plot_idx]], [yi[plot_idx], yj[plot_idx]], '--', color='red')
+        #ax.plot([xi[idx], xj[idx]], [yi[idx], yj[idx]], color='green')
         ax.set_aspect('equal')
 
     return thresh
+

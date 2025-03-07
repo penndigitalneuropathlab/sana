@@ -11,6 +11,8 @@ import nibabel as nib
 from matplotlib import colors
 from matplotlib import pyplot as plt
 import shapely.geometry
+from sklearn.preprocessing import StandardScaler
+from sklearn.cluster import DBSCAN
 
 # sana packages
 import sana.geo
@@ -549,6 +551,45 @@ class Frame:
                                 
         return objs
 
+    def to_dbscan_clusters(self, eps, min_samples, ds):
+
+        ds_frame = self.copy()
+        ds_frame.resize(ds_frame.size()//ds)
+        X = np.array(np.where(ds_frame.img[:,:,0] == 1)).T
+        
+        ss = StandardScaler()
+        try:
+            X = ss.fit_transform(X)
+        except:
+            return []
+
+        try:
+            db = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
+        except:
+            return []
+        labels = db.labels_
+        
+        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
+
+        unique_labels = set(labels)
+
+        clusters = []
+        for k in unique_labels:
+            if k == -1:
+                continue
+
+            class_member_mask = labels == k
+            xy = X[class_member_mask]
+            if len(xy) == 0:
+                continue
+            xy = ss.inverse_transform(xy) * ds
+
+            ctr = np.mean(xy, axis=0).astype(int)
+            radius = np.max(np.abs(xy - ctr)).astype(int)
+            clusters.append((ctr, radius))
+            
+        return clusters
+    
     def instance_segment(self, ctrs, debug=False):
         
         # generate a foreground image using the soma centers
