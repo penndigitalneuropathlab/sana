@@ -918,21 +918,20 @@ def frame_like(frame, img):
 #
 # end of frame_like
 
-def create_mask_cv2(polygons, frame):
+def create_mask_like(frame, polygons):
     """
-    similar to create_mask(), but uses opencv since PIL was causing some weird issues
+    # TODO:
     """
-
     int_polygons = []
     for p in polygons:
         frame.converter.to_pixels(p, frame.level)
         p = frame.converter.to_int(p).connect()
         int_polygons.append(p)
 
-    mask_img = np.zeros(frame.img.shape[:2])
+    mask_img = np.zeros(frame.img.shape[:2], dtype=np.uint8)
     mask_img = cv2.fillPoly(mask_img, pts=int_polygons, color=1)
 
-    return frame_like(frame, mask_img.astype(np.uint8))
+    return frame_like(frame, mask_img)
 
 # TODO: PIL is acting weird, merge with cv2 and only use PIL for outline??
 def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1, do_connect=True):

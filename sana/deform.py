@@ -32,6 +32,55 @@ def interp(c, N, xmi=None, xmx=None):
     yp = f(xp)
     return sana.geo.curve_like(xp, yp, c)
 
+def separate_curve_at_point(a, xp, yp):
+
+    # get the vertices that the point is inbetween
+    mi_dist = np.inf
+    for i in range(a.shape[0]-1):
+        x0, y0 = a[i]
+        x1, y1 = a[i+1]
+        m = (y1-y0)/(x1-x0)
+        b = y0 - x0*m
+        dist = np.abs(xp*m + b - yp)
+        if dist < mi_dist:
+            mi_dist = dist
+            idx = i
+    return idx
+            
+def clip_curve(a, x0, y0, x1, y1):
+    """
+    this function clips the given curve to the points p0 and p1
+    """
+    idx0 = separate_curve_at_point(a, x0, y0)
+    idx1 = separate_curve_at_point(a, x1, y1)    
+    if idx1 < idx0:
+        idx0, idx1 = idx1, idx0
+        x0, y0, x1, y1 = x1, y1, x0, y0
+    a = a[idx0:idx1+2]
+    a[0] = (x0, y0)
+    a[-1] = (x1, y1)
+
+    return a
+
+def intersect_curves(a, b, N=1000):
+    """
+    this function finds the interpolated point that exists in both input curves
+    """
+    # interpolate between vertices in the curves
+    x_a, y_a = interp(a, N).T
+    x_b, y_b = interp(b, N).T
+
+    # get the distance of each point in a to each point in b (i.e. NxN matrix)
+    dist = (x_a[:,None]-x_b)**2 + (y_a[:,None]-y_b)**2
+    
+    # get the point in a closest to a point in b
+    idx = np.unravel_index(np.argmin(dist), (N,N))[0]
+    x_int, y_int = x_a[idx], y_a[idx]
+
+    return x_int, y_int
+
+
+
 def multi_fan_sample(lines, nh=None):
     
     # TODO: option for keeping distances equal
