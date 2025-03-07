@@ -272,8 +272,7 @@ class Polygon(Array):
         x0, y0 = self.get_xy()
         x1, y1 = self.get_rolled_xy()
         A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
-        self.A = A
-        return self.A
+        return A
     
     def get_centroid(self):
         """
@@ -353,24 +352,40 @@ class Polygon(Array):
         """
         Calculates the length of the major axis
         """
+<<<<<<< HEAD
         self.major, self.minor = self.get_axes()
         return self.major
+=======
+        major, minor = self.get_axes()
+        return major
+>>>>>>> 1f0e619f625f45ea8639016018488928aa8ace55
     
     def get_minor(self):
         """
         Calculates the length of the minor axis
         """
+<<<<<<< HEAD
         self.major, self.minor = self.get_axes()
         return self.minor
+=======
+        major, minor = self.get_axes()
+        return minor
+>>>>>>> 1f0e619f625f45ea8639016018488928aa8ace55
     
     def get_eccentricity(self):
         """
         Calculates the eccentricity feature, measuring the "elliptic" nature of the polygon: 0.0 is a circle, 1.0 is a line
         """
+<<<<<<< HEAD
         major = self.get_major()
         minor = self.get_minor()
         self.eccentricity = np.sqrt(1-minor**2/major**2)
         return self.eccentricity
+=======
+        major, minor = self.get_axes()
+        eccentricity = np.sqrt(1-minor**2/major**2)
+        return eccentricity
+>>>>>>> 1f0e619f625f45ea8639016018488928aa8ace55
 
     def get_perimeter(self):
         """
@@ -378,8 +393,13 @@ class Polygon(Array):
         """
         x0, y0 = self.get_xy()
         x1, y1 = self.get_rolled_xy()
+<<<<<<< HEAD
         self.perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
         return self.perimeter
+=======
+        perimeter = np.sum(np.sqrt((y1-y0)**2+(x1-x0)**2))
+        return perimeter
+>>>>>>> 1f0e619f625f45ea8639016018488928aa8ace55
     
     def get_circularity(self):
         """
@@ -531,34 +551,33 @@ class Curve(Array):
         self[:,0] = x
         self[:,1] = y
 
-    def linear_regression(self):
+    def get_angle(self):
         """
-        Calculates y = mx + b line of best fit, assuming the Curve is a curvilinear sequence
+        Calculates the angle of rotation in degrees based on the linear regression
         """
         x, y = self.get_xy()
         n = self.shape[0]
 
-        # guess which variable is input and which is output
-        transposed = False
+        # zeroing the mean avoids overflow errors with very large pixel coordinates
+        x = x - np.mean(x)
+        y = y - np.mean(y)
+        ss_xx = float(np.sum(x**2))
+        ss_yy = float(np.sum(y**2))
+        ss_xy = float(np.sum(y*x))
+        print(ss_xx, ss_yy, ss_xy)
+        # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
+        # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
+        # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))
+        
+        # guess which variable is the input and which is the output
         if np.max(y) - np.min(y) > np.max(x) - np.min(x):
-            x,y = y,x
             transposed = True
-
-        ss_xy = float(np.sum(y * x) - n * np.mean(y) * np.mean(x))
-        ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        if ss_xx != 0:
-            m = ss_xy/ss_xx
-            b = np.mean(y) - m * np.mean(x)
+            den = ss_yy
         else:
-            if np.sign(ss_xy) == 1:
-                m = np.inf
-            else:
-                m = -np.inf
-            b = np.nan
-            
-        self.slope = m
-        self.intercept = b
+            transposed = False
+            den = ss_xx
 
+<<<<<<< HEAD
         if transposed:
             if self.slope == 0:
                 self.slope = np.inf
@@ -585,15 +604,22 @@ class Curve(Array):
 
         # TODO: check this math!
         # get only positive angles
+=======
+        # calculate the angle
+        angle = np.rad2deg(np.arctan2(ss_xy, den))
+>>>>>>> 1f0e619f625f45ea8639016018488928aa8ace55
         if angle < 0:
-            angle = 360 + angle
+            angle += 180
 
-        # only care about angles in quadrants I and II
-        if angle > 180:
-            angle -= 180
+        # rotate ccw 90 degrees and inverse angle to account for transposing the variables
+        if transposed:
+            angle = ((90 - angle) + 360) % 360
+            if angle > 180:
+                angle = angle - 360
+            if angle < 0:
+                angle += 180
 
-        self.angle = angle
-        return self.angle
+        return angle
     
     def to_annotation(self, class_name, annotation_name="", attributes={}):
         """
