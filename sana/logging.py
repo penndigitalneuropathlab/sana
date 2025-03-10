@@ -11,10 +11,6 @@ import numpy as np
 # sana packages
 from sana.geo import Point
 
-# NOTE: to add a new field to an existing datatype:
-#           1) add the key to X_KEYS list below
-
-# define what our terminology for logging means in reference to the "logging" library
 # NOTE: the difference between 'full' and 'debug' is 'full' generates debugging plots
 LEVEL_CONFIG = {
         'full': logging.DEBUG,
@@ -23,7 +19,7 @@ LEVEL_CONFIG = {
         'quiet': logging.ERROR,
 }
 class Logger():
-    """ This class functions as a wrapper to the "logging" library, while also handling the I/O of various processing parameters and measurements that SANA makes.
+    """ This class functions as a wrapper to the "logging" library, while also handling the I/O of various processing parameters that SANA determines
     :param debug_level: amount of debugging to output {full, debug, normal, quiet}
     :param fpath: path to where parameters and measurements should be written/read from
     :param name: name of the Logger instance
@@ -41,9 +37,6 @@ class Logger():
         self.debug_level = debug_level
         self.logger.setLevel(LEVEL_CONFIG[self.debug_level])
 
-        # decide if we're generating plots or not
-        self.generate_plots = self.debug_level == 'full'
-
         # set the logging file handlers
         if self.logger.hasHandlers():
             self.logger.handlers.clear()
@@ -56,7 +49,7 @@ class Logger():
         stream_handler.setFormatter(self.formatter)
         self.logger.addHandler(stream_handler)
 
-        # load the parameters/measurements as a data dictionary
+        # load the processing parameters
         if self.fpath != "" and read_data:
             self.data = self.read_data()
         else:

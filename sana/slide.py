@@ -190,6 +190,9 @@ class Loader(openslide.OpenSlide):
         loc -= padding
         size += 2*padding
 
+        loc = self.converter.to_int(loc)
+        size = self.converter.to_int(size)
+
         # load the frame into memory
         self.logger.debug('Loading Frame from .svs slide file...')
         t0 = time.time()
@@ -260,7 +263,7 @@ class Loader(openslide.OpenSlide):
         # load the frame using the ROI
         frame = self.load_frame_with_roi(roi, level=level, padding=0)
         roi.translate(self.logger.data['loc'])
-        if self.logger.generate_plots:
+        if self.logger.debug_level == 'full':
             fig, axs = plt.subplots(1,3, figsize=(10,5))
             ax = axs[0]
             ax.imshow(frame.img)
@@ -276,7 +279,7 @@ class Loader(openslide.OpenSlide):
         M, nw, nh = frame.get_rotation_matrix(angle)
         frame.warp_affine(M, nw, nh)
         roi.transform(M)
-        if self.logger.generate_plots:
+        if self.logger.debug_level == 'full':
             ax = axs[1]
             ax.imshow(frame.img)
             [curve.transform(M) for curve in [top, right, bottom, left]]
@@ -291,7 +294,7 @@ class Loader(openslide.OpenSlide):
         crop_loc, crop_size = roi.bounding_box()
         frame.crop(crop_loc, crop_size)
         roi.translate(crop_loc)
-        if self.logger.generate_plots:
+        if self.logger.debug_level == 'full':
             ax = axs[2]
             ax.imshow(frame.img)
             [curve.translate(crop_loc) for curve in [top, right, bottom, left]]

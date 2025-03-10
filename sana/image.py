@@ -742,7 +742,7 @@ class Frame:
         np.clip(self.img, 0, 255, out=self.img)
         self.to_short()    
     
-    def threshold(self, threshold, x, y):
+    def threshold(self, threshold, x=0, y=1):
         """
         Applies a threshold to a grayscale image, setting passing pixels to value y and all other pixels to value x
         :param threshold: grayscale value
