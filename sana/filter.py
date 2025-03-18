@@ -6,6 +6,7 @@ import ast
 
 # installed modules
 import cv2
+import numpy as np
 
 class MorphologyFilter:
     """
@@ -40,3 +41,21 @@ class MorphologyFilter:
 
     def __str__(self):
         return f"{self.n_iterations} iteration(s) of {self.filter_type_name} filter -- {self.kernel_diameter} {self.kernel_type_name}"
+
+def get_gaussian_kernel(length, sigma):
+    """
+    Builds a 2D gaussian kernel
+    :param length: side length of the square kernel image
+    :param sigma: standard deviation of the gaussian
+    :returns: 2D image array
+    """
+    
+    # calculate the 1D gaussian
+    x = np.linspace(-(length-1)/2, (length-1)/2, length)
+    g1 = np.exp(-0.5 * np.square(x) / np.square(sigma))
+
+    # get the 2D gaussian and normalize
+    g2 = np.outer(g1,g1)
+    g2 = g2 / np.sum(g2)
+
+    return g2

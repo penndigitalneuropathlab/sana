@@ -1,18 +1,14 @@
 
 # system packages
 import os
-import sys
 
 # installed packages
 import cv2
 import numpy as np
-from PIL import Image, ImageDraw
-import nibabel as nib
+from PIL import Image
+import shapely.geometry
 from matplotlib import colors
 from matplotlib import pyplot as plt
-import shapely.geometry
-from sklearn.preprocessing import StandardScaler
-from sklearn.cluster import DBSCAN
 
 # sana packages
 import sana.geo
@@ -20,20 +16,19 @@ import sana.filter
 
 # TODO: check parameter usage
 class Frame:
-    """ Provides an interface for applying a series of image processing functions to the stored 2D numpy image array. This class attempts to perform operations in place so that memory usage does not explode.
-    :param img: the 2d numpy array to store
+    """ Provides an interface for applying a series of image processing functions to the stored image array. This class attempts to perform operations in place so that memory usage does not explode.
+    :param img: (M,N,d) array
     :param level: the slide level the array was loaded from
     :param converter: Converter object used to manipulate units
-    :param slide_threshold: grayscale intensity value to remove background slide data
-    :param slide_color: color of slide background to use when needed
     :param padding: amount of padding added to the frame
+    :param is_deformed: whether or not this frame was normalized to a common cortical space, usually False
     """
-    def __init__(self, img, level=None, converter=None, slide_threshold=None, slide_color=None, padding=0):
+    def __init__(self, img, level=None, converter=None, padding=0, is_deformed=False):
 
         # load/store the image array
         if type(img) is str:
             if img.endswith('.npz'):
-                self.img = load_compressed(img)
+                self.img = load_compressed_array(img)
             else:
                 im = np.array(Image.open(img))
                 if len(im.shape) == 2:
@@ -47,16 +42,11 @@ class Frame:
         self.check_channels()
 
         # store the other class attributes
-        # TODO: add a docstring for each attribute
         self.level = level
         self.converter = converter
-        self.slide_threshold = slide_threshold
-        self.slide_color = slide_color
         self.padding = padding
-
-        # TODO:
-        self.contours = []
-
+        self.is_deformed = is_deformed
+        
     def check_channels(self):
         """
         Adds a color channel if the image doesn't have one
@@ -89,19 +79,13 @@ class Frame:
         Checks if the image has 3 color channels
         """
         return self.img.shape[2] == 3
-
-    def is_short(self):
-        """
-        Checks if the image is in floating point values
-        """
-        return self.img.dtype == np.uint8
-
     def is_binary(self):
         """
         Checks if the image has only 0's and 1's in it
         """
         return self.is_gray() and self.is_short() and (np.max(self.img) <= 1) and (np.min(self.img) >= 0)
-
+    def is_short(self):
+        return self.img.dtype == np.uint8
     def is_float(self):
         return self.img.dtype == float
 
@@ -148,6 +132,9 @@ class Frame:
         """
         Generates a 256 bin histogram for each color channel
         """
+        if not self.is_short():
+            raise DataTypeException("Histogram must be calculated on short pixel values")
+        
         histogram = np.zeros((256, self.img.shape[-1]))
         for i in range(histogram.shape[-1]):
             if mask is None:
@@ -156,8 +143,7 @@ class Frame:
                 histogram[:,i] = np.histogram(self.img[:,:,i][mask.img[:,:,0] != 0], bins=256, range=(0,256))[0]
         return histogram
 
-    # TODO: what is pad doing here
-    def get_tile(self, loc, size, pad=False):
+    def get_tile(self, loc, size):
         """
         Gets a cropped rectangular tile from the frame
         :param loc: top left of rectangle
@@ -178,57 +164,23 @@ class Frame:
         if y0 < 0:
             pad_y0 = -y0
         if x1 >= w:
-            pad_x1 = w-x1
+            pad_x1 = x1-w
         if y1 >= h:
-            pad_y1 = h-y1
-        
+            pad_y1 = y1-h
+
         x0 = np.clip(x0, 0, None)
         y0 = np.clip(y0, 0, None)
         x1 = np.clip(x1, None, w)
         y1 = np.clip(y1, None, h)
             
         img = self.img[y0:y1, x0:x1, :]
-        if pad:
-            img = np.pad(img, [
-                [pad_y0, pad_y1],
-                [pad_x0, pad_x1],
-                [0,0],
-            ])
+        img = np.pad(img, [
+            [pad_y0, pad_y1],
+            [pad_x0, pad_x1],
+            [0,0],
+        ])
         return img
 
-            
-
-    def set_tile(self, loc, size, tile):
-        self.converter.to_pixels(loc, self.level)
-        self.converter.to_pixels(size, self.level)
-        loc = self.converter.to_int(loc)
-        size = self.converter.to_int(size)
-        w, h = self.size()
-        (x0, y0) = loc[0], loc[1]
-        (x1, y1) = x0+size[0], y0+size[1]
-        x0 = np.clip(x0, 0, None)
-        y0 = np.clip(y0, 0, None)
-        x1 = np.clip(x1, None, w)
-        y1 = np.clip(y1, None, h)
-
-        self.img[y0:y1, x0:x1, :] = tile
-
-    # TODO: refactor these functions
-    def or_tile(self, loc, size, tile):
-        self.converter.to_pixels(loc, self.level)
-        self.converter.to_pixels(size, self.level)
-        loc = self.converter.to_int(loc)
-        size = self.converter.to_int(size)
-        w, h = self.size()
-        (x0, y0) = loc[0], loc[1]
-        (x1, y1) = x0+size[0], y0+size[1]
-        x0 = np.clip(x0, 0, None)
-        y0 = np.clip(y0, 0, None)
-        x1 = np.clip(x1, None, w)
-        y1 = np.clip(y1, None, h)
-
-        self.img[y0:y1, x0:x1, :] |= tile
-        
     def crop(self, loc, size):
         """
         Crops the image to the given rectangle
@@ -246,39 +198,40 @@ class Frame:
         self.img = cv2.resize(self.img, dsize=(w, h), interpolation=interpolation)
         self.check_channels()
 
-    def apply_morphology_filter(self, filter):
+    def apply_morphology_filter(self, morphology_filter):
         if not self.is_binary():
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
-        self.img = filter.apply(self.img)[:,:,None]
+        self.img = morphology_filter.apply(self.img)[:,:,None]
 
-    def convolve(self, kernel, tile_step=None, do_pad=False, normalize=False):
+    def convolve(self, kernel: np.ndarray, tile_step: sana.geo.Point, align_center=False):
         """
         Performs a (downsampled) convolution of the given kernel over the image. This is done by creating tile views into the frame, then applying the kernel to each of the views
+        :param kernel: (M,N) array to apply to each tile
+        :param tile_step: stride distance between tiles
+        :param align_center: if True, pads the frame to center align rather than upper left align
         """
         if not self.is_gray():
             raise ImageTypeException('Convolution only supported on single-channel images')
+
+        tile_size = sana.geo.point_like(tile_step, kernel.shape[1], kernel.shape[0])
         
-        if tile_step is None:
-            tile_step = sana.geo.Point(1, 1, is_micron=False, level=self.level)
-
-        tile_size = sana.geo.Point(kernel.shape[1], kernel.shape[0], is_micron=False, level=self.level)
-
-        # generate the tile views to convolve the kernel over
-        tiles = self.to_tiles(tile_size, tile_step, do_pad=do_pad)
+        # generate the tile views to convolve the kernel with
+        tiles = self.to_tiles(tile_size, tile_step, align_center=align_center)
 
         # perform the convolution
         result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
 
-        if normalize:
-            ones = frame_like(self, np.ones_like(self.img))
-            norm_factor = ones.convolve(kernel, tile_step=tile_step, do_pad=do_pad, normalize=False)
-            result = result.astype(float) / norm_factor
+        # TODO: do we always want to normalize?
+        ones = frame_like(self, np.ones_like(self.img))
+        ones_tiles = ones.to_tiles(tile_size, tile_step, align_center=align_center)
+        norm_factor = np.sum(ones_tiles * kernel[None,None,:,:], axis=(2,3))
+        result = result.astype(float) / norm_factor
 
         return result
 
     def remove_background(self, min_background=0, max_background=255, debug=False):
         """
-        Performs a background subtraction process on a grayscale image. The process works by creating a background image, which is then subtracted by the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
+        Performs a background subtraction process on a grayscale image. The process works by estimating a background image, which is then subtracted from the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
 
         TODO: add math formula?
         TODO: add example image
@@ -294,17 +247,6 @@ class Frame:
             fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
             axs[0].imshow(self.img)
 
-        # run this function at a lower resolution to make it run faster
-        # TODO: if not available, what do we do?
-        level = np.argmax(self.converter.ds > 3)
-        ds = self.converter.ds[level] / self.converter.ds[self.level]
-        ds_size = self.size() / ds
-
-        # run the downsampling
-        frame_downsampled = self.copy()
-        frame_downsampled.resize(ds_size, interpolation=cv2.INTER_LINEAR)
-        frame_downsampled.level = level
-
         # get the tiles for the convolution
         # TODO: check the parameters, make these arg
         tsize = self.converter.to_int(self.converter.to_pixels(
@@ -319,7 +261,7 @@ class Frame:
 
         # find the background simply by gaussian blurring the image
         # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
-        background_image = frame_downsampled.convolve(kernel, tstep, do_pad=True, normalize=True)
+        background_image = self.convolve(kernel, tstep, align_center=True)
 
         # resize the background frame back to original resolution
         background_frame = frame_like(self, background_image)
@@ -341,7 +283,7 @@ class Frame:
 
     def rotate(self, angle, interpolation=cv2.INTER_LINEAR):
         """
-        Rotates the image TODO around it's center
+        Rotates the image around it's center
         :param angle: rotation angle in degrees
         """
         # calculate the rotation matrix, along with the new width and height of the image
@@ -390,10 +332,6 @@ class Frame:
                                   dsize=(w, h),
                                   flags=interpolation,
                                   borderValue=border_value)
-        self.check_channels()
-
-    def warp_perspective(self, H):
-        self.img = cv2.warpPerspective(self.img, H, self.size().astype(int))
         self.check_channels()
 
     def pad(self, pad, alignment='center', mode='symmetric'):
@@ -460,38 +398,7 @@ class Frame:
         # finally, use numpy's compression algorithm to further compress
         np.savez_compressed(fpath, arr)
 
-    def save_nifti(self, fpath, invert_sform=False, spacing=None):
-        """
-        Writes the image array to a nifti form that programs like ITK-SNAP can read
-        :param fname: filename to write to
-        :param invert_sform: changes the sign of the sform
-        :param spacing: pixel spacing, uses Converter info if not given
-        """
-        if self.is_float:
-            raise DatatypeException('Cannot save floating point image to NifTI')
-        
-        # get the pixel spacing using the resolution and MPP
-        if spacing is None:
-            spacing = [self.converter.ds[self.level] * (self.converter.mpp / 1000)] * 2
-
-        # manipulate the channels of the image
-        pix = np.expand_dims(pix, (2))
-        if self.is_rgb():
-            rgb_dtype = np.dtype([('R', 'u1'), ('G', 'u1'), ('B', 'u1')])
-            pix = pix.copy().view(dtype=rgb_dtype).reshape(pix.shape[0:3])
-        else:
-            pix = pix[:,:,:,0]
-
-        nii = nib.Nifti1Image(pix, np.diag([spacing[0], spacing[1], 1.0, 1.0]))
-        if invert_sform:
-            nii.set_sform([
-                [-spacing[0], 0, 0, 0],
-                [0, -spacing[1], 0, 0],
-                [0, 0, 1, 0],
-            ])
-        nib.save(nii, fpath)
-  
-    def mask(self, mask_frame, mask_value=0):
+    def mask(self, mask_frame, mask_value=0, invert=False):
         """
         Applies a binary mask to the image
         :param mask_frame: a binary image frame with the same dimensions
@@ -504,195 +411,12 @@ class Frame:
         
         if self.is_rgb() and type(mask_value) is int:
             mask_value = (mask_value, mask_value, mask_value)
-        self.img[mask_frame.img[:,:,0] == 0] = mask_value
-
-    def to_polygons(self):
-        if not self.is_binary():
-            raise ImageTypeException('Image must be a binary image')
-
-        # run contour detection to find boundaries between objects
-        c, h = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
-
-        # TODO: this doesn't split if exactly 1 touching diagonal connection
-        # TODO: looks like there are some objects missing?
-        objs = []
-
-        # loop through the body contours
-        for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
-            if c[i].shape[0] < 3:
-                objs.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
-            else:
-
-                # create the body polygon
-                orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-                new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-                
-                # loop through the hole contours in this body contour
-                for j in [j for j in range(len(c)) if h[0][j][3] == i]:
-
-                    # create the hole polygon
-                    hole = shapely.geometry.Polygon(np.squeeze(c[j]))
-
-                    # remove the hole from the body
-                    try:
-                        new_body = new_body.difference(hole)
-                    except:
-                        pass
-
-                # store the resulting body polygons
-                orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
-                new_res = sana.geo.from_shapely(new_body, is_micron=False, level=self.level)
-                if type(new_res) is list:
-                    objs += [x for x in new_res if not x is None]
-                elif not new_res is None:
-                    objs.append(new_res)
-                else:
-                    objs.append(orig_res)
-                                
-        return objs
-
-    def to_dbscan_clusters(self, eps, min_samples, ds):
-
-        ds_frame = self.copy()
-        ds_frame.resize(ds_frame.size()//ds)
-        X = np.array(np.where(ds_frame.img[:,:,0] == 1)).T
-        
-        ss = StandardScaler()
-        try:
-            X = ss.fit_transform(X)
-        except:
-            return []
-
-        try:
-            db = DBSCAN(eps=eps, min_samples=min_samples).fit(X)
-        except:
-            return []
-        labels = db.labels_
-        
-        n_clusters_ = len(set(labels)) - (1 if -1 in labels else 0)
-
-        unique_labels = set(labels)
-
-        clusters = []
-        for k in unique_labels:
-            if k == -1:
-                continue
-
-            class_member_mask = labels == k
-            xy = X[class_member_mask]
-            if len(xy) == 0:
-                continue
-            xy = ss.inverse_transform(xy) * ds
-
-            ctr = np.mean(xy, axis=0).astype(int)
-            radius = np.max(np.abs(xy - ctr)).astype(int)
-            clusters.append((ctr, radius))
-            
-        return clusters
-    
-    def instance_segment(self, ctrs, debug=False):
-        
-        # generate a foreground image using the soma centers
-        fg = np.zeros_like(self.img)[:,:,0]
-        fg[ctrs[:,1], ctrs[:,0]] = 1
-
-        # create an RGB image for the watershed algorithm, if necessary
-        if self.is_gray():
-            rgb = np.tile(self.img, 3)
+        if invert:
+            neg_value = 1
         else:
-            rgb = self.img
+            neg_value = 0
+        self.img[mask_frame.img[:,:,0] == neg_value] = mask_value
 
-        # get the unique components
-        _, markers = cv2.connectedComponents(fg)
-
-        # run the watershed algorithm on the unique components
-        markers = cv2.watershed(rgb, markers)
-            
-        # remove the background segmentation
-        markers += 1
-        bg = np.argmax(np.bincount(markers.flatten()))
-        markers[markers == bg] = 0
-
-        # convert to markers binary image, preserving boundaries between objects
-        binary_markers = markers.copy()
-        binary_markers[binary_markers != 0] = 1
-        binary_markers = binary_markers.astype(np.uint8)
-        binary_markers = frame_like(self, binary_markers)
-
-        # get the object polygons from the instance segmented binary mask
-        objs = binary_markers.to_polygons()
-
-        return objs
-    
-    # NOTE: this function works okay, but heavily relies on the center detection being accurate. For most cells normal segmentation should be fine. For combined cells, we should have an option instead of watershed, segment the combined cells together using ellipses or something like that
-    def fit_ellipses(self, ctrs):
-
-        # minimum and maximum radii to search
-        min_r = 4
-        max_r = 10
-
-        ellipses = []
-        for ctr in ctrs:
-
-            # get the local tile of the object
-            loc = sana.geo.Point(ctr[0]-max_r, ctr[1]-max_r, is_micron=False, level=self.level)
-            size = sana.geo.Point(2*max_r+1, 2*max_r+1, is_micron=False, level=self.level)
-            tile = self.get_tile(loc, size)[:,:,0]
-            (cx, cy) = (size // 2).astype(int)
-
-            # find the minor axis by inflating a circle until it reaches an edge
-            seg = np.zeros_like(tile)
-            for minor_r in range(min_r, max_r+1):
-                # create the circle segmentation
-                circle = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*minor_r+1, 2*minor_r+1))
-
-                # place the circle in the tile space
-                seg[:,:] = 0
-                seg[cy-circle.shape[0]//2:cy+circle.shape[0]//2+1, cx-circle.shape[1]//2:cx+circle.shape[1]//2+1] = circle
-
-                # stop growing once the circle finds negative pixels
-                if np.sum((seg == 1) & (tile == 1)) < np.sum(seg):
-                    break
-
-            # initial best segmentation is just a circle
-            best = np.sum(seg == tile)
-            best_seg = seg.copy()
-            best_angle = 0
-            best_major = minor_r
-
-            # generate new segmentations using rotations and major axis values
-            n_directions = 12
-            for angle in np.linspace(0, 180, n_directions):
-                for major_r in range(minor_r+1, max_r+1):
-
-                    # create the rotated ellipse
-                    ellipse = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*minor_r+1, 2*major_r+1))
-                    (h, w) = ellipse.shape
-                    center = (w / 2, h / 2)
-                    M = cv2.getRotationMatrix2D(center, angle, 1.0)
-                    ellipse = cv2.warpAffine(ellipse, M, (w, h))
-
-                    # place the ellipse in the tile space
-                    seg[:,:] = 0
-                    seg[cy-ellipse.shape[0]//2:cy+ellipse.shape[0]//2+1, cx-ellipse.shape[1]//2:cx+ellipse.shape[1]//2+1] = ellipse
-
-                    # store the best scoring segmentation
-                    score = np.sum(seg == tile)
-                    if score > best:
-                        best = score
-                        best_seg = seg.copy()
-                        best_angle = angle
-                        best_major = major_r
-
-            # convert the segmentation to a polygon
-            c = cv2.findContours(best_seg, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)[0][0][:,0,:]
-            p = sana.geo.Polygon(*c.T, is_micron=False, level=self.level).connect()
-            p.translate(-loc)
-
-            ellipses.append(p)
-
-        return ellipses
-    
     # TODO: check parameters
     def anisodiff(self, niter=12, kappa=11, gamma=0.9, step=(5.,5.)):
         """
@@ -761,80 +485,15 @@ class Frame:
         # perform the thresholding
         self.img = np.where(self.img < threshold, x, y)
 
-    def closing_filter(self, radius):
+    def to_tiles(self, tsize: sana.geo.Point, tstep: sana.geo.Point, align_center=False):
         """
-        Applies a morphological closing filter. See https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
-        :param radius: radius of the closing kernel
+        Uses stride_tricks to create views into the array which saves memory and processing time
+        :param tsize: size of tile
+        :param tstep: stride length between tiles
+        :param align_center: if True, pads the frame so that the tiles are center aligned rather than upper left aligned
         """
-        if not self.is_binary():
-            raise ImageTypeException('Morphology filters can only be applied to binary images')
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-        self.img = cv2.morphologyEx(self.img, cv2.MORPH_CLOSE, kern)[:,:,None]
-
-    def opening_filter(self, radius):
-        """
-        Applies a morphological opening filter. See https://docs.opencv.org/4.x/d9/d61/tutorial_py_morphological_ops.html
-        :param radius: radius of the opening kernel
-        """
-        if not self.is_binary():
-            raise ImageTypeException('Morphology filters can only be applied to binary images')
-        kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (radius, radius))
-        self.img = cv2.morphologyEx(self.img, cv2.MORPH_OPEN, kern)[:,:,None]
-
-    def get_contours(self, min_body_area=0, min_hole_area=0, max_body_area=np.inf, max_hole_area=np.inf):
-        """
-        Finds the contours on all edges of the image, then filters the contours based on size criteria. In the image, background is zero pixels and foreground is non-zero pixels. 
-        :param min_body_area: minimum size required for a contour to be considered a body
-        :param min_hole_area: minimum size required for a contour to be considered a hole
-        :param max_body_area: maximum size for a body contour
-        :param max_hole_area: maximum size for a hole contour
-        :returns: a list of the body contours and a list of the hole contours 
-        """
-        if not self.is_binary():
-            raise ImageTypeException('Contour detection requires a binary image')
-        
-        self.contours = []
-        contours, hierarchies = cv2.findContours(self.img, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        if hierarchies is None:
-            return [], []
-        for c, h in zip(contours, hierarchies[0]):
-            self.contours.append(Contour(c, h, self.level, self.converter))
-
-        # find the body contours
-        for c in self.contours:
-
-            # make sure this contour does not have a parent contour
-            if c.hierarchy[3] != -1:
-                continue
-
-            # make sure the size matches the criteria
-            area = c.polygon.get_area()
-            if area >= min_body_area and area <= max_body_area:
-                c.body = True
-
-        # now find the hole contours
-        for c in self.contours:
-
-            # skip the already found body contours
-            if c.body:
-                continue
-
-            # make sure this contour has a body contour as it's parent
-            if not self.contours[c.hierarchy[3]].body:
-                continue
-
-            # make sure the size matches the criteria
-            area = c.polygon.get_area()
-            if area > min_body_area and area < max_body_area:
-                c.hole = True
-
-        bodies = [c for c in self.contours if c.body]
-        holes = [c for c in self.contours if c.hole]
-        return bodies, holes
-
-    def to_tiles(self, tsize, tstep, do_pad=False):
         if not self.is_gray():
-            raise ChannelException(f"Must be a 1 channel image to tile -- dtype={self.img.dtype}")
+            raise ChannelException(f"Must be a 1 channel image to tile -- shape={self.img.shape}")
         
         # convert to correct units
         if not self.converter is None:
@@ -848,7 +507,7 @@ class Frame:
         if tsize[1] % 2 == 0: tsize[1] += 1
 
         # pad the frame so that we have center aligned tiles
-        if do_pad:
+        if align_center:
             padsize = tsize - 1
             frame = self.pad(padsize, alignment='center', mode='constant')
         else:
@@ -875,34 +534,6 @@ class Frame:
         # NOTE: setting writeable=False is advised by numpy docs
         return np.lib.stride_tricks.as_strided(frame.img, shape=shape, strides=strides, writeable=False)
 
-class Contour:
-    """
-    Stores the contour using it's place in the hierarchy and it's polygon
-    :param contour: contour array from findContours
-    :param hierarchy: hierarchy information from findContours
-    :param level: pixel resolution level
-    :param converter: Converter object used to manipulate units
-    """
-    def __init__(self, contour, hierarchy, level, converter):
-
-        # convert the contour array to a Polygon
-        self.level = level
-        self.polygon = self.contour_to_polygon(contour)
-        self.hierarchy = hierarchy
-        self.converter = converter
-
-        # flags denoting whether or not this contour is a body or a hole
-        self.body = False
-        self.hole = False
-
-    def contour_to_polygon(self, contour):
-        x = np.array([float(v[0][0]) for v in contour])
-        y = np.array([float(v[0][1]) for v in contour])
-        polygon = sana.geo.Polygon(x, y, False, self.level)
-        return polygon
-#
-# end of Detection
-
 def frame_like(frame, img):
     """
     Creates a Frame object with the same parameters as the given frame
@@ -912,15 +543,16 @@ def frame_like(frame, img):
     return Frame(img,
                  level=frame.level,
                  converter=frame.converter,
-                 slide_threshold=frame.slide_threshold,
-                 slide_color=frame.slide_color,
-                 padding=frame.padding)
+                 padding=frame.padding,
+                 is_deformed=frame.is_deformed)
 #
 # end of frame_like
 
-def create_mask_like(frame, polygons):
+def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon]):
     """
-    # TODO:
+    Creates a mask with the same size as the given Frame using a list of Polygons
+    :param frame: frame to emulate
+    :param polygons: list of Polygons to fill in
     """
     int_polygons = []
     for p in polygons:
@@ -933,113 +565,7 @@ def create_mask_like(frame, polygons):
 
     return frame_like(frame, mask_img)
 
-# TODO: PIL is acting weird, merge with cv2 and only use PIL for outline??
-def create_mask(polygons, frame, x=0, y=1, holes=[], outlines_only=False, linewidth=1, do_connect=True):
-    """
-    Generates a binary mask from a list of Polygons
-    :param polygons: list of body Polygon
-    :param frame: Frame object to get the size, level, and converter
-    :param x: negative condition value
-    :param y: positive condition value
-    :param holes: list of hole Polygons
-    :param outlines_only: the generated mask will only be the outlines
-    :param linewidth: used when outlines_only=True
-    """
-
-    # convert the Polygons to lists of values that PIL can handle
-    polys = []
-    for p in polygons:
-        if do_connect:
-            p = p.connect()
-        if not frame.converter is None:
-            frame.converter.to_pixels(p, frame.level)
-            p = frame.converter.to_int(p)
-        polys.append([tuple(p[i]) for i in range(p.shape[0])])
-
-    hs = []
-    for h in holes:
-        if not frame.converter is None:
-            frame.converter.to_pixels(h, frame.level)
-            h = frame.converter.to_int(h)
-        hs.append([tuple(h[i]) for i in range(h.shape[0])])
-    
-    # create a blank image
-    if not frame.converter is None:
-        size = frame.converter.to_int(frame.size())
-    else:
-        size = frame.size()
-    mask = Image.new('L', (size[0], size[1]), x)
-    dr = ImageDraw.Draw(mask)  
-
-    # draw the body polygons on the image
-    for poly in polys:
-        if outlines_only:
-            if linewidth == 1:
-                dr.polygon(poly, outline=y, fill=0)
-            else:
-                dr.line(poly, fill=y, width=linewidth, joint='curve')
-        else:
-            #dr.polygon(poly, outline=y, fill=y)
-            dr.polygon(poly, fill=y)            
-
-    # draw the hole polygons on the image with the body polygons
-    for h in hs:
-        dr.polygon(h, outline=x, fill=x)
-
-    # create the Frame object
-    return frame_like(frame, np.array(mask)[:, :, None])
-#
-# end of create_mask
-
-# TODO: this should be in plots.py
-def overlay_mask(frame, mask, alpha=0.5, color='red', main_roi_mask=None, sub_roi_masks=[], main_roi=None, sub_rois=[], linewidth=9):
-    """
-    Overlays a semi-transparent mask on a frame
-    :param frame: background image
-    :param mask: binary image mask to overlay
-    :param alpha: transparency
-    :param color: color to use for the mask
-    :param main_roi_mask: used to exclude non-annotated pixels
-    :param sub_roi_masks: list of masks used to exclude non-annotate pixels
-    :param main_roi: if given, overlays the Annotation
-    :param sub_rois: if given, overlays the Annotations
-    :param linewidth: used when plotting the Annotations
-    """
-    # get the RGB color
-    if type(color) is str:
-        color = np.rint(255*np.array(colors.to_rgb(color))).astype(np.uint8)
-    overlay = frame.copy()
-
-    if not mask is None:
-        mask = mask.copy()
-        mask.img = mask.img[:frame.img.shape[0], :frame.img.shape[1]]
-    
-        # exclude non-annotated pixels
-        if not main_roi_mask is None:
-            mask.img[main_roi_mask.img == 0] = 0
-        if len(sub_roi_masks) != 0:
-            full_sub_roi_mask = frame_like(np.zeros_like(mask.img), mask)
-            for sub_roi_mask in sub_roi_masks:
-                full_sub_roi_mask += sub_roi_mask.img
-            mask.img[full_sub_roi_mask == 0] = 0
-
-        # create the overlay image using a weight sum
-        overlay.img[mask.img[:,:,0] != 0] = color
-        overlay.img = cv2.addWeighted(overlay.img, alpha, frame.img, 1-alpha, 0.0)
-
-    # plot the annotations
-    if not main_roi is None:
-        main_roi_overlay = create_mask([main_roi], frame, outlines_only=True, linewidth=linewidth)
-        overlay.img[main_roi_overlay.img[:,:,0] != 0] = color
-    if len(sub_rois) != 0:
-        sub_roi_overlay = create_mask(sub_rois, frame, outlines_only=True, linewidth=linewidth)
-        overlay.img[sub_roi_overlay.img[:,:,0] != 0] = color
-
-    overlay.to_short()
-        
-    return overlay
-
-def load_compressed(filename):
+def load_compressed_array(filename):
     arr = np.load(filename)
     arr = arr['arr_0']
     arr = np.unpackbits(arr, axis=-1, bitorder='little')

@@ -90,7 +90,7 @@ class Loader(openslide.OpenSlide):
         w, h = self.level_dimensions[self.thumbnail_level]
         loc = sana.geo.Point(0, 0, is_micron=False, level=self.thumbnail_level)
         size = sana.geo.Point(w, h, is_micron=False, level=self.thumbnail_level)
-        return self.load_frame(loc, size, self.thumbnail_level)
+        return self.load_frame(loc, size, level=self.thumbnail_level)
 
     def load_frame(self, loc: sana.geo.Point, size: sana.geo.Point, level: int=0, pad_color=0):
         """
@@ -179,7 +179,13 @@ class Loader(openslide.OpenSlide):
         :param padding: amount of padding to add context to the ROI
         """
         roi = roi.copy()
-
+        self.logger.data["angle"] = None        
+        self.logger.data["crop_loc"] = None
+        self.logger.data["crop_size"] = None
+        self.logger.data["M"] = None
+        self.logger.data["nw"] = None
+        self.logger.data["nh"] = None
+        
         # scale the roi to the proper resolution
         roi = self.converter.rescale(roi, level)
 
@@ -229,13 +235,13 @@ class Loader(openslide.OpenSlide):
         # TODO: make a before/after image instead!
         ![image](../../sana/examples/images/ex0_SEG.png)
         """
-        top = self.converter.rescale(top, level)
-        right = self.converter.rescale(right, level)
-        bottom = self.converter.rescale(bottom, level)
-        left = self.converter.rescale(left, level)
+        top = self.converter.rescale(top.copy(), level)
+        right = self.converter.rescale(right.copy(), level)
+        bottom = self.converter.rescale(bottom.copy(), level)
+        left = self.converter.rescale(left.copy(), level)
         
         # rotate to make the top curve horizontal
-        origin = sana.geo.point_like(0, 0, top)
+        origin = sana.geo.point_like(top, 0, 0)
         angle = top.get_angle()
         [curve.rotate(origin, -angle) for curve in [top, right, bottom, left]]
             
@@ -247,14 +253,14 @@ class Loader(openslide.OpenSlide):
         # create a bounding box ROI from the rotated curves
         xmi, ymi = np.min([np.min(curve, axis=0) for curve in [top, right, bottom, left]], axis=0)
         xmx, ymx = np.max([np.max(curve, axis=0) for curve in [top, right, bottom, left]], axis=0)
-        loc = sana.geo.point_like(xmi, ymi, top)
-        size = sana.geo.point_like(xmx-xmi, ymx-ymi, top)
-        roi = sana.geo.rectangle_like(loc, size, top)
+        loc = sana.geo.point_like(top, xmi, ymi)
+        size = sana.geo.point_like(top, xmx-xmi, ymx-ymi)
+        roi = sana.geo.rectangle_like(top, loc, size)
 
         # apply padding to the rotated ROI
         loc -= padding
         size += 2*padding
-        roi = sana.geo.rectangle_like(loc, size, top)
+        roi = sana.geo.rectangle_like(top, loc, size)
 
         # rotate to the original coordinate space
         roi.rotate(origin, angle)
@@ -310,7 +316,7 @@ class Loader(openslide.OpenSlide):
 
         # set the amount of padding used
         frame.frame_padding = padding
-            
+
         # store the processing parameters
         self.logger.data['angle'] = angle
         self.logger.data['M'] = M
@@ -368,7 +374,7 @@ class Framer:
     def load(self, i, j):
         x = i * self.step[0]
         y = j * self.step[1]
-        loc = sana.geo.point_like(x, y, self.size) - self.fpad
+        loc = sana.geo.point_like(self.size, x, y) - self.fpad
         size = self.size + 2*self.fpad
         frame = self.loader.load_frame(loc, size, level=self.level)
         frame.frame_padding = self.fpad

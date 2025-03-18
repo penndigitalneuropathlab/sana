@@ -5,12 +5,7 @@ import math
 # installed packages
 import numpy as np
 from scipy.spatial import ConvexHull
-import shapely.geometry
-from scipy.interpolate import interp1d
-
 from numba import jit
-
-from matplotlib import pyplot as plt
 
 class Converter:
     """
@@ -19,14 +14,8 @@ class Converter:
     :param ds: array of pixel resolution downsample constants
     """
     def __init__(self, mpp=None, ds=None):
-
-        # default values from the PDNL Aperio scanner
-        if mpp is None:
-            self.mpp = 0.5045
-            self.ds = np.array([1.0, 4.0, 16.003152252303728])
-        else:
-            self.mpp = mpp
-            self.ds = ds
+        self.mpp = mpp
+        self.ds = ds
 
     def to_float(self, x):
         """
@@ -54,7 +43,9 @@ class Converter:
         :param level: pixel resolution level to rescale to
         """
         if x.is_micron:
-            raise UnitException("Cannot rescale data in micron units")
+            raise UnitException("Cannot rescale data in micron units.")
+        if self.ds is None:
+            raise ConversionException("Downsampling factors not specified.")
         
         if x.dtype == int:
             x = self.to_float(x)
@@ -73,6 +64,8 @@ class Converter:
         """
         if x.is_micron:
             return
+        if self.mpp is None:
+            raise ConversionException("Microns per pixel resolution not specified.")
         
         # rescale to original pixel resolution
         x = self.rescale(x, 0)
@@ -90,6 +83,8 @@ class Converter:
         :param x: sana.geo.Array
         :param level: new pixel resolution level
         """
+        if self.mpp is None:
+            raise ConversionException("Microns per pixel resolution not specified.")
 
         # apply the microns per pixel constant
         if x.is_micron:
@@ -210,36 +205,6 @@ class Point(Array):
             self -= M[:,2]
             np.matmul(np.linalg.inv(M[:,:2]), self, out=self)
             
-class Vector(Array):
-    """
-    (2,2) shaped np.ndarray object, same process as sana.geo.Array
-    :param x1: x value of point a
-    :param y1: y value of point a
-    :param x2: x value of point b
-    :param y2: y value of point b
-    :param is_micron: flag denoting if the Array is micron units or pixel units
-    :param level: pixel resolution level (level=0 when in microns)
-    """
-    def __new__(cls, x1, y1, x2, y2, is_micron=None, level=None):
-        # TODO: need to check validity of x and y, same in Array
-        arr = np.array(((x1,y1), (x2,y2)))
-        obj = np.asarray(arr).view(cls)
-        obj.is_micron = is_micron
-        obj.level = level
-        return obj
-    def __array_finalize__(self, obj):
-        if obj is None: return
-        self.is_micron = getattr(obj, 'is_micron', None)
-        self.level = getattr(obj, 'level', None)
-
-    def get_angle(self):
-        v = self[1] - self[0]
-        return np.arctan2(v[1], v[0])
-
-    def get_length(self):
-        v = self[:,1] - self[:,0]
-        return np.sqrt(np.sum(np.square(v)))
-    
 class Polygon(Array):
     """
     (n,2) shaped Array object, contains specialized functions for Polygons
@@ -274,21 +239,6 @@ class Polygon(Array):
         A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
         return A
     
-    def get_centroid(self):
-        """
-        Calculates the center of gravity of the Polygon, then gets the radius of the centroid by selecting the max distance vertex from the center
-        """
-        A = self.get_area()
-        x0, y0 = self.get_xy()
-        x1, y1 = self.get_rolled_xy()
-        cx = np.sum((x0 + x1)*(x0*y1 - x1*y0)) / (6*A)
-        cy = np.sum((y0 + y1)*(x0*y1 - x1*y0)) / (6*A)
-        c = point_like(cx, cy, self)
-        d = np.sqrt((c[0] - x0)**2 + (c[1] - y0)**2)
-        r = np.max(d)
-
-        return c, r
-    
     def get_axes(self):
         """
         Calculates the major and minor axes based on the minimum bounding rectangle of the Polygon
@@ -299,14 +249,12 @@ class Polygon(Array):
         minor = float(np.min(side_lengths)/2)
         return major, minor    
 
-    # TODO: anyway to clean this up?
     def get_minimum_bounding_rectangle(self):
         """
         Calculates the minimum bounding rectangle of the Polygon
         """
         pi2 = np.pi/2
 
-        # TODO: does ConvexHull work on Polygon? if not use to_convexhull
         hull = self[ConvexHull(self).vertices]
 
         edges = hull[1:] - hull[:-1]
@@ -346,22 +294,8 @@ class Polygon(Array):
         rect[2] = np.dot([x2, y1], r)
         rect[3] = np.dot([x1, y1], r)
 
-        return polygon_like(rect[:,0], rect[:,1], self)
+        return polygon_like(self, rect[:,0], rect[:,1])
 
-    def get_major(self):
-        """
-        Calculates the length of the major axis
-        """
-        major, minor = self.get_axes()
-        return major
-    
-    def get_minor(self):
-        """
-        Calculates the length of the minor axis
-        """
-        major, minor = self.get_axes()
-        return minor
-    
     def get_eccentricity(self):
         """
         Calculates the eccentricity feature, measuring the "elliptic" nature of the polygon: 0.0 is a circle, 1.0 is a line
@@ -394,17 +328,8 @@ class Polygon(Array):
         x, y = self.get_xy()
         x0, y0 = np.min(x), np.min(y)
         x1, y1 = np.max(x), np.max(y)
-        loc = point_like(x0, y0, self)
-        size = point_like(x1-x0, y1-y0, self)
-        return loc, size
-    
-    def bounding_centroid(self):
-        """
-        Gets the bounding box of the centroid
-        """
-        c, r = self.get_centroid()
-        loc = point_like(c[0]-r, c[1]-r, self)
-        size = point_like(2*r, 2*r, self)
+        loc = point_like(self, x0, y0)
+        size = point_like(self, x1-x0, y1-y0)
         return loc, size
     
     def is_inside(self, poly):
@@ -414,7 +339,7 @@ class Polygon(Array):
         """
         self.check_resolution(poly)
 
-        # prepare the input Polygon, ray_tracing cannot handle Polygons
+        # prepare the input Polygon, ray_tracing() cannot handle Polygons
         poly = np.array(poly)
         
         for i in range(self.shape[0]):
@@ -429,7 +354,7 @@ class Polygon(Array):
         """
         self.check_resolution(poly)
 
-        # prepare the input Polygon, ray_tracing cannot handle Polygons
+        # prepare the input Polygon, ray_tracing() cannot handle Polygons
         poly = np.array(poly)
 
         for i in range(self.shape[0]):
@@ -437,23 +362,6 @@ class Polygon(Array):
                 return True
         return False
     
-    def filter_vertices(self, poly):
-        """
-        Deletes vertices from this Polygon that are not inside the input Polygon
-        :param poly: input Polygon
-        """
-        self.check_resolution(poly)
-
-        # prepare the input Polygon, ray_tracing cannot handle Polygons
-        poly = np.array(poly)
-
-        x, y = [], []
-        for i in range(self.shape[0]):
-            if ray_tracing(self[i][0], self[i][1], poly):
-                x.append(self[i][0])
-                y.append(self[i][1])
-        return polygon_like(x, y, self)
-
     def is_connected(self):
         """
         Checks if the first and last vertex are equivalent
@@ -470,7 +378,7 @@ class Polygon(Array):
             x, y = self.get_xy()
             x = np.concatenate([x, [self[0,0]]], axis=0)
             y = np.concatenate([y, [self[0,1]]], axis=0)
-            return polygon_like(x, y, self)
+            return polygon_like(self, x, y)
 
     def disconnect(self):
         """
@@ -482,13 +390,7 @@ class Polygon(Array):
             x, y = self.get_xy()
             x = x[:-1]
             y = y[:-1]
-            return polygon_like(x, y, self)
-        
-    def to_shapely(self):
-        """
-        Converts the Polygon to a Shapely object for access to certain functions not worth implementing
-        """
-        return shapely.geometry.Polygon(self)
+            return polygon_like(self, x, y)
         
     def to_annotation(self, class_name="", annotation_name="", attributes={}, connect=True):
         """
@@ -509,7 +411,7 @@ class Polygon(Array):
         Convenience function which returns a copy of the connected polygon
         """
         self = self.connect()
-        return polygon_like(self[:,0], self[:,1], self)
+        return polygon_like(self, self[:,0], self[:,1])
 
 class Curve(Array):
     """
@@ -528,41 +430,6 @@ class Curve(Array):
     def set_xy(self, x, y):
         self[:,0] = x
         self[:,1] = y
-
-    def get_angle(self):
-        """
-        Calculates the angle of rotation in degrees based on the linear regression
-        """
-        x, y = self.get_xy()
-        n = self.shape[0]
-
-        # zeroing the mean avoids overflow errors with very large pixel coordinates
-        x = x - np.mean(x)
-        y = y - np.mean(y)
-        ss_xx = float(np.sum(x**2))
-        ss_yy = float(np.sum(y**2))
-        ss_xy = float(np.sum(y*x))
-        print(ss_xx, ss_yy, ss_xy)
-        # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
-        # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))
-        
-        # guess which variable is the input and which is the output
-        if np.max(y) - np.min(y) > np.max(x) - np.min(x):
-            transposed = True
-            den = ss_yy
-        else:
-            transposed = False
-            den = ss_xx
-
-        if transposed:
-            if self.slope == 0:
-                self.slope = np.inf
-            else:
-                self.slope = 1/self.slope
-            self.intercept = self[0,1] - self.slope*self[0,0]
-
-        return self.slope, self.intercept
     
     def get_angle(self):
         """
@@ -572,14 +439,14 @@ class Curve(Array):
         n = self.shape[0]
 
         # zeroing the mean avoids overflow errors with very large pixel coordinates
+        # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
+        # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
+        # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))        
         x = x - np.mean(x)
         y = y - np.mean(y)
         ss_xx = float(np.sum(x**2))
         ss_yy = float(np.sum(y**2))
         ss_xy = float(np.sum(y*x))
-        # ss_xx = float(np.sum(x**2) - n * np.mean(x)**2)
-        # ss_yy = float(np.sum(y**2) - n * np.mean(y)**2)                
-        # ss_xy = float(np.sum(y*x) - n * np.mean(y)*np.mean(x))
         
         # guess which variable is the input and which is the output
         if np.max(y) - np.min(y) > np.max(x) - np.min(x):
@@ -692,7 +559,7 @@ class Annotation(Array):
             x, y = self.get_xy()
             x = np.concatenate([x, [self[0,0]]], axis=0)
             y = np.concatenate([y, [self[0,1]]], axis=0)
-            return polygon_like(x, y, self)
+            return polygon_like(self, x, y)
 
     def disconnect(self):
         """
@@ -704,14 +571,14 @@ class Annotation(Array):
             x, y = self.get_xy()
             x = x[:-1]
             y = y[:-1]
-            return polygon_like(x, y, self)
+            return polygon_like(self, x, y)
         
     def to_polygon(self):
         self = self.connect()
-        return polygon_like(self[:,0], self[:,1], self)
+        return polygon_like(self, self[:,0], self[:,1])
     def to_curve(self):
         self = self.disconnect()
-        return curve_like(self[:,0], self[:,1], self)
+        return curve_like(self, self[:,0], self[:,1])
 
 # NOTE: using jit here makes this function viable in terms of speed
 @jit(nopython=True)
@@ -740,38 +607,21 @@ def ray_tracing(x,y,poly):
         p1x,p1y = p2x,p2y
     return inside
 
-def get_polygon_from_curves(a, b):
-    """
-    Creates a polygon by connecting 2 curves at both ends
-    """
-    x = np.concatenate([a[:,0], b[:,0]], axis=0)
-    y = np.concatenate([a[:,1], b[:,1]], axis=0)
-    p = polygon_like(x, y, a).connect()
-
-    x = np.concatenate([a[:,0], b[::-1,0]], axis=0)
-    y = np.concatenate([a[:,1], b[::-1,1]], axis=0)
-    p_reverse = polygon_like(x, y, a).connect()
-
-    if p.get_area() > p_reverse.get_area():
-        return p
-    else:
-        return p_reverse
-    
-def array_like(arr, obj):
+def array_like(obj, arr):
     return Array(arr, is_micron=obj.is_micron, level=obj.level)
-def point_like(x, y, obj):
+def point_like(obj, x, y):
     return Point(x, y, is_micron=obj.is_micron, level=obj.level)
-def vector_like(x1, y1, x2, y2, obj):
+def vector_like(obj, x1, y1, x2, y2):
     return Vector(x1, y1, x2, y2, is_micron=obj.is_micron, level=obj.level)
-def polygon_like(x, y, obj):
+def polygon_like(obj, x, y):
     return Polygon(x, y, is_micron=obj.is_micron, level=obj.level)
-def curve_like(x, y, obj):
+def curve_like(obj, x, y):
     return Curve(x, y, is_micron=obj.is_micron, level=obj.level)
-def rectangle_like(loc, size, obj):
+def rectangle_like(obj, loc, size):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
-    return polygon_like(x, y, obj)
-def annotation_like(x, y, obj):
+    return polygon_like(obj, x, y)
+def annotation_like(obj, x, y):
     return Annotation(
         x, y,
         class_name=obj.class_name,
@@ -798,8 +648,6 @@ def transform_array(x, loc, M, crop_loc):
     if not crop_loc is None:
         x.translate(crop_loc)
     return x
-#
-# end of transform_array
 
 # performs the inverse translations and rotations to return a polygon
 #  to the original coordinate system
@@ -812,82 +660,10 @@ def inverse_transform_array(x, loc, M, crop_loc):
         x.translate(-loc)
 
     return x
-#
-# end of transform_inv_poly    
-
-def from_shapely(p, is_micron=None, level=None):
-    """
-    this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
-    """
-    if type(p) is shapely.geometry.MultiPolygon:
-        polygons = []
-        for geom in p.geoms:
-            polygons.append(from_shapely(geom, is_micron=is_micron, level=level))
-        return polygons
-    elif type(p) is shapely.geometry.Polygon:
-        xs, ys = p.exterior.xy
-        return Polygon(xs, ys, is_micron=is_micron, level=level)
-    else:
-        return None
-
-# removes self-intersecting points and returns a new Polygon
-# NOTE: supports sana_geo.Polygon or shapely.Polygon
-# NOTE: sometimes this creates a MultiPolygon, sana_geo only supports Polygons,
-#       in this case we use the largest section of the MultiPolygon
-# TODO: rewrite this!
-def fix_polygon(p):
-    was_sana_poly = type(p) is Polygon
-    if was_sana_poly:
-        is_micron, lvl = p.is_micron, p.lvl
-        p = p.to_shapely()
-
-    if not p.is_valid:
-        p = p.buffer(0) # NOTE: this could still end up invalid... add an exception?
-    else:
-        pass
-
-    if was_sana_poly:
-        p = from_shapely(p, is_micron, lvl)
-        
-    return p
-#
-# end of fix_polygon
-
-def get_overlap(x, y):
-    orig_x = x
-    
-    x = x.copy().to_shapely()
-    y = y.copy().to_shapely()
-
-    x = fix_polygon(x)
-    y = fix_polygon(y)
-
-    i = x.intersection(y)
-    if i.is_empty:
-        return None
-    else:
-        return from_shapely(i, orig_x.is_micron, orig_x.lvl)
-
-# calculates the IOU score of 2 Polygons
-# NOTE: this uses Shapely, converts to shapely objects for easy calculations
-# TODO: rewrite all the IOU functions
-def get_iou(x, y):
-    # print('entered get_iou')
-    x = x.copy().to_shapely()
-    y = y.copy().to_shapely()
-
-    x = fix_polygon(x)
-    y = fix_polygon(y)
-
-    i = x.intersection(y).area
-    u = x.union(y).area 
-    # print('i:',i)
-    # print('u:',u)
-    return i/u
-#
-# end of iou
-
 
 class UnitException(Exception):
+    def __init__(self, message):
+        self.message = message
+class ConversionException(Exception):
     def __init__(self, message):
         self.message = message

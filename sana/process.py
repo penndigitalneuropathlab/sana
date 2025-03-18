@@ -1,18 +1,12 @@
 
 # installed modules
-import numpy as np
 from matplotlib import pyplot as plt
-import cv2
-import skfmm
-from tqdm import tqdm
-import skimage.feature
 
 # sana modules
 import sana.color_deconvolution
 import sana.image
 import sana.threshold
 import sana.geo
-import sana.filter
 
 class Processor:
     """
@@ -55,12 +49,6 @@ class Processor:
         self.valid_mask = self.exclusion_mask.copy()
         self.valid_mask.img = 1 - self.valid_mask.img
 
-        # apply the exclusion mask to the other masks
-        self.main_mask.mask(self.valid_mask)
-        for sub_mask in self.sub_masks:
-            if not sub_mask is None:
-                sub_mask.mask(self.valid_mask)
-
     def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[], debug=True):
         """
         Classifies pixels as foreground/background based on a threshold and morphology filters
@@ -72,7 +60,7 @@ class Processor:
         if self.logger.debug_level == 'full':
             fig, axs = plt.subplots(1, 2+len(morphology_filters), sharex=True, sharey=True, figsize=(20,10))
             axs = axs.ravel()
-            axs[0].imshow(frame.img)
+            axs[0].imshow(frame.img, cmap='gray')
             axs[0].set_title('Original')
 
         # apply the threshold
@@ -80,14 +68,14 @@ class Processor:
 
         # DEBUG:
         if self.logger.debug_level == 'full':
-            axs[1].imshow(frame.img)
+            axs[1].imshow(frame.img, cmap='gray')
             axs[1].set_title('Threshold')
 
         # apply each filter
         for i, morphology_filter in enumerate(morphology_filters):
             frame.apply_morphology_filter(morphology_filter)
             if self.logger.debug_level == 'full':
-                axs[2+i].imshow(frame.img)
+                axs[2+i].imshow(frame.img, cmap='gray')
                 axs[2+i].set_title(str(morphology_filter))
     
 class HDABProcessor(Processor):
@@ -134,15 +122,19 @@ class HDABProcessor(Processor):
             ax.set_title('RES (OD)')
 
         # rescale the OD to uint8 using the digital min/max
-        # TODO: maybe dont use digital min/max?
+        # TODO: this compresses the digital space, maybe don't use min/max od!
+        self.hem.img = self.hem.img - self.dab.img
+        self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
         self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
         # smooth the DAB, mainly flattening interiors of objects
         if apply_smoothing:
+            self.hem.anisodiff()
             self.dab.anisodiff()
 
         # subtract the bacgkround image from the stains
         if normalize_background:
+            self.hem.remove_background()
             self.dab.remove_background()
 
         self.logger.data['apply_smoothing'] = apply_smoothing
@@ -150,6 +142,9 @@ class HDABProcessor(Processor):
         self.logger.data['stain_vector'] = stain_vector
         
         if self.logger.debug_level == 'full':
+            ax = axs[4]
+            ax.imshow(self.hem.img, cmap='gray')
+            ax.set_title('HEM (Preprocessed)')
             ax = axs[5]
             ax.imshow(self.dab.img, cmap='gray')
             ax.set_title('DAB (Preprocessed)')

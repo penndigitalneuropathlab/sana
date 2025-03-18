@@ -87,64 +87,6 @@ class StainSeparator:
 
         return img
 
-    # TODO: test and rewrite
-    def estimate_stain_vector(self, img):
-        mx, mi = 1.0, 0.05
-        alpha = 1 / 100.0
-
-        # flatten the image
-        img = img.reshape(img.shape[0]*img.shape[1], 3)
-
-        # convert to od
-        od = self.to_od(img)
-
-        # remove data that is too faint
-        od = od[np.where(np.logical_or(
-            od[:, 0] >= mi, od[:, 1] >= mi, od[:, 2] >= mi))]
-
-        # remove data that is too dense
-        mag = np.sum(od**2, axis=-1)
-        od = od[np.where(mag <= mx**2)]
-
-        # perform singular value decomposition, find 2 SVD direction vectors with the highest singular values
-        cov = np.cov(od.T)
-        w, v = eig(cov)
-        inds = np.argsort(w)
-        v1 = v[:, inds[-1]]
-        v2 = v[:, inds[-2]]
-
-        # find the angle of each pixel, find the min and max extrema
-        phi = np.arctan2(od @ v1, od @ v2)
-        inds = np.argsort(phi)
-        ind1 = inds[int(alpha*phi.shape[0])]
-        ind2 = inds[int((1-alpha)*phi.shape[0])]
-        v1 = od[ind1]
-        v2 = od[ind2]
-
-        # make sure the vectors are in the expected order
-        #  i.e. it should be v1=HEM, v2=DAB, sometimes it's switched
-        a11 = self.stain_vector.angle(0, v1)
-        a12 = self.stain_vector.angle(0, v2)
-        a21 = self.stain_vector.angle(1, v1)
-        a22 = self.stain_vector.angle(1, v2)
-        if min(a12, a21) < min(a11, a22):
-            v = v2.copy()
-            v2 = v1.copy()
-            v1 = v
-
-        # construct the new stain vector
-        stain_v = np.array([
-            v1,
-            v2,
-            [0.0, 0.0, 0.0],
-        ])
-        self.stain_vector = StainVector(
-            self.stain_type, stain_v)
-        self.stain_to_rgb = self.stain_vector.v
-        self.rgb_to_stain = self.stain_vector.v_inv
-#
-# end of StainSeparator
-
 class StainVector:
     """
     Handles the matrix which defines the colors of the given stain, or manually determined stain vector
@@ -205,33 +147,16 @@ class StainVector:
                     [0.00, 0.00, 0.00],
                 ])
         
-        # 3rd color is unspecified, create an orthogonal residual color
+        # 3rd channel is unspecified, create an orthogonal residual color
         # NOTE: this color will sometimes have negative components, thats okay since we will check for this later on
         if all(self.v[2, :] == 0):
             self.v[2, :] = np.cross(self.v[0, :], self.v[1, :])
             
         # normalize the vector
-        # TODO: just use np.linalg.norm
-        self.v[0,:] = self.norm(self.v[0,:])
-        self.v[1,:] = self.norm(self.v[1,:])
-        self.v[2,:] = self.norm(self.v[2,:])
+        self.v = self.v / np.linalg.norm(self.v, axis=1)
 
         # store the inverse of the vector
         self.v_inv = inv(self.v)
-    
-    def norm(self, v):
-        k = (np.sqrt(np.sum(v**2)))
-        if k != 0:
-            return v / k
-        else:
-            return v
-        
-    def length(self, v):
-        return np.sqrt(np.dot(v, v))
-
-    def angle(self, i, v2):
-        v1 = self.v[i, :]
-        return np.arccos(np.dot(v1, v2) / (self.length(v1) * self.length(v2)))
 #
 # end of StainVector
 
