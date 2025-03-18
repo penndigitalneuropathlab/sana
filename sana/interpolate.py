@@ -72,7 +72,7 @@ def clip_curve(a, x0, y0, x1, y1):
     return a
 
 @jit(nopython=True)
-def intersect_curves(c1: np.ndarray, c2: np.ndarray, rtol: float=1e-3):
+def intersect_curves(c1: np.ndarray, c2: np.ndarray, atol: float=1e-1):
     """
     this function finds the interpolated point that exists in both input curves
     """
@@ -107,14 +107,14 @@ def intersect_curves(c1: np.ndarray, c2: np.ndarray, rtol: float=1e-3):
             elif m1 != np.inf and m2 != np.inf and (m1-m2) != 0:
                 xp = -(b1 - b2) / (m1 - m2)
                 yp = m1 * xp + b1
-                if ((np.min(x1) < xp) or np.isclose(np.min(x1), xp, rtol=rtol)) and \
-                   ((xp < np.max(x1)) or np.isclose(xp, np.max(x1), rtol=rtol)) and \
-                   ((np.min(x2) < xp) or np.isclose(np.min(x2), xp, rtol=rtol)) and \
-                   ((xp < np.max(x2)) or np.isclose(xp, np.max(x2), rtol=rtol)) and \
-                   ((np.min(y1) < yp) or np.isclose(np.min(y1), yp, rtol=rtol)) and \
-                   ((yp < np.max(y1)) or np.isclose(yp, np.max(y1), rtol=rtol)) and \
-                   ((np.min(y2) < yp) or np.isclose(np.min(y2), yp, rtol=rtol)) and \
-                   ((yp < np.max(y2)) or np.isclose(yp, np.max(y2), rtol=rtol)):
+                if ((np.min(x1) < xp) or np.isclose(np.min(x1), xp, atol=atol)) and \
+                   ((xp < np.max(x1)) or np.isclose(xp, np.max(x1), atol=atol)) and \
+                   ((np.min(x2) < xp) or np.isclose(np.min(x2), xp, atol=atol)) and \
+                   ((xp < np.max(x2)) or np.isclose(xp, np.max(x2), atol=atol)) and \
+                   ((np.min(y1) < yp) or np.isclose(np.min(y1), yp, atol=atol)) and \
+                   ((yp < np.max(y1)) or np.isclose(yp, np.max(y1), atol=atol)) and \
+                   ((np.min(y2) < yp) or np.isclose(np.min(y2), yp, atol=atol)) and \
+                   ((yp < np.max(y2)) or np.isclose(yp, np.max(y2), atol=atol)):
                     return xp, yp
 
 def clip_between_segments(a, b, c):
@@ -193,8 +193,8 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
     right = right[:,::-1]
     left, left_z = fit_polynomial(left[:,::-1], degrees, nh)
     left = left[:,::-1]
-    top, _ = fit_polynomial(top, degrees, N, x0=0, x1=xbound)
-    bottom, _ = fit_polynomial(bottom, degrees, N, x0=0, x1=xbound)
+    #top, _ = fit_polynomial(top, degrees, N, x0=0, x1=xbound)
+    #bottom, _ = fit_polynomial(bottom, degrees, N, x0=0, x1=xbound)
 
     if not ax is None:
         [x.rotate(ctr, angle) for x in [top, right, bottom, left]]
@@ -202,7 +202,8 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         ax.plot(*right.T, color='black', linewidth=2)        
         ax.plot(*bottom.T, color='black', linewidth=2)
         ax.plot(*left.T, color='black', linewidth=2)
-        [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]        
+        [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]
+        
     # prepare arrays for the sampling grid
     sample_grid = np.zeros((nh, nw, 2))
     angles = np.zeros((nh, nw))

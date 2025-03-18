@@ -107,7 +107,7 @@ class Sampler:
             sizes.append(size)
         return nums, dens, locs, sizes
     
-    def subsample_grid(self, l, pct, avoid_adjacent=False):
+    def subsample_grid(self, l, pct, avoid_adjacent=False, avoid_partial=True):
         w, h = self.mask.size()
 
         # calculate the grid origin coordinates
@@ -136,7 +136,7 @@ class Sampler:
         nums, dens, locs, sizes = [], [], [], []
 
         # continue sampling tiles until we've covered enough area
-        while sampled_area < target_area:
+        while sampled_area < target_area and len(available) != 0:
 
             # get a random available tile
             idx = available[self.rng.integers(0, len(available))]
@@ -151,7 +151,11 @@ class Sampler:
 
             # do the sampling
             num, den, loc, size, pos, mask, neg = self._subsample(x, y, l, l, align_center=False)
-            if np.sum(mask.img) == mask.img.shape[0] * mask.img.shape[1]:
+            if avoid_partial:
+                do_sample = np.sum(mask.img) == mask.img.shape[0] * mask.img.shape[1]
+            else:
+                do_sample = np.sum(mask.img) != 0
+            if do_sample:
                 sampled.append(idx)
                 nums.append(num)
                 dens.append(den)
@@ -172,8 +176,8 @@ class Sampler:
                     if left in available: available.remove(left)
                     if right in available: available.remove(right)
 
-            # ran out of available tiles to sample, repopulate with unsampled tiles
-            if len(available) == 0:
+            # ran out of non-adjacent tiles to sample, repopulate with unsampled tiles
+            if len(available) == 0 and avoid_adjacent:
                 avoid_adjacent = False
                 available = [x for x in range(ncols*nrows) if not x in sampled]
 

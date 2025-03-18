@@ -632,6 +632,27 @@ def annotation_like(obj, x, y):
         level=obj.level
     )
 
+def connect_segments(top, right, bottom, left):
+    # rotate the segments to the correct orientation
+    ctr = point_like(top, 0, 0)
+    angle = top.get_angle()
+    [curve.rotate(ctr, -angle) for curve in [top, right, bottom, left]]
+    if np.mean(top[:,1]) > np.mean(bottom[:,1]):
+        [curve.rotate(ctr, 180) for curve in [top, right, bottom, left]]
+        angle += 180
+
+    # sort the vertices of the segments according to their orientation
+    top = top[np.argsort(top[:,0])]
+    right = right[np.argsort(right[:,1])]
+    bottom = bottom[np.argsort(bottom[:,0])[::-1]]
+    left = left[np.argsort(left[:,1])[::-1]]
+
+    # rotate back to the original orientation
+    [curve.rotate(ctr, angle) for curve in [top, right, bottom, left]]
+
+    # connect the segments into a polygon
+    return polygon_like(top, *np.concatenate([top, right, bottom, left], axis=0).T)
+
 def transform_array_with_logger(x, logger, inverse=False):
     if inverse:
         return inverse_transform_array(x, logger.data.get('loc'), logger.data.get('M'), logger.data.get('crop_loc'))
