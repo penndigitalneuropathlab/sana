@@ -1,24 +1,29 @@
 
 import numpy as np
-import cv2
 from scipy.interpolate import interp1d, RegularGridInterpolator
+import scipy.optimize
+from numba import jit
 
 import sana.geo
 import sana.image
 
-import torch
-from torch.nn import functional as tfun
-
-from matplotlib import pyplot as plt
-
-def fit_parabola(c, N):
+def fit_polynomial(c, degrees, N, fixed_endpoints=True, x0=None, x1=None):
     c = interp(c, N)
-    x, y = c[:,0], c[:,1]
-    z = np.polyfit(x, y, 2)
+    x, y = c.T
+    sigma = np.ones_like(x)
+    if fixed_endpoints:
+        sigma[[0, -1]] = 0.01
+    def f(x, *z):
+        return np.poly1d(z)(x)
+    z, _ = scipy.optimize.curve_fit(f, x, y, p0=(0,)*(degrees+1), sigma=sigma)
     p = np.poly1d(z)
-    xnew = np.linspace(np.min(x), np.max(x), N)
+    if x0 is None:
+        x0 = np.min(x)
+    if x1 is None:
+        x1 = np.max(x)
+    xnew = np.linspace(x0, x1, N)
     ynew = p(xnew)
-    return sana.geo.curve_like(xnew, ynew, c)
+    return sana.geo.curve_like(c, xnew, ynew), z
 
 def interp(c, N, xmi=None, xmx=None):
     x = c[:,0]
@@ -30,7 +35,7 @@ def interp(c, N, xmi=None, xmx=None):
         xmx = x[-1]
     xp = np.linspace(xmi, xmx, N)
     yp = f(xp)
-    return sana.geo.curve_like(xp, yp, c)
+    return sana.geo.curve_like(c, xp, yp)
 
 def separate_curve_at_point(a, xp, yp):
 
@@ -39,9 +44,13 @@ def separate_curve_at_point(a, xp, yp):
     for i in range(a.shape[0]-1):
         x0, y0 = a[i]
         x1, y1 = a[i+1]
-        m = (y1-y0)/(x1-x0)
-        b = y0 - x0*m
-        dist = np.abs(xp*m + b - yp)
+        den = x1-x0
+        if den == 0:
+            dist = np.abs(xp - x0)
+        else:
+            m = (y1-y0)/den
+            b = y0 - x0*m
+            dist = np.abs(xp*m + b - yp)
         if dist < mi_dist:
             mi_dist = dist
             idx = i
@@ -56,36 +65,73 @@ def clip_curve(a, x0, y0, x1, y1):
     if idx1 < idx0:
         idx0, idx1 = idx1, idx0
         x0, y0, x1, y1 = x1, y1, x0, y0
-    a = a[idx0:idx1+2]
+    a = a[idx0:idx1+2].copy()
     a[0] = (x0, y0)
     a[-1] = (x1, y1)
 
     return a
 
-def intersect_curves(a, b, N=1000):
+@jit(nopython=True)
+def intersect_curves(c1: np.ndarray, c2: np.ndarray, rtol: float=1e-3):
     """
     this function finds the interpolated point that exists in both input curves
     """
-    # interpolate between vertices in the curves
-    x_a, y_a = interp(a, N).T
-    x_b, y_b = interp(b, N).T
-
-    # get the distance of each point in a to each point in b (i.e. NxN matrix)
-    dist = (x_a[:,None]-x_b)**2 + (y_a[:,None]-y_b)**2
     
-    # get the point in a closest to a point in b
-    idx = np.unravel_index(np.argmin(dist), (N,N))[0]
-    x_int, y_int = x_a[idx], y_a[idx]
+    # calculate linear equation of each segment in the 1st curve
+    for i in range(c1.shape[0]-1):
+        x1, y1 = c1[i:i+2].T
+        den = x1[1]-x1[0]
+        if den == 0:
+            m1 = np.inf
+        else:
+            m1 = (y1[1]-y1[0]) / den
+        b1 = c1[i,1] - m1*c1[i,0]
 
-    return x_int, y_int
+        # do the same for the 2nd curve
+        for j in range(c2.shape[0]-1):
+            x2, y2 = c2[j:j+2].T
+            den = x2[1]-x2[0]
+            if den == 0:
+                m2 = np.inf
+            else:
+                m2 = (y2[1]-y2[0]) / den
+            b2 = c2[j,1] - m2*c2[j,0]
+
+            # get the intersection between the 2 linear eqs
+            if m1 == np.inf and m2 != np.inf:
+                xp = x2[0]
+                yp = m2 * xp + b2
+            elif m2 == np.inf and m1 != np.inf:
+                xp = x1[0]
+                yp = m1 * xp + b1  
+            elif m1 != np.inf and m2 != np.inf and (m1-m2) != 0:
+                xp = -(b1 - b2) / (m1 - m2)
+                yp = m1 * xp + b1
+                if ((np.min(x1) < xp) or np.isclose(np.min(x1), xp, rtol=rtol)) and \
+                   ((xp < np.max(x1)) or np.isclose(xp, np.max(x1), rtol=rtol)) and \
+                   ((np.min(x2) < xp) or np.isclose(np.min(x2), xp, rtol=rtol)) and \
+                   ((xp < np.max(x2)) or np.isclose(xp, np.max(x2), rtol=rtol)) and \
+                   ((np.min(y1) < yp) or np.isclose(np.min(y1), yp, rtol=rtol)) and \
+                   ((yp < np.max(y1)) or np.isclose(yp, np.max(y1), rtol=rtol)) and \
+                   ((np.min(y2) < yp) or np.isclose(np.min(y2), yp, rtol=rtol)) and \
+                   ((yp < np.max(y2)) or np.isclose(yp, np.max(y2), rtol=rtol)):
+                    return xp, yp
 
 def clip_between_segments(a, b, c):
     """
     this function clips curve "a" at the intersection points with curves "b" and "c"
     """
-    abx, aby = intersect_curves(a, b)
-    acx, acy = intersect_curves(a, c)
+    abx, aby = intersect_curves(np.array(a), np.array(b))
+    acx, acy = intersect_curves(np.array(a), np.array(c))
+
     return clip_curve(a, acx, acy, abx, aby)        
+
+def clip_quadrilateral_segments(top, right, bottom, left):
+    new_top = clip_between_segments(top, right, left)
+    new_right = clip_between_segments(right, bottom, top)
+    new_bottom = clip_between_segments(bottom, left, right)
+    new_left = clip_between_segments(left, top, bottom)
+    return new_top, new_right, new_bottom, new_left
 
 def grid_sample(frame, sample_grid):
 
@@ -108,118 +154,88 @@ def grid_sample(frame, sample_grid):
         )
         out[:,:,channel] = grid_interp(sample_grid)
 
-    out_frame = sana.image.Frame(out)
+    out_frame = sana.image.Frame(out, is_deformed=True)
     if frame.is_short():
         out_frame.to_short()
-
+        
     return out_frame
 
-def fan_sample(top, bot, ax=None):
-
-    # new width is the longest given segmentation
-    top_len = max(top[:,0]) - min(top[:,0])
-    bot_len = max(bot[:,0]) - min(bot[:,0])
-    nw = int(max(top_len, bot_len))
-
-    # new height is the largest height between segmentations
-    nh = int(max(bot[:,1]-top[:,1]))
-
-    # interpolate the boundaries
-    top_interp = interp(top, nw)
-    bot_interp = interp(bot, nw)
-
-    # prepare arrays for the sampling grid
-    sample_grid = np.zeros((nh, nw, 2))
-    angles = np.zeros((nh, nw))
-
-    # loop through the columns of the output image
-    for i, (p0, p1) in enumerate(zip(top_interp, bot_interp)):
-
-        # define the sampling curve for this column by drawing a linear equation
-        x = np.linspace(p0[0], p1[0], nh)
-        y = np.linspace(p0[1], p1[1], nh)
-
-        # calculate angle from the slope of the linear equation
-        angle = np.rad2deg(-np.arctan((y[1]-y[0])/(x[1]-x[0])))
-
-        # debugging line plots
-        if i % 250 == 0 and not ax is None:
-            ax.plot(x, y, color='red', linewidth=0.5)
-
-        sample_grid[:,i,:] = np.array((y,x)).T
-        angles[:,i] = angle
-
-    angles = np.where(angles < 0, angles+180, angles)
-
-    return sample_grid, angles
+def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval=250):
+    top = top.copy()
+    right = right.copy()
+    bottom = bottom.copy()
+    left = left.copy()
     
-# TODO: sometimes the weird ROIs don't deform properly need a way to clip the sampling curves to the top/bot curves
-def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_interval=250):
-
     # rotate so the ROI is orthogonal
     angle = top.get_angle()
-    ctrx = np.min([np.min(x[:,0]) for x in [top, bot, left, right]]) + \
-        np.max([np.max(x[:,0]) for x in [top, bot, left, right]])
-    ctry = np.min([np.min(x[:,1]) for x in [top, bot, left, right]]) + \
-        np.max([np.max(x[:,1]) for x in [top, bot, left, right]])
-    p = sana.geo.point_like(ctrx, ctry, top)
-    top.rotate(p, -angle)
-    bot.rotate(p, -angle)
-    left.rotate(p, -angle)
-    right.rotate(p, -angle)
-    if np.mean(top[:,1]) > np.mean(bot[:,1]):
-        top.rotate(p, 180)
-        bot.rotate(p, 180)
-        left.rotate(p, 180)
-        right.rotate(p, 180)
+    ctrx = np.min([np.min(x[:,0]) for x in [top, right, bottom, left]]) + \
+        np.max([np.max(x[:,0]) for x in [top, right, bottom, left]])
+    ctry = np.min([np.min(x[:,1]) for x in [top, right, bottom, left]]) + \
+        np.max([np.max(x[:,1]) for x in [top, right, bottom, left]])
+    ctr = sana.geo.point_like(top, ctrx, ctry)
+    [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]
+    if np.mean(top[:,1]) > np.mean(bottom[:,1]):
+        [x.rotate(ctr, 180) for x in [top, right, bottom, left]]
         angle += 180
         
-    # set output dimensions to stretch boundaries rather than compress
-    nw = int(max(np.abs(max(top[:,0]) - min(top[:,0])), np.abs(max(bot[:,0]) - min(bot[:,0]))))
-    nh = int(max(np.abs(max(left[:,1]) - min(left[:,1])), np.abs(max(right[:,1]) - min(right[:,1]))))
+    # set output dimensions to stretch the image to the boundaries of the segmentations
+    xbound = max([np.max(curve[:,0]) for curve in [top, right, bottom, left]])
+    ybound = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
+    top_width = max(top[:,0]) - min(top[:,0])
+    bottom_width = max(bottom[:,0]) - min(bottom[:,0])
+    nw = int(max(top_width, bottom_width))
+    left_height = max(left[:,1]) - min(left[:,1])
+    right_height = max(right[:,1]) - min(right[:,1])
+    nh = int(max(left_height, right_height))
 
-    # fit parabolas to the boundaries
-    top = fit_parabola(top, nw)
-    bot = fit_parabola(bot, nw)
-    left = fit_parabola(left[:,::-1], nh)[:,::-1]
-    right = fit_parabola(right[:,::-1], nh)[:,::-1]    
+    # fit polynomials to the boundaries
+    right, right_z = fit_polynomial(right[:,::-1], degrees, nh)
+    right = right[:,::-1]
+    left, left_z = fit_polynomial(left[:,::-1], degrees, nh)
+    left = left[:,::-1]
+    top, _ = fit_polynomial(top, degrees, N, x0=0, x1=xbound)
+    bottom, _ = fit_polynomial(bottom, degrees, N, x0=0, x1=xbound)
+
     if not ax is None:
-        [x.rotate(p, angle) for x in [top, bot, left, right]]
-        ax.plot(*top.T, color='black', linewidth=0.5)
-        ax.plot(*bot.T, color='black', linewidth=0.5)
-        ax.plot(*left.T, color='black', linewidth=0.5)
-        ax.plot(*right.T, color='black', linewidth=0.5)
-        [x.rotate(p, -angle) for x in [top, bot, left, right]]        
-        
+        [x.rotate(ctr, angle) for x in [top, right, bottom, left]]
+        ax.plot(*top.T, color='black', linewidth=2)
+        ax.plot(*right.T, color='black', linewidth=2)        
+        ax.plot(*bottom.T, color='black', linewidth=2)
+        ax.plot(*left.T, color='black', linewidth=2)
+        [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]        
     # prepare arrays for the sampling grid
     sample_grid = np.zeros((nh, nw, 2))
     angles = np.zeros((nh, nw))
 
-    # get the parabola coefficients of the left and right edges
-    l_a, l_b, l_c = np.polyfit(left[:,1], left[:,0], 2)
-    r_a, r_b, r_c = np.polyfit(right[:,1], right[:,0], 2)
+    # sweep the polynomial coefficients to morph the left boundary into the right
+    z_sweep = np.zeros((nw, degrees+1))
+    for i in range(degrees+1):
+        z_sweep[:,i] = np.linspace(left_z[i], right_z[i], nw)
 
-    # sweep the coefficients to morph L into R
-    a_sweep = np.linspace(l_a, r_a, nw)
-    b_sweep = np.linspace(l_b, r_b, nw)
-    c_sweep = np.linspace(l_c, r_c, nw)    
-    
     # loop through the columns of the output image
-    for i, (p0, p1, a, b, c) in enumerate(zip(top, bot, a_sweep, b_sweep, c_sweep)):
+    for i in range(nw):
+
+        # get the polynomial for this column
+        z = z_sweep[i]
 
         # define the input space for this column
-        y = np.linspace(p0[1], p1[1], nh)
+        y = np.linspace(-100, nh+100, N)
 
         # calculate the output space for the column
-        x = a*y**2 + b*y + c
+        p = np.poly1d(z)
+        x = p(y)
+        sampling_curve = sana.geo.curve_like(top, x, y)
+        
+        # clip the curve to the top/bottom curves
+        sampling_curve = clip_between_segments(sampling_curve, top, bottom)
+        sampling_curve = interp(sampling_curve[:,::-1], nh)[:,::-1]
 
         # differentiate to find the angle of rotation at each output pixel
-        xp = 2*a*y + b
-        sampling_angle = np.rad2deg(np.arctan(xp))
+        pp = np.polyder(p)
+        sampling_angle = np.rad2deg(np.arctan(pp(sampling_curve[:,1])))
         
         # rotate the sampling curve back to the original coordinate system
-        sampling_curve = sana.geo.curve_like(x, y, top)
-        sampling_curve.rotate(p, angle)
+        sampling_curve.rotate(ctr, angle)
         if i % plot_interval == 0 and not ax is None:
             ax.plot(*sampling_curve.T, color='red', linewidth=0.5)
 
@@ -232,6 +248,7 @@ def curved_fan_sample(top, bot, left, right, ax=None, ret_angle=False, plot_inte
     # include the amount of rotation being applied by orthogonalizing the top
     angles -= angle
 
+    # limit the range of angle values
     angles = angles % 360
     angles = (angles + 360) % 360
     angles = np.where(angles <= 180, angles, angles - 360)
