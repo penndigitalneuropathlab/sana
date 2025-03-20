@@ -1,12 +1,22 @@
 
+# system modules
+from functools import partial
+from multiprocessing.dummy import Pool as ThreadPool
+
 # installed modules
+import numpy as np
+import cv2
+import skimage.feature
+import skfmm
 from matplotlib import pyplot as plt
+from numba import jit
 
 # sana modules
 import sana.color_deconvolution
 import sana.image
 import sana.threshold
 import sana.geo
+import sana.filter
 
 class Processor:
     """
@@ -63,8 +73,10 @@ class Processor:
             axs[0].imshow(frame.img, cmap='gray')
             axs[0].set_title('Original')
 
-        # apply the threshold
+        # apply the threshold and the mask
         frame.threshold(threshold)
+        if not mask is None:
+            frame.mask(mask)
 
         # DEBUG:
         if self.logger.debug_level == 'full':
@@ -93,17 +105,22 @@ class HDABProcessor(Processor):
             frame: sana.image.Frame, 
             apply_smoothing: bool=True,
             normalize_background: bool=True,
+            radius: int=100,
             stain_vector: list=None,
+            run_hem=True,
+            run_dab=True,
             **kwargs
     ):
         super(HDABProcessor, self).__init__(logger, frame, **kwargs)
 
         # separate out the individual stains within the image
         self.ss = sana.color_deconvolution.StainSeparator('H-DAB', stain_vector)
+        #self.ss.estimate_stain_vector(self.frame.img)
         stains = self.ss.separate(self.frame.img)
         self.hem = sana.image.frame_like(self.frame, stains[:,:,0])
         self.dab = sana.image.frame_like(self.frame, stains[:,:,1])
         self.res = sana.image.frame_like(self.frame, stains[:,:,2])
+        self.stains = [self.hem, self.dab, self.res]
 
         if logger.debug_level == 'full':
             fig, axs = plt.subplots(2, 3, sharex=True, sharey=True, figsize=(20,15))
@@ -124,18 +141,24 @@ class HDABProcessor(Processor):
         # rescale the OD to uint8 using the digital min/max
         # TODO: this compresses the digital space, maybe don't use min/max od!
         self.hem.img = self.hem.img - self.dab.img
-        self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
-        self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
+        if run_hem:
+            self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
+        if run_dab:
+            self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
         # smooth the DAB, mainly flattening interiors of objects
         if apply_smoothing:
-            self.hem.anisodiff()
-            self.dab.anisodiff()
+            if run_hem:
+                self.hem.anisodiff()
+            if run_dab:
+                self.dab.anisodiff()
 
         # subtract the bacgkround image from the stains
         if normalize_background:
-            self.hem.remove_background()
-            self.dab.remove_background()
+            if run_hem:
+                self.hem.remove_background(radius=radius)
+            if run_dab:
+                self.dab.remove_background(radius=radius)
 
         self.logger.data['apply_smoothing'] = apply_smoothing
         self.logger.data['normalize_background'] = normalize_background
@@ -149,7 +172,7 @@ class HDABProcessor(Processor):
             ax.imshow(self.dab.img, cmap='gray')
             ax.set_title('DAB (Preprocessed)')
 
-    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, morphology_filters=[], **kwargs):
+    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, mask=None, morphology_filters=[], target_stain="DAB"):
 
         # list of processed images to return
         ret = {
@@ -158,10 +181,12 @@ class HDABProcessor(Processor):
             'exclusion_mask': self.exclusion_mask,
             'valid_mask': self.valid_mask,
         }
+        stain_idx = self.ss.stain_vector.stains.index(target_stain)
+        stain = self.stains[stain_idx]
 
-        # get the threshold for the DAB that is inside the main roi
+        # get the threshold for the stain using pixels that are inside the ROI
         if od_threshold is None:
-            hist = self.dab.get_histogram(mask=self.main_mask)
+            hist = stain.get_histogram(mask=self.main_mask)
             threshold = sana.threshold.triangular_method(
                 hist, 
                 strictness=triangular_strictness,
@@ -176,9 +201,65 @@ class HDABProcessor(Processor):
                 (self.ss.max_od[1] - self.ss.min_od[1])
             
         # perform pixel classification using thresholding and morphology filters
-        self.positive_dab = self.dab.copy()
-        self.classify_pixels(self.positive_dab, threshold, morphology_filters=morphology_filters)
-        ret['positive_dab'] = self.positive_dab
+        positive_stain = stain.copy()
+        self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
+        ret['positive_stain'] = positive_stain
 
         # return all of the processed images
         return ret
+
+def detect_somas(pos, minimum_soma_radius=1):
+    dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+    
+    ctrs = skimage.feature.peak_local_max(
+        dist,
+        min_distance=int(round(1.5*minimum_soma_radius)), # accounts for overlapping/elliptical somas
+    )[:,::-1]
+    
+    return ctrs
+
+def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10, npools=1, instance_segment=True):
+
+    if len(ctrs) == 0:
+        return []
+    
+    # create the rotated anisotropic gaussian filters
+    step = sana.geo.Point(stride, stride, False, pos.level)
+    thetas = np.linspace(0, np.pi, n_directions, endpoint=False)
+    filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=1, sg_y=sigma) for th in thetas]
+
+    # apply the filters to the positive pixels
+    def apply_filter(filt, frame, step):
+        return filt.apply(frame, step)
+    if npools == 1:
+        directions = [apply_filter(filt, pos, step) for filt in filters]
+    else:
+        directions = ThreadPool(npools).map(partial(apply_filter, frame=pos, step=step), filters)
+
+    # calculate directional ratio using the min and max directional values
+    mi = np.min(directions, axis=0)
+    mx = np.max(directions, axis=0)
+    directional_ratio = cv2.resize(np.divide(mi**3, mx, where=mx!=0), dsize=(pos.img.shape[1], pos.img.shape[1]), interpolation=cv2.INTER_NEAREST)
+
+    # initial points for fast march algorithm are the soma centers
+    phi = np.full_like(pos.img[:,:,0], -1, dtype=int)
+    phi[ctrs[:,1], ctrs[:,0]] = 1
+
+    # speed is derived from the directional ratio
+    speed = directional_ratio
+    speed[pos.img[:,:,0] == 0] = 0
+
+    # run the fast march
+    time = skfmm.travel_time(phi, speed)
+    time[time.mask] = np.inf
+
+    # threshold the time to create the soma mask
+    mask = sana.image.frame_like(pos, (time < fm_threshold).astype(np.uint8))
+    
+    # convert the mask to polygons
+    if instance_segment:
+        polygons = mask.instance_segment(ctrs)
+    else:
+        polygons = mask.to_polygons()
+
+    return polygons

@@ -1,6 +1,8 @@
 
-import sana.image
 import numpy as np
+from numba import jit
+
+import sana.image
 
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):
     """
@@ -199,3 +201,31 @@ class Sampler:
         mask = sana.image.frame_like(self.mask, self.mask.img[:, i_s])
         num, den = calculate_ao(pos, mask)
         return num, den, pos, mask, i_s
+
+@jit(nopython=True)    
+def localize_coordinates(coordinates: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+    """
+    calculates the feature weights based on their proximity to a local 2d gaussian
+    :param coordinates: (N,2) array which defines the location of each sample
+    :param loc: upper left corner of the tile
+    :param size: size of the tile
+    """
+    # get the bounds for this tile
+    x0, y0 = loc
+    x1, y1 = loc + size
+
+    # get the samples which are inside this tile
+    x, y = coordinates.T
+    idx = (x0 < x) & (x < x1) & \
+        (y0 < y) & (y < y1)
+    x, y = coordinates[idx, :].T
+    
+    # define a 2d gaussian centered on the tile
+    mu_x, mu_y = loc + size / 2
+    sg_x, sg_y = size / 5
+
+    # weight each sample by its proximity to the 2d gaussian center
+    wgts = np.exp(-((x-mu_x)**2 / (2*sg_x**2) + (y-mu_y)**2 / (2*sg_y**2))) / \
+        (2*np.pi*sg_x*sg_y)
+    
+    return idx, wgts

@@ -9,6 +9,7 @@ from PIL import Image
 import shapely.geometry
 from matplotlib import colors
 from matplotlib import pyplot as plt
+import shapely.geometry
 
 # sana packages
 import sana.geo
@@ -23,7 +24,7 @@ class Frame:
     :param padding: amount of padding added to the frame
     :param is_deformed: whether or not this frame was normalized to a common cortical space, usually False
     """
-    def __init__(self, img, level=None, converter=None, padding=0, is_deformed=False):
+    def __init__(self, img, level=0, converter=sana.geo.Converter(), padding=0, is_deformed=False):
 
         # load/store the image array
         if type(img) is str:
@@ -214,7 +215,7 @@ class Frame:
             raise ImageTypeException('Convolution only supported on single-channel images')
 
         tile_size = sana.geo.point_like(tile_step, kernel.shape[1], kernel.shape[0])
-        
+
         # generate the tile views to convolve the kernel with
         tiles = self.to_tiles(tile_size, tile_step, align_center=align_center)
 
@@ -229,7 +230,7 @@ class Frame:
 
         return result
 
-    def remove_background(self, min_background=0, max_background=255, debug=False):
+    def remove_background(self, radius=100, min_background=0, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by estimating a background image, which is then subtracted from the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
 
@@ -248,17 +249,16 @@ class Frame:
             axs[0].imshow(self.img)
 
         # get the tiles for the convolution
-        # TODO: check the parameters, make these arg
         tsize = self.converter.to_int(self.converter.to_pixels(
-            sana.geo.Point(100, 100, is_micron=True), 
+            sana.geo.Point(radius, radius, is_micron=True), 
             self.level
         ))
         if tsize[0] % 2 == 0: tsize[0] += 1
         if tsize[1] % 2 == 0: tsize[1] += 1
-        tstep = sana.geo.Point(50, 50, is_micron=True)
+        tstep = tsize / 2
         kern_sigma = tsize[0]/5
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
-
+        
         # find the background simply by gaussian blurring the image
         # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
         background_image = self.convolve(kernel, tstep, align_center=True)
@@ -355,7 +355,86 @@ class Frame:
                                      (0, 0),                # c
                                      ), mode=mode)
         return frame_like(self, img)
+
+    def to_polygons(self):
+        if not self.is_binary():
+            raise ImageTypeException('Image must be a binary image')
+
+        # run contour detection to find boundaries between objects
+        c, h = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
+
+        # TODO: this doesn't split if exactly 1 touching diagonal connection
+        # TODO: looks like there are some objects missing?
+        objs = []
+
+        # loop through the body contours
+        for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
+            if c[i].shape[0] < 3:
+                objs.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
+            else:
+
+                # create the body polygon
+                orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+                new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+                
+                # loop through the hole contours in this body contour
+                for j in [j for j in range(len(c)) if h[0][j][3] == i]:
+
+                    # create the hole polygon
+                    hole = shapely.geometry.Polygon(np.squeeze(c[j]))
+
+                    # remove the hole from the body
+                    try:
+                        new_body = new_body.difference(hole)
+                    except:
+                        pass
+
+                # store the resulting body polygons
+                orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
+                new_res = sana.geo.from_shapely(new_body, is_micron=False, level=self.level)
+                if type(new_res) is list:
+                    objs += [x for x in new_res if not x is None]
+                elif not new_res is None:
+                    objs.append(new_res)
+                else:
+                    objs.append(orig_res)
+                                
+        return objs
+
+    def instance_segment(self, ctrs, debug=False):
         
+        # generate a foreground image using the soma centers
+        fg = np.zeros_like(self.img)[:,:,0]
+        fg[ctrs[:,1], ctrs[:,0]] = 1
+
+        # create an RGB image for the watershed algorithm, if necessary
+        if self.is_gray():
+            rgb = np.tile(self.img, 3)
+        else:
+            rgb = self.img
+
+        # get the unique components
+        _, markers = cv2.connectedComponents(fg)
+
+        # run the watershed algorithm on the unique components
+        markers = cv2.watershed(rgb, markers)
+            
+        # remove the background segmentation
+        markers += 1
+        bg = np.argmax(np.bincount(markers.flatten()))
+        markers[markers == bg] = 0
+
+        # convert to markers binary image, preserving boundaries between objects
+        binary_markers = markers.copy()
+        binary_markers[binary_markers != 0] = 1
+        binary_markers = binary_markers.astype(np.uint8)
+        binary_markers = frame_like(self, binary_markers)
+
+        # get the object polygons from the instance segmented binary mask
+        objs = binary_markers.to_polygons()
+
+        return objs
+    
     def save(self, fpath, invert_sform=False, spacing=None):
         """
         Writes the image array to a file

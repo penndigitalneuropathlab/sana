@@ -6,6 +6,7 @@ import math
 import numpy as np
 from scipy.spatial import ConvexHull
 from numba import jit
+import shapely.geometry
 
 class Converter:
     """
@@ -42,6 +43,8 @@ class Converter:
         :param x: sana.geo.Array
         :param level: pixel resolution level to rescale to
         """
+        if x.level == level:
+            return x
         if x.is_micron:
             raise UnitException("Cannot rescale data in micron units.")
         if self.ds is None:
@@ -83,6 +86,8 @@ class Converter:
         :param x: sana.geo.Array
         :param level: new pixel resolution level
         """
+        if not x.is_micron:
+            return self.rescale(x, level)
         if self.mpp is None:
             raise ConversionException("Microns per pixel resolution not specified.")
 
@@ -96,17 +101,15 @@ class Converter:
             x.level = 0
 
         # rescale to new pixel resolution
-        x = self.rescale(x, level)
-
-        return x
-
+        return self.rescale(x, level)
+    
 class Array(np.ndarray):
     """
     Wrapper class to a Numpy array which only allows (n,2) arrays, while also storing units and resolution. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         arr = np.array([x, y]).T
         obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
@@ -174,7 +177,7 @@ class Point(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         # TODO: need to check validity of x and y, same in Array
         arr = np.array((x, y))
         obj = np.asarray(arr).view(cls)
@@ -213,7 +216,7 @@ class Polygon(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
@@ -421,7 +424,7 @@ class Curve(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
@@ -491,7 +494,7 @@ class Annotation(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", attributes={}, object_type='Polygon', is_micron=None, level=None):
+    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", attributes={}, object_type='Polygon', is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         
         # store attributes
@@ -682,6 +685,21 @@ def inverse_transform_array(x, loc, M, crop_loc):
 
     return x
 
+def from_shapely(p, is_micron=None, level=None):
+    """
+    this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
+    """
+    if type(p) is shapely.geometry.MultiPolygon:
+        polygons = []
+        for geom in p.geoms:
+            polygons.append(from_shapely(geom, is_micron=is_micron, level=level))
+        return polygons
+    elif type(p) is shapely.geometry.Polygon:
+        xs, ys = p.exterior.xy
+        return Polygon(xs, ys, is_micron=is_micron, level=level)
+    else:
+        return None
+    
 class UnitException(Exception):
     def __init__(self, message):
         self.message = message

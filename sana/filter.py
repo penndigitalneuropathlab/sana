@@ -8,6 +8,8 @@ import ast
 import cv2
 import numpy as np
 
+import sana.geo
+
 class MorphologyFilter:
     """
     Wrapper for OpenCV's morphology filters
@@ -41,6 +43,22 @@ class MorphologyFilter:
 
     def __str__(self):
         return f"{self.n_iterations} iteration(s) of {self.filter_type_name} filter -- {self.kernel_diameter} {self.kernel_type_name}"
+
+class AnisotropicGaussianFilter:
+    def __init__(self, th, sg_x, sg_y):
+        n = int(round(sg_y*6))
+        if n % 2 == 0:
+            n += 1
+        self.kernel = np.zeros((n, n), dtype=float)
+        for j in range(n):
+            y = j - n // 2
+            for i in range(n):
+                x = i - n // 2
+                self.kernel[j,i] = (1/(2*np.pi*sg_x*sg_y)) * \
+            np.exp(-( ( (x * np.cos(th) + y * np.sin(th))**2/(sg_x)**2 ) + ( (-x*np.sin(th) + y*np.cos(th))**2/(sg_y)**2 ) )/2)
+
+        #self.apply = lambda x: signal.convolve2d(x, self.kernel, mode='same') / np.sum(self.kernel)
+        self.apply = lambda frame, stride: frame.convolve(self.kernel, stride, align_center=True)
 
 def get_gaussian_kernel(length, sigma):
     """
