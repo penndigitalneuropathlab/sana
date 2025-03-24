@@ -241,6 +241,18 @@ class Polygon(Array):
         x1, y1 = self.get_rolled_xy()
         A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
         return A
+
+    def fit_ellipse(self, N=21):
+        rect = self.get_minimum_bounding_rectangle()
+        loc, size = rect.bounding_box()
+        ctr = loc + size/2
+        side_lengths = np.sqrt(np.sum((rect[1:] - rect[:-1])**2, axis=1))
+        major = float(np.max(side_lengths)/2)
+        minor = float(np.min(side_lengths)/2)
+        side_idx = np.argmax(side_lengths)
+        x, y = rect.get_xy()
+        angle = np.abs(np.mod(180*np.arctan2(y[1:]-y[:-1], x[1:]-x[:-1])/np.pi, 180)[side_idx])
+        return ellipse_like(self, ctr, major, minor, th=angle, N=N)
     
     def get_axes(self):
         """
@@ -260,13 +272,8 @@ class Polygon(Array):
 
         hull = self[ConvexHull(self).vertices]
 
-        edges = hull[1:] - hull[:-1]
-
-        angles = np.arctan2(edges[:,1], edges[:,0])
-
-        angles = np.abs(np.mod(angles, pi2))
-        angles = np.unique(angles)
-
+        # create rotation matrices
+        angles = np.linspace(0, np.pi, 180)
         rotations = np.vstack([
             np.cos(angles),
             np.cos(angles-pi2),
@@ -274,7 +281,7 @@ class Polygon(Array):
             np.cos(angles),
         ]).T
         rotations = rotations.reshape((-1, 2, 2))
-
+        
         rot_points = np.dot(rotations, hull.T)
 
         min_x = np.nanmin(rot_points[:, 0], axis=1)
@@ -624,6 +631,17 @@ def rectangle_like(obj, loc, size):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
     return polygon_like(obj, x, y)
+def ellipse_like(obj, ctr, a, b, th=0, N=21):
+    theta = np.linspace(0, 2*np.pi, N)    
+    x = a*np.cos(theta) + ctr[0]
+    y = b*np.sin(theta) + ctr[1]
+    ret = polygon_like(obj, x, y)
+    ret.rotate(ctr, th)
+    return ret
+        
+def circle_like(obj, ctr, radius, N=21):
+    return ellipse_like(obj, ctr, radius, radius, th=0, N=N)
+
 def annotation_like(obj, x, y):
     return Annotation(
         x, y,
