@@ -375,7 +375,7 @@ class Frame:
 
                 # create the body polygon
                 orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-                new_body = shapely.geometry.Polygon(np.squeeze(c[i]))
+                new_body = shapely.geometry.Polygon(np.squeeze(c[i])).buffer(0)
                 
                 # loop through the hole contours in this body contour
                 for j in [j for j in range(len(c)) if h[0][j][3] == i]:
@@ -433,7 +433,7 @@ class Frame:
         # get the object polygons from the instance segmented binary mask
         objs = binary_markers.to_polygons()
 
-        return objs
+        return objs, markers
     
     def save(self, fpath, invert_sform=False, spacing=None):
         """
