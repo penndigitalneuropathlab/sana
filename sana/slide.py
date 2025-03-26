@@ -20,7 +20,7 @@ from scipy.interpolate import interp1d
 # sana packages
 import sana.image
 import sana.geo
-
+import sana.logging
 
 class FileNotSupported(Exception):
     def __init__(self, f):
