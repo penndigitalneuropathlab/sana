@@ -90,7 +90,8 @@ class Loader(openslide.OpenSlide):
         w, h = self.level_dimensions[self.thumbnail_level]
         loc = sana.geo.Point(0, 0, is_micron=False, level=self.thumbnail_level)
         size = sana.geo.Point(w, h, is_micron=False, level=self.thumbnail_level)
-        return self.load_frame(loc, size, level=self.thumbnail_level)
+        roi = sana.geo.rectangle_like(loc, loc, size)
+        return self.load_frame_with_roi(roi, level=self.thumbnail_level)
 
     def load_frame(self, loc: sana.geo.Point, size: sana.geo.Point, level: int=0, pad_color=0):
         """
@@ -179,12 +180,14 @@ class Loader(openslide.OpenSlide):
         :param padding: amount of padding to add context to the ROI
         """
         roi = roi.copy()
+        self.logger.data["level"] = None        
         self.logger.data["angle"] = None        
         self.logger.data["crop_loc"] = None
         self.logger.data["crop_size"] = None
         self.logger.data["M"] = None
         self.logger.data["nw"] = None
         self.logger.data["nh"] = None
+
         
         # scale the roi to the proper resolution
         roi = self.converter.rescale(roi, level)
@@ -209,6 +212,9 @@ class Loader(openslide.OpenSlide):
         frame.frame_padding = padding
 
         # store the processing parameters
+        self.logger.data["level"] = level
+        self.logger.data["mpp"] = self.converter.mpp
+        self.logger.data["ds"] = self.converter.ds
         self.logger.data['loc'] = loc
         self.logger.data['size'] = size
         self.logger.data['padding'] = padding
@@ -388,3 +394,42 @@ class Framer:
             roi.translate(-loc)
         
         return frame, mask
+
+def sort_segments(a, b, c=None, d=None):
+    a = a.copy()
+    b = b.copy()
+    if not c is None:
+        c = c.copy()
+        d = d.copy()
+        
+    origin = sana.geo.point_like(a, 0, 0)
+    angle = a.get_angle()
+    a.rotate(origin, -angle)
+    b.rotate(origin, -angle)
+    if not c is None:
+        c.rotate(origin, -angle)
+        d.rotate(origin, -angle)
+
+    if np.mean(a[:,1]) > np.mean(b[:,1]):
+        angle += 180        
+        a.rotate(origin, 180)
+        b.rotate(origin, 180)
+        if not c is None:
+            c.rotate(origin, 180)
+            d.rotate(origin, 180)
+
+    a = a[np.argsort(a[:,0])]
+    b = b[np.argsort(b[:,0])[::-1]]
+    if not c is None:
+        c = c[np.argsort(c[:,1])[::-1]]
+        d = d[np.argsort(d[:,1])]
+    else:
+        c = sana.geo.curve_like(a, [b[-1,0], a[0,0]], [b[-1,1], a[0,1]])        
+        d = sana.geo.curve_like(a, [a[-1,0], b[0,0]], [a[-1,1], b[0,1]])
+
+    a.rotate(origin, angle)
+    b.rotate(origin, angle)
+    c.rotate(origin, angle)
+    d.rotate(origin, angle)
+        
+    return a, b, c, d
