@@ -43,7 +43,7 @@ class Converter:
         :param x: sana.geo.Array
         :param level: pixel resolution level to rescale to
         """
-        if x.level == level:
+        if x.level == level or level is None:
             return x
         if x.is_micron:
             raise UnitException("Cannot rescale data in micron units.")
@@ -66,7 +66,7 @@ class Converter:
         :param x: sana.geo.Array
         """
         if x.is_micron:
-            return
+            return x
         if self.mpp is None:
             raise ConversionException("Microns per pixel resolution not specified.")
         
@@ -675,6 +675,8 @@ def connect_segments(top, right, bottom, left):
     return polygon_like(top, *np.concatenate([top, right, bottom, left], axis=0).T)
 
 def transform_array_with_logger(x, logger, inverse=False):
+    converter = Converter(ds=logger.data.get('ds'), mpp=logger.data.get('mpp'))
+    converter.rescale(x, logger.data.get('level'))
     if inverse:
         return inverse_transform_array(x, logger.data.get('loc'), logger.data.get('M'), logger.data.get('crop_loc'))
     else:

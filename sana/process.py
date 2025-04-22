@@ -89,7 +89,7 @@ class Processor:
             if self.logger.debug_level == 'full':
                 axs[2+i].imshow(frame.img, cmap='gray')
                 axs[2+i].set_title(str(morphology_filter))
-    
+
 class HDABProcessor(Processor):
     """
     Subclass of Processor which handles the DAB/Hematoxylin (and Residual) stains
