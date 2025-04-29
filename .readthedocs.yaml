@@ -25,4 +25,4 @@ sphinx:
 python:
   install:
     - requirements: docs/source/requirements.txt
-    - requirements: src/sana/requirements.txt
+    - requirements: src/pdnl_sana/requirements.txt
