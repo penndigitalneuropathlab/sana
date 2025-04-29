@@ -1,0 +1,39 @@
+[project]
+name = "pdnl_sana"
+version = "1.0.0"
+authors = [
+  { name="Noah Capp", email="noahmcapp@gmil.com" },
+]
+description = "PDNL Semi-Automatic Neuropathology Analyis (SANA)"
+dependencies = [
+'dill',
+'matplotlib',
+'numba',
+'numpy',
+'opencv_python',
+'openslide_python',
+'openslide_bin',	
+'pillow',	
+'scipy',	
+'shapely',
+]
+readme = "README.md"
+requires-python = ">=3.9"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Intended Audience :: Science/Research",
+    "Development Status :: 4 - Beta",
+    "Topic :: Scientific/Engineering :: Medical Science Apps."
+]
+
+[project.urls]
+Homepage = "https://github.com/penndigitalneuropathlab/sana"
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["pdnl_sana"]
