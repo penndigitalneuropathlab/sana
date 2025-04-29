@@ -1,8 +1,8 @@
 name: Upload Python Package to PyPI when a Release is Created
 
+# build the documentation whenever there are new commits on main
 on:
-  release:
-    types: [created]
+  workflow_dispatch:
 
 jobs:
   pypi-publish:
