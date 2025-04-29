@@ -6,16 +6,16 @@ authors = [
 ]
 description = "PDNL Semi-Automatic Neuropathology Analyis (SANA)"
 dependencies = [
-'dill',
-'matplotlib',
-'numba',
-'numpy',
-'opencv_python',
-'openslide_python',
-'openslide_bin',	
-'pillow',	
-'scipy',	
-'shapely',
+  "dill",
+  "matplotlib",
+  "numba",
+  "numpy",
+  "opencv_python",
+  "openslide_python",
+  "openslide_bin",	
+  "pillow",	
+  "scipy",	
+  "shapely",
 ]
 readme = "README.md"
 requires-python = ">=3.9"
