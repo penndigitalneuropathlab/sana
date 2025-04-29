@@ -21,7 +21,10 @@ release = 'v1.0.0'
 
 extensions = [
     'sphinx.ext.autodoc',
+    'nbsphinx',
+    'sphinx.ext.mathjax',
 ]
+exclude_patterns = ['build', '**.ipynb_checkpoints']
 
 templates_path = ['_templates']
 exclude_patterns = []

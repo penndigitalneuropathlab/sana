@@ -16,10 +16,10 @@ python3.9 or greater
 
 We provide several example [Jupyter](https://jupyter.org/) notebooks which contain example code blocks utilizing most of SANA's functionality.
 
-* `examples/example0_prepare_images.ipynb` shows how to extract relevant ROI information from a WSI
-* `examples/example1_process_images.ipynb` provides a sandbox for the preprocessing and pixel classification methods
-* `examples/example2_normalize_cortex.ipynb` illustrates how to deform a curved section of cortex for more optimal quantification
-* `examples/example3_quantification.ipynb` has examples of various quantification methods based on the positive pixel masks created by the previous notebooks
+* `docs/source/examples/example0_prepare_images.ipynb` shows how to extract relevant ROI information from a WSI
+* `docs/source/examples/example1_process_images.ipynb` provides a sandbox for the preprocessing and pixel classification methods
+* `docs/source/examples/example2_normalize_cortex.ipynb` illustrates how to deform a curved section of cortex for more optimal quantification
+* `docs/source/examples/example3_quantification.ipynb` has examples of various quantification methods based on the positive pixel masks created by the previous notebooks
 
 For more information, please refer to the [Documentation](https://pdnl-sana.readthedocs.io/en/latest/)
 
@@ -29,4 +29,4 @@ For more information, please refer to the [Documentation](https://pdnl-sana.read
 * Generic cell detection/segmentation
 * Microglia detection/segmentation
 * Structure Tensor Analysis
-  
+
