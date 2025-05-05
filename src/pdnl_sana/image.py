@@ -11,14 +11,13 @@ from matplotlib import colors
 from matplotlib import pyplot as plt
 
 # sana packages
-import sana.geo
-import sana.filter
+import pdnl_sana.geo
+import pdnl_sana.filter
+import pdnl_sana as sana
 
 # TODO: check parameter usage
 class Frame:
-    """ 
-    Provides an interface for applying a series of image processing functions to the stored image array. This class attempts to perform operations in place so that memory usage does not explode.
-    
+    """ Provides an interface for applying a series of image processing functions to the stored image array. This class attempts to perform operations in place so that memory usage does not explode.
     :param img: (M,N,d) array
     :param level: the slide level the array was loaded from
     :param converter: Converter object used to manipulate units

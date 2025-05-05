@@ -3,10 +3,11 @@
 from matplotlib import pyplot as plt
 
 # sana modules
-import sana.color_deconvolution
-import sana.image
-import sana.threshold
-import sana.geo
+import pdnl_sana.color_deconvolution
+import pdnl_sana.image
+import pdnl_sana.threshold
+import pdnl_sana.geo
+import pdnl_sana as sana
 
 class Processor:
     """

@@ -1,5 +1,6 @@
 
-import sana.image
+import pdnl_sana.image
+import pdnl_sana as sana
 import numpy as np
 
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):

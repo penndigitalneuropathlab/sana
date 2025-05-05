@@ -66,7 +66,7 @@ Usage
 =====
 Run this command to ensure that everything installed properly::
 
-    python3 -c "import pdnl_sana as sana; import sana.image; import sana.slide"
+    python3 -c "import pdnl_sana.image; import pdnl_sana.slide"
 
 Troubleshooting
 ===============
