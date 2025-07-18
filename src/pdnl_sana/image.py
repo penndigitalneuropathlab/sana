@@ -12,8 +12,9 @@ from matplotlib import pyplot as plt
 import shapely.geometry
 
 # sana packages
-import sana.geo
-import sana.filter
+import pdnl_sana.geo
+import pdnl_sana.filter
+import pdnl_sana as sana
 
 # TODO: check parameter usage
 class Frame:

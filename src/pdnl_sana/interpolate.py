@@ -4,8 +4,9 @@ from scipy.interpolate import interp1d, RegularGridInterpolator
 import scipy.optimize
 from numba import jit
 
-import sana.geo
-import sana.image
+import pdnl_sana.geo
+import pdnl_sana.image
+import pdnl_sana as sana
 
 def fit_polynomial(c, degrees, N, fixed_endpoints=True, x0=None, x1=None):
     c = interp(c, N)

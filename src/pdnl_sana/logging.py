@@ -8,9 +8,6 @@ import dill
 # installed packages
 import numpy as np
 
-# sana packages
-from sana.geo import Point
-
 # NOTE: the difference between 'full' and 'debug' is 'full' generates debugging plots
 LEVEL_CONFIG = {
         'full': logging.DEBUG,

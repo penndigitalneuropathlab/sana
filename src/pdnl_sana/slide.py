@@ -18,9 +18,10 @@ from matplotlib import pyplot as plt
 from scipy.interpolate import interp1d
 
 # sana packages
-import sana.image
-import sana.geo
-import sana.logging
+import pdnl_sana.image
+import pdnl_sana.geo
+import pdnl_sana.logging
+import pdnl_sana as sana
 
 class FileNotSupported(Exception):
     def __init__(self, f):
