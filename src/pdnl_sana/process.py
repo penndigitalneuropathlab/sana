@@ -31,16 +31,23 @@ class Processor:
             self,
             logger: sana.logging.Logger,
             frame: sana.image.Frame,
-            main_roi: sana.geo.Polygon,
+            main_roi: sana.geo.Polygon=None,
             sub_rois: [sana.geo.Polygon]=[],
             exclusion_rois: [sana.geo.Polygon]=[],
+            main_mask: sana.image.Frame=None
     ):
         self.logger = logger
         self.frame = frame
 
         # generate the main mask
-        self.main_roi = main_roi
-        self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
+        if not main_mask is None:
+            self.main_mask = main_mask
+        else:
+            if main_roi is None:
+                self.main_mask = sana.image.frame_like(self.frame, np.ones(self.frame.shape[:2], dtype=np.uint8))
+            else:
+                self.main_roi = main_roi
+                self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
 
         # generate the sub masks
         self.sub_rois = []

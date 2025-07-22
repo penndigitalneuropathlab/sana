@@ -366,12 +366,12 @@ class Frame:
 
         # TODO: this doesn't split if exactly 1 touching diagonal connection
         # TODO: looks like there are some objects missing?
-        objs = []
+        bodies, holes = [], []
 
         # loop through the body contours
         for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
             if c[i].shape[0] < 3:
-                objs.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
+                bodies.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
             else:
 
                 # create the body polygon
@@ -390,17 +390,23 @@ class Frame:
                     except:
                         pass
 
+
                 # store the resulting body polygons
                 orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
                 new_res = sana.geo.from_shapely(new_body, is_micron=False, level=self.level)
+                new_hole = sana.geo.from_shapely(new_body, is_micron=False, level=self.level, use_interior=True)
                 if type(new_res) is list:
-                    objs += [x for x in new_res if not x is None]
+                    bodies += [x for x in new_res if not x is None]
                 elif not new_res is None:
-                    objs.append(new_res)
+                    bodies.append(new_res)
                 else:
-                    objs.append(orig_res)
+                    bodies.append(orig_res)
+                if type(new_hole) is list:
+                    holes += [x for x in new_hole if not x is None]
+                elif not new_hole is None:
+                    holes.append(new_hole)
                                 
-        return objs
+        return bodies, holes
 
     def instance_segment(self, ctrs, debug=False):
         

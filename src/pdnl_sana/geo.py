@@ -423,6 +423,30 @@ class Polygon(Array):
         self = self.connect()
         return polygon_like(self, self[:,0], self[:,1])
 
+    def slice(self, a, b, direction):
+        if direction > 0:
+            if a < b:
+                x, y = self[a:b+1].T
+            else:
+                l = len(self)-a+b
+                x, y = np.roll(self, len(self)-a, axis=0)[:l+1].T
+        else:
+            if b < a:
+                x, y = self[b:a+1].T
+            else:
+                l = len(self)-b+a
+                x, y = np.roll(self, len(self)-b, axis=0)[:l+1].T
+        return curve_like(self, x, y)
+
+    # this gets the shortest eulid connection between 2 vertices, traversing in either direction of the Polygon
+    def slice_shortest(self, a, b):
+        c1 = self.slice(a, b, +1)
+        c2 = self.slice(a, b, -1)
+        if c1.get_length() < c2.get_length():
+            return c1
+        else:
+            return c2
+
 class Curve(Array):
     """
     (n,2) shaped Array object, which usually is used for segmented boundaries in the tissue
@@ -481,6 +505,10 @@ class Curve(Array):
 
         return angle
     
+    def get_length(self):
+        x, y = self.get_xy()
+        return np.sqrt(np.sum((x[:-1]-x[1:])**2+(y[:-1]-y[1:])**2))
+
     def to_annotation(self, class_name, annotation_name="", attributes={}):
         """
         Converts the Curve to an Annotation using the LineString format in geojson
@@ -705,18 +733,27 @@ def inverse_transform_array(x, loc, M, crop_loc):
 
     return x
 
-def from_shapely(p, is_micron=None, level=None):
+def from_shapely(p, is_micron=None, level=None, use_interior=False):
     """
     this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
     """
     if type(p) is shapely.geometry.MultiPolygon:
         polygons = []
         for geom in p.geoms:
-            polygons.append(from_shapely(geom, is_micron=is_micron, level=level))
+            polygons.append(from_shapely(geom, is_micron=is_micron, level=level, use_interior=True))
         return polygons
     elif type(p) is shapely.geometry.Polygon:
-        xs, ys = p.exterior.xy
-        return Polygon(xs, ys, is_micron=is_micron, level=level)
+        if use_interior:
+            if not hasattr(p, 'interiors'):
+                return None
+            polygons = []
+            for ring in p.interiors:
+                xs, ys = ring.xy
+                polygons.append(Polygon(xs, ys, is_micron=is_micron, level=level))
+            return polygons
+        else:
+            xs, ys = p.exterior.xy
+            return Polygon(xs, ys, is_micron=is_micron, level=level)
     else:
         return None
     

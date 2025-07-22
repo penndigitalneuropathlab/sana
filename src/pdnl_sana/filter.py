@@ -8,7 +8,8 @@ import ast
 import cv2
 import numpy as np
 
-import sana.geo
+import pdnl_sana as sana
+import pdnl_sana.geo
 
 class MorphologyFilter:
     """
