@@ -3,6 +3,7 @@ import pdnl_sana.image
 import pdnl_sana as sana
 import numpy as np
 
+from numba import jit
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):
     """
     this function takes calculate the %Area Occupied of an ROI based on the positive pixel classifications
@@ -201,24 +202,22 @@ class Sampler:
         num, den = calculate_ao(pos, mask)
         return num, den, pos, mask, i_s
 
-@jit(nopython=True)    
-def localize_coordinates(coordinates: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+@jit(nopython=True)
+def find_local_samples(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
     """
-    calculates the feature weights based on their proximity to a local 2d gaussian
-    :param coordinates: (N,2) array which defines the location of each sample
+    finds the samples which are inside this provided window
+    """
+    return (loc[0] < x) & (x < loc[0]+size[0]) & (loc[1] < y) & (y < loc[1]+size[1])
+
+@jit(nopython=True)
+def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+    """
+    calculates the weights of samples based on their proximity to a local 2d gaussian
+    :param x: (N,1) array, same resolution as loc/size
+    :param y: (N,1) array, same resolution as loc/size
     :param loc: upper left corner of the tile
     :param size: size of the tile
     """
-    # get the bounds for this tile
-    x0, y0 = loc
-    x1, y1 = loc + size
-
-    # get the samples which are inside this tile
-    x, y = coordinates.T
-    idx = (x0 < x) & (x < x1) & \
-        (y0 < y) & (y < y1)
-    x, y = coordinates[idx, :].T
-    
     # define a 2d gaussian centered on the tile
     mu_x, mu_y = loc + size / 2
     sg_x, sg_y = size / 5
@@ -226,5 +225,29 @@ def localize_coordinates(coordinates: np.ndarray, loc: sana.geo.Point, size: san
     # weight each sample by its proximity to the 2d gaussian center
     wgts = np.exp(-((x-mu_x)**2 / (2*sg_x**2) + (y-mu_y)**2 / (2*sg_y**2))) / \
         (2*np.pi*sg_x*sg_y)
-    
-    return idx, wgts
+
+    return wgts
+
+@jit(nopython=True)
+def aggregate_features_wrapper(args):
+    return aggregate_features(*args)
+@jit(nopython=True)
+def aggregate_features(window_size, feats, i0, j0, i1, j1, ds):
+    out = np.zeros((j1-j0, i1-i0, feats.shape[1]-2+1), dtype=float)
+    x, y = feats[:,:2].T
+    for j in range(j0, j1):
+        for i in range(i0, i1):
+            ctr = np.array([i,j])*ds
+            loc = ctr - window_size//2
+
+            window_idxs = find_local_samples(x, y, loc, window_size)
+            wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
+            
+            den = np.sum(wgts)
+            if den == 0:
+                continue
+            out[j-j0,i-i0,0] = den
+            for k in range(1, out.shape[2]):
+                out[j-j0,i-i0,k] = np.nansum(feats[window_idxs,k+1] * wgts) / den
+
+    return out

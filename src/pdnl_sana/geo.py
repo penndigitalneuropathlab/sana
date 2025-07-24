@@ -237,9 +237,15 @@ class Polygon(Array):
         """
         Calculates the area of the Polygon
         """
+        return np.abs(self.get_signed_area())
+
+    def get_signed_area(self):
+        """
+        Calculates the area of the Polygon
+        """
         x0, y0 = self.get_xy()
         x1, y1 = self.get_rolled_xy()
-        A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        A = 0.5 * (np.dot(x0, y1) - np.dot(x1, y0))
         return A
 
     def fit_ellipse(self, N=21):
@@ -341,7 +347,19 @@ class Polygon(Array):
         loc = point_like(self, x0, y0)
         size = point_like(self, x1-x0, y1-y0)
         return loc, size
-    
+
+    def get_centroid(self):
+        """
+        Gets the centroid of the array
+        """
+        xs, ys = self.T
+        xy = np.array([xs, ys])
+        A = self.get_signed_area()
+        cx, cy = np.dot(xy + np.roll(xy, 1, axis=1),
+                    xs * np.roll(ys, 1) - np.roll(xs, 1) * ys
+                    ) / (6 * A)
+        return point_like(self, cx, cy)
+
     def is_inside(self, poly):
         """
         Checks if all vertices of this Polygon are in the input Polygon
@@ -740,7 +758,11 @@ def from_shapely(p, is_micron=None, level=None, use_interior=False):
     if type(p) is shapely.geometry.MultiPolygon:
         polygons = []
         for geom in p.geoms:
-            polygons.append(from_shapely(geom, is_micron=is_micron, level=level, use_interior=True))
+            out_p = from_shapely(geom, is_micron=is_micron, level=level, use_interior=use_interior)
+            if type(out_p) is list:
+                polygons += out_p
+            else:
+                polygons.append(out_p)
         return polygons
     elif type(p) is shapely.geometry.Polygon:
         if use_interior:

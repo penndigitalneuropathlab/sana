@@ -1,6 +1,7 @@
 
 # system packages
 import os
+import time
 
 # installed packages
 import cv2
@@ -362,50 +363,64 @@ class Frame:
             raise ImageTypeException('Image must be a binary image')
 
         # run contour detection to find boundaries between objects
-        c, h = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
+        contours, hierarchy = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
 
         # TODO: this doesn't split if exactly 1 touching diagonal connection
         # TODO: looks like there are some objects missing?
         bodies, holes = [], []
 
-        # loop through the body contours
-        for i in [i for i in range(len(c)) if h[0][i][3] == -1]:
-            if c[i].shape[0] < 3:
-                bodies.append(sana.geo.Polygon(c[i][:,0,0], c[i][:,0,1]))
+        # body contours are contours with no parent in the hierarchy
+        has_no_parent = hierarchy[0][:,3] == -1
+        contour_idxs = np.arange(0, len(contours)).astype(int)
+        body_contour_idxs = contour_idxs[has_no_parent]
+
+        # potentially separate body contours into several
+        # NOTE: this is a fix for when there is a 1 pixel wide gap
+        #       cv2.findContours doesn't handle this properly
+        for body_idx in body_contour_idxs:
+
+            # TODO: not sure why this would ever happen
+            if contours[body_idx].shape[0] < 3:
+                continue
+
+            # create the body polygon
+            # NOTE: this is a catch-all fix for some polygons that shapely doesn't like
+            orig_body = shapely.geometry.Polygon(np.squeeze(contours[body_idx])).buffer(0)
+            body = shapely.geometry.Polygon(np.squeeze(contours[body_idx])).buffer(0)
+            
+            # hole contours are contours whose parent is the current body contour
+            parent_is_body = hierarchy[0][:,3] == body_idx
+            hole_contour_idxs = contour_idxs[parent_is_body]
+
+            # subtract the hole from the body
+            for hole_idx in hole_contour_idxs:
+
+                # create the hole polygon
+                # NOTE: this is a catch-all fix for some polygons that shapely doesn't like
+                hole = shapely.geometry.Polygon(np.squeeze(contours[hole_idx])).buffer(0)
+
+                # remove the hole from the body
+                body = body.difference(hole)
+
+            # convert shapely.MultiPolygons and shapely.Polygon to sana.geo.Polygons
+            res = sana.geo.from_shapely(body, is_micron=False, level=self.level)
+            # if type(res) is list:
+            #     print(type(body))
+            #     fig, ax = plt.subplots(1,1)
+            #     [ax.plot(*x.T, color='blue') for x in res]
+            #     ax.plot(*sana.geo.from_shapely(orig_body).T, color='red')
+            #     plt.show()
+            #     return bodies, holes
+            if type(res) is list:
+                bodies += [x for x in res if not x is None]
             else:
+                bodies.append(res)
+            res = sana.geo.from_shapely(body, is_micron=False, level=self.level, use_interior=True)
+            if type(res) is list:
+                holes += [x for x in res if not x is None]
+            else:
+                holes.append(res)
 
-                # create the body polygon
-                orig_body = shapely.geometry.Polygon(np.squeeze(c[i]))
-                new_body = shapely.geometry.Polygon(np.squeeze(c[i])).buffer(0)
-                
-                # loop through the hole contours in this body contour
-                for j in [j for j in range(len(c)) if h[0][j][3] == i]:
-
-                    # create the hole polygon
-                    hole = shapely.geometry.Polygon(np.squeeze(c[j]))
-
-                    # remove the hole from the body
-                    try:
-                        new_body = new_body.difference(hole)
-                    except:
-                        pass
-
-
-                # store the resulting body polygons
-                orig_res = sana.geo.from_shapely(orig_body, is_micron=False, level=self.level)
-                new_res = sana.geo.from_shapely(new_body, is_micron=False, level=self.level)
-                new_hole = sana.geo.from_shapely(new_body, is_micron=False, level=self.level, use_interior=True)
-                if type(new_res) is list:
-                    bodies += [x for x in new_res if not x is None]
-                elif not new_res is None:
-                    bodies.append(new_res)
-                else:
-                    bodies.append(orig_res)
-                if type(new_hole) is list:
-                    holes += [x for x in new_hole if not x is None]
-                elif not new_hole is None:
-                    holes.append(new_hole)
-                                
         return bodies, holes
 
     def instance_segment(self, ctrs, debug=False):
@@ -634,22 +649,41 @@ def frame_like(frame, img):
 #
 # end of frame_like
 
-def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon]):
+def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=None):
+
+    """
+    Creates a mask using a input polygons
+    :param size: size of mask to create
+    :param polygons: list of Polygons to use as positive pixels
+    :param holes: list of Polygons to use as negative pixels
+    """
+    if not converter is None:
+        if not level is None:
+            polygons = [converter.to_pixels(p, level) for p in polygons]
+            holes = [converter.to_pixels(p, level) for p in holes]
+        polygons = [converter.to_int(p) for p in polygons]
+        holes = [converter.to_int(p) for p in holes]
+    polygons = [p.connect() for p in polygons]
+    holes = [p.connect() for p in holes]
+
+    w, h = size.astype(int)
+    img = np.zeros((h,w), dtype=np.uint8)
+    img = cv2.fillPoly(img, pts=polygons, color=1)
+    img = cv2.fillPoly(img, pts=holes, color=0)
+
+    return Frame(img)
+
+
+def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[]):
     """
     Creates a mask with the same size as the given Frame using a list of Polygons
     :param frame: frame to emulate
-    :param polygons: list of Polygons to fill in
+    :param polygons: list of Polygons to use as positive pixels
+    :param holes: list of Polygons to use as negative pixels
     """
-    int_polygons = []
-    for p in polygons:
-        frame.converter.to_pixels(p, frame.level)
-        p = frame.converter.to_int(p).connect()
-        int_polygons.append(p)
 
-    mask_img = np.zeros(frame.img.shape[:2], dtype=np.uint8)
-    mask_img = cv2.fillPoly(mask_img, pts=int_polygons, color=1)
-
-    return frame_like(frame, mask_img)
+    mask = create_mask(frame.size(), polygons=polygons, holes=holes, converter=frame.converter)
+    return frame_like(frame, mask.img)
 
 def load_compressed_array(filename):
     arr = np.load(filename)

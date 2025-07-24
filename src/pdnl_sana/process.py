@@ -1,5 +1,6 @@
 
 # system modules
+import os
 from functools import partial
 from multiprocessing.dummy import Pool as ThreadPool
 
@@ -17,6 +18,9 @@ import pdnl_sana.image
 import pdnl_sana.threshold
 import pdnl_sana.geo
 import pdnl_sana as sana
+import pdnl_sana.logging
+import pdnl_sana.slide
+
 
 class Processor:
     """
@@ -270,3 +274,124 @@ def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10,
         polygons = mask.to_polygons()
 
     return polygons
+
+def preprocess_wsi_chunk_wrapper(args):
+    return preprocess_wsi_chunk(*args)
+def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
+    """
+    This function loads, preprocesses, and caches a chunk of a WSI
+    """
+    logger = sana.logging.Logger('normal', os.path.join(temp_dir, f'parameters_{i}_{j}.pkl'))
+    loader = sana.slide.Loader(logger, slide_f)
+    frame_size = sana.geo.Point(frame_size, frame_size, is_micron=False, level=level)
+    for roi in rois:
+        roi.is_micron = False
+        roi.level = level
+    framer = sana.slide.Framer(loader, size=frame_size, step=frame_size, level=level, rois=rois)
+
+    # get the frame mask
+    mask = framer.load_mask(i, j)
+
+    # decide if it's worth it to process this frame
+    if np.sum(mask.img) < 0.005*mask.img.shape[0]*mask.img.shape[1]:
+        return None, None
+
+    # extract the frame from the WSI
+    frame = framer.load_frame(i, j)
+
+    # preprocess the frame
+    processor = HDABProcessor(
+        logger, frame, main_mask=mask, 
+        run_hem=True, run_dab=True, 
+        apply_smoothing=False, 
+        normalize_background=True, radius=100
+    )
+
+    # cache the stain data
+    processor.hem.save(os.path.join(temp_dir, f"hem_{i}_{j}.png"))
+    processor.dab.save(os.path.join(temp_dir, f"dab_{i}_{j}.png"))
+    mask.save(os.path.join(temp_dir, f"mask_{i}_{j}.png"))
+    logger.write_data()
+
+    # return the histograms in order to calculate a global WSI
+    hem_histogram = processor.hem.get_histogram(mask=mask)
+    dab_histogram = processor.dab.get_histogram(mask=mask)
+
+    return hem_histogram, dab_histogram
+    
+def segment_wsi_chunk_wrapper(args):
+    return segment_wsi_chunk(*args)
+def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
+    if not os.path.exists(os.path.join(temp_dir, f"hem_{i}_{j}.png")):
+        return
+
+    logger = sana.logging.Logger('normal', os.path.join(temp_dir, f'parameters_{i}_{j}.pkl'))
+    frame_loc = logger.data['loc']
+
+    hem = sana.image.Frame(os.path.join(temp_dir, f"hem_{i}_{j}.png"))
+    dab = sana.image.Frame(os.path.join(temp_dir, f"dab_{i}_{j}.png"))
+    mask = sana.image.Frame(os.path.join(temp_dir, f"mask_{i}_{j}.png"))
+    hem_int = hem.copy()
+
+    # apply the global thresholds
+    hem.threshold(hem_threshold)
+    dab.threshold(dab_threshold)
+
+    # clean up the stains
+    dab.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
+    hem.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
+    hem.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', 2))
+
+    # remove positive DAB and pixels outside the mask
+    hem.mask(dab, invert=True)
+    hem.mask(mask)
+
+    # find all the somas throughout the counterstain
+    # TODO: parameter should be in microns!
+    soma_ctrs = sana.process.detect_somas(hem, minimum_soma_radius=3)
+    
+    # segment the somas using polygons
+    soma_polygons, _ = hem.instance_segment(soma_ctrs)[0]
+    soma_polygons = [p for p in soma_polygons if not type(p) is list and len(p) != 0]
+    
+    # move the polygons into the slide coordinate system
+    [p.translate(-frame_loc) for p in soma_polygons]
+
+    # re-calculate the centers of the polygons using the bounding box
+    soma_bbs = [p.bounding_box() for p in soma_polygons]
+    soma_ctrs = np.array([loc + size//2 for (loc, size) in soma_bbs])
+
+    # feature 1: calculate the area of each polygon
+    soma_areas = np.array([p.get_area() for p in soma_polygons])
+
+    # feature 2: calculate the mean HEM intensity within the polygon
+    soma_ints = []
+    for poly in soma_polygons:
+
+        # move to frame coordinate system
+        poly.translate(frame_loc)
+        
+        # extract tile based on the bounding box of the polygon
+        loc, size = poly.bounding_box()
+        tile = sana.image.Frame(hem_int.get_tile(loc, size))
+
+        # create a mask of pixels within the polygon
+        poly.translate(loc)
+        tile_mask = sana.image.create_mask_like(tile, [poly])
+        poly.translate(-loc)
+
+        # calculate average intensity
+        soma_ints.append(np.mean(tile.img[tile_mask.img != 0]))
+
+        # move back to slide coordinate system
+        poly.translate(-frame_loc)
+
+    # combine into an (N,4) array
+    soma_feats = np.concatenate([
+        soma_ctrs, 
+        soma_areas[:,None], 
+        np.array(soma_ints)[:,None]], 
+        axis=1)
+
+    # cache the cell features
+    np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)
