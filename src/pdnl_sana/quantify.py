@@ -1,9 +1,13 @@
 
-import pdnl_sana.image
-import pdnl_sana as sana
 import numpy as np
-
+from tqdm import tqdm
 from numba import jit
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import pdnl_sana as sana
+import pdnl_sana.image
+
+
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):
     """
     this function takes calculate the %Area Occupied of an ROI based on the positive pixel classifications
@@ -251,3 +255,68 @@ def aggregate_features(window_size, feats, i0, j0, i1, j1, ds):
                 out[j-j0,i-i0,k] = np.nansum(feats[window_idxs,k+1] * wgts) / den
 
     return out
+
+def aggregate_features_chunked(feats, window_size, chunk_size, out_size, slide_size, n_processes=1):
+
+    # amount we're downsampling from slide pixels to output pixels
+    ds_slide = slide_size / out_size
+
+    # initialize the output array
+    N, d = feats.shape
+    print(feats.shape)
+    heatmap = np.zeros((out_size[1], out_size[0], d-1), dtype=float)
+    print(heatmap.shape)
+
+    # calculate the parameters in output pixels
+    window_size_out = window_size / ds_slide
+    chunk_size_out = chunk_size / ds_slide
+
+    # calculate the upper left coordinates of each chunk in the output coordinate system
+    chunk_xs = np.arange(0, out_size[0] + chunk_size_out[0], chunk_size_out[0])
+    chunk_ys = np.arange(0, out_size[1] + chunk_size_out[1], chunk_size_out[1])
+    chunk_locs_out = [sana.geo.Point(x, y) for y in chunk_ys for x in chunk_xs]
+
+    fn_args = []
+    for chunk_loc_out in chunk_locs_out:
+
+        # pad the chunk by the window since our output pixels are centered
+        pad_chunk_loc_out = chunk_loc_out - window_size_out / 2
+        pad_chunk_loc = pad_chunk_loc_out * ds_slide
+        x0, y0 = pad_chunk_loc
+        x1, y1 = pad_chunk_loc + chunk_size + window_size
+
+        # get all samples within the chunk
+        chunk_sample_idxs = (
+            (x0 < feats[:,0]) & (feats[:,0] < x1) & \
+            (y0 < feats[:,1]) & (feats[:,1] < y1)
+        )
+        chunk_feats = feats[chunk_sample_idxs]
+
+        # no samples found, no need to process this chunk
+        if len(chunk_feats) == 0:
+            continue
+
+        # get the output pixels which define this chunk
+        i0 = int(np.floor(chunk_loc_out[0]))
+        j0 = int(np.floor(chunk_loc_out[1]))
+        i1 = np.clip(int(round(chunk_loc_out[0] + chunk_size_out[0])), None, out_size[0]-1)
+        j1 = np.clip(int(round(chunk_loc_out[1] + chunk_size_out[1])), None, out_size[1]-1)
+        # print(i0, j0, i1, j1)
+        args = (window_size, feats, i0, j0, i1, j1, ds_slide)
+        fn_args.append(args)
+
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        future_args_mapping = {}
+        futures = set()
+        for args in fn_args:
+            future = executor.submit(sana.quantify.aggregate_features_wrapper, args)
+            future_args_mapping[future] = args
+            futures.add(future)
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Aggregating Features"):
+            out = future.result()
+
+            args = future_args_mapping[future]
+            i0, j0, i1, j1 = args[2:6]
+            heatmap[j0:j1, i0:i1] = out
+
+    return heatmap

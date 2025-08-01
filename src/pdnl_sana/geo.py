@@ -440,7 +440,10 @@ class Polygon(Array):
         """
         self = self.connect()
         return polygon_like(self, self[:,0], self[:,1])
-
+    def to_curve(self):
+        self = self.disconnect()
+        return curve_like(self, self[:,0], self[:,1])
+    
     def slice(self, a, b, direction):
         if direction > 0:
             if a < b:

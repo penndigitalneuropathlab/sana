@@ -90,9 +90,11 @@ class Frame:
     def is_short(self):
         return self.img.dtype == np.uint8
     def is_float(self):
-        return self.img.dtype == float
-
-    def to_float(self):
+        return np.issubdtype(self.img.dtype, float)
+    def is_int(self):
+        return np.issubdtype(self.img.dtype, np.integer)
+    
+    def to_float(self): 
         """
         Converts short int values to floating point values
         """
@@ -112,7 +114,7 @@ class Frame:
             mi = np.min(self.img)
         if mx is None:
             mx = np.max(self.img)
-        if self.is_short():
+        if self.is_int():
             self.to_float()
 
         self.img = self.img.clip(mi, mx)
@@ -420,7 +422,8 @@ class Frame:
                 holes += [x for x in res if not x is None]
             else:
                 holes.append(res)
-
+        bodies = [x for x in bodies if len(x) >= 3]
+        holes = [x for x in holes if len(x) >= 3]
         return bodies, holes
 
     def instance_segment(self, ctrs, debug=False):

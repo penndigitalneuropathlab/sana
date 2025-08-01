@@ -11,6 +11,9 @@ import skimage.feature
 import skfmm
 from matplotlib import pyplot as plt
 from numba import jit
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
 # sana modules
 import pdnl_sana.color_deconvolution
@@ -395,3 +398,80 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
 
     # cache the cell features
     np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)
+
+
+def train_wm_segmenter(heatmap, wm_coords=None, gm_coords=None, priors=None):
+
+    heatmap = heatmap.copy()
+    h, w, d = heatmap.img.shape    
+    feats = heatmap.img.reshape(h*w, d)
+    non_zero = ~np.any(feats == 0, axis=1)
+
+    ss = StandardScaler()
+    ss.fit(feats[non_zero])
+    feats = ss.transform(feats)
+
+    # fig, axs = plt.subplots(1,d)
+    # for i in range(d):
+    #     axs[i].hist(feats[non_zero,i], bins=100, density=True,
+    #             color='gray', alpha=0.7, edgecolor='k')
+
+    model = Pipeline([
+        ('ss', ss),
+        ('gmm', GaussianMixture(n_components=2, covariance_type='full')),
+    ])
+
+    if not wm_coords is None:
+        wm_coords = np.ravel_multi_index(wm_coords.T, (h,w))
+        gm_coords = np.ravel_multi_index(gm_coords.T, (h,w))
+        means_init = np.array([
+            np.mean(feats[wm_coords], axis=0),
+            np.mean(feats[gm_coords], axis=0),
+        ])
+        print(means_init)
+        model.set_params(gmm__means_init=means_init)
+
+        
+        # for i in range(d):
+        #     axs[i].axvline(means_init[0,i], color='red')
+        #     axs[i].axvline(means_init[1,i], color='blue')
+
+        model.get_params()['gmm'].fit(feats[non_zero])
+        model.wm_label = 0
+        
+    elif not priors is None:
+        model.get_params()['gmm'].fit(feats[non_zero])
+
+        mu = model.get_params()['gmm'].means_
+
+        # store votes for each label
+        votes = np.zeros(mu.shape[0], dtype=int)
+    
+        # check each feature prior
+        for i in range(priors.shape[0]):
+    
+            # figure out which label has the most extreme value for this feature
+            if priors[i] == 1:
+                label = np.argmax(mu[:,i])
+            else:
+                label = np.argmin(mu[:,i])
+    
+            # vote for this label
+            votes[label] += 1
+        model.wm_label = np.argmax(votes)
+        model.label_agrees_with_priors = np.max(votes) == len(priors)
+    else:
+        print('need information on which label is wm')
+        return None
+
+    return model
+
+def deploy_wm_segmenter(model, heatmap, open_r=21, close_r=2):
+    h, w, d = heatmap.img.shape
+    pred = model.predict(heatmap.img.reshape(h*w, d)).reshape(h, w, 1)
+    
+    wm_mask = sana.image.frame_like(heatmap, (pred == model.wm_label).astype(np.uint8))
+    wm_mask.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', close_r))
+    wm_mask.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', open_r))
+
+    return wm_mask
