@@ -169,25 +169,23 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
     
     # rotate so the ROI is orthogonal
     angle = top.get_angle()
-    ctrx = np.min([np.min(x[:,0]) for x in [top, right, bottom, left]]) + \
-        np.max([np.max(x[:,0]) for x in [top, right, bottom, left]])
-    ctry = np.min([np.min(x[:,1]) for x in [top, right, bottom, left]]) + \
-        np.max([np.max(x[:,1]) for x in [top, right, bottom, left]])
-    ctr = sana.geo.point_like(top, ctrx, ctry)
+    xmi = min([np.min(curve[:,0]) for curve in [top, right, bottom, left]])
+    ymi = min([np.min(curve[:,1]) for curve in [top, right, bottom, left]])
+    xmx = max([np.max(curve[:,0]) for curve in [top, right, bottom, left]])
+    ymx = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
+    ctr = sana.geo.point_like(top, (xmx-xmi)/2, (ymx-ymi)/2)
     [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]
     if np.mean(top[:,1]) > np.mean(bottom[:,1]):
         [x.rotate(ctr, 180) for x in [top, right, bottom, left]]
         angle += 180
         
     # set output dimensions to stretch the image to the boundaries of the segmentations
-    xbound = max([np.max(curve[:,0]) for curve in [top, right, bottom, left]])
-    ybound = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
-    top_width = max(top[:,0]) - min(top[:,0])
-    bottom_width = max(bottom[:,0]) - min(bottom[:,0])
-    nw = int(max(top_width, bottom_width))
-    left_height = max(left[:,1]) - min(left[:,1])
-    right_height = max(right[:,1]) - min(right[:,1])
-    nh = int(max(left_height, right_height))
+    xmi = min([np.min(curve[:,0]) for curve in [top, right, bottom, left]])
+    ymi = min([np.min(curve[:,1]) for curve in [top, right, bottom, left]])
+    xmx = max([np.max(curve[:,0]) for curve in [top, right, bottom, left]])
+    ymx = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
+    nw = np.rint(xmx-xmi).astype(int)
+    nh = np.rint(ymx-ymi).astype(int)    
 
     # fit polynomials to the boundaries
     right, right_z = fit_polynomial(right[:,::-1], degrees, nh)
@@ -221,7 +219,7 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         z = z_sweep[i]
 
         # define the input space for this column
-        y = np.linspace(-100, nh+100, N)
+        y = np.linspace(ymi-100, ymx+100, N)
 
         # calculate the output space for the column
         p = np.poly1d(z)
@@ -229,9 +227,15 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         sampling_curve = sana.geo.curve_like(top, x, y)
         
         # clip the curve to the top/bottom curves
-        sampling_curve = clip_between_segments(sampling_curve, top, bottom)
+        try:
+            sampling_curve = clip_between_segments(sampling_curve, top, bottom)
+        except:
+            continue
+        if sampling_curve[0,1] > sampling_curve[-1,1]:
+            sampling_curve = sampling_curve[::-1, :]
+            
         sampling_curve = interp(sampling_curve[:,::-1], nh)[:,::-1]
-
+        
         # differentiate to find the angle of rotation at each output pixel
         pp = np.polyder(p)
         sampling_angle = np.rad2deg(np.arctan(pp(sampling_curve[:,1])))
@@ -240,6 +244,7 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         sampling_curve.rotate(ctr, angle)
         if i % plot_interval == 0 and not ax is None:
             ax.plot(*sampling_curve.T, color='red', linewidth=0.5)
+            ax.plot(sampling_curve[0,0], sampling_curve[0,1], '*', color='blue', markersize=5)
 
         # store the sampling curve for this output column
         sample_grid[:,i,:] = sampling_curve[:,::-1]

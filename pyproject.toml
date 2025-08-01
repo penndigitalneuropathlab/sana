@@ -4,9 +4,9 @@ build-backend = "hatchling.build"
 
 [project]
 name = "pdnl_sana"
-version = "1.0.2"
+version = "1.0.3"
 authors = [
-  { name="Noah Capp", email="noahmcapp@gmil.com" },
+  { name="Noah Capp", email="noahmcapp@gmail.com" },
 ]
 description = "PDNL Semi-Automatic Neuropathology Analyis (SANA)"
 dependencies = [
