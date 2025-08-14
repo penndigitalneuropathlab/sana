@@ -3,6 +3,8 @@
 import os
 import sys
 import logging
+
+import pdnl_sana as sana
 import dill
 
 # installed packages

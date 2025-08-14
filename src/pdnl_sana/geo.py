@@ -638,6 +638,8 @@ def annotation_like(obj, x, y):
     )
 
 def connect_segments(top, right, bottom, left):
+    top, right, bottom, left = top.copy(), right.copy(), bottom.copy(), left.copy()
+
     # rotate the segments to the correct orientation
     ctr = point_like(top, 0, 0)
     angle = top.get_angle()
