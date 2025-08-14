@@ -356,6 +356,28 @@ class Frame:
                                      (0, 0),                # c
                                      ), mode=mode)
         return frame_like(self, img)
+
+    def blend(self, mask, alpha: float=1.0, color=(255,0,0)):
+        """
+        Blends a binary mask with an RGB image
+        :param mask: binary image mask
+        :param alpha: how opaque we want the blending to be
+        :param color: RGB tuple
+        """
+        if not self.is_rgb():
+            raise ImageTypeException('Frame must be RGB.')
+        if not mask.is_binary():
+            raise ImageTypeException('Input mask must be binary.')
+
+        self.to_float()
+
+        # prepare the overlay, binary RGB image from 0.0->1.0
+        overlay = self.img.copy()
+        overlay[mask.img[:,:,0] != 0] = color
+
+        self.img = overlay * alpha + self.img * (1-alpha)
+
+        self.rescale(0, 255)
         
     def save(self, fpath, invert_sform=False, spacing=None):
         """
@@ -383,21 +405,17 @@ class Frame:
         """
         Creates and saves a compressed binary image array
         """
-        if (not self.is_short()) or (not self.is_gray()):
-            raise ImageTypeException(f'Array must be short and grayscale -- datatype={self.img.dtype}, shape={self.img.shape}')
-        
-        if self.is_binary():
+        if (not self.is_short()) or (not self.is_binary()):
+            raise ImageTypeException(f'Array must be short and binary -- datatype={self.img.dtype}, shape={self.img.shape}, range=({np.min(self.img)}, {np.max(self.img)})')
 
-            # get the image as a boolean array
-            img = self.img[:,:,0].astype(bool)
-                
-            # pack the bools into bytes (compresses by 1/8)
-            arr = np.packbits(img, axis=-1, bitorder='little')
-        else:
-            arr = self.img[:,:,0]
+        # get the image as a boolean array
+        img = self.img[:,:,0].astype(bool)
+
+        # pack the bools into bytes (compresses by 1/8)
+        arr = np.packbits(img, axis=-1, bitorder='little')
 
         # finally, use numpy's compression algorithm to further compress
-        np.savez_compressed(fpath, arr)
+        np.savez_compressed(fpath, shape=img.shape, arr=arr)
 
     def mask(self, mask_frame, mask_value=0, invert=False):
         """
@@ -567,9 +585,23 @@ def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon]):
     return frame_like(frame, mask_img)
 
 def load_compressed_array(filename):
-    arr = np.load(filename)
-    arr = arr['arr_0']
+    data = np.load(filename)
+
+    if 'shape' in data:
+        shape = data['shape']
+        arr = data['arr']
+    # TODO: this is backwards compatibility, should be removed at some point
+    else:
+        shape = None
+        arr = data['arr_0']
+
+    # unpack the bytes into 1 bit pixel values
     arr = np.unpackbits(arr, axis=-1, bitorder='little')
+
+    # remove the padded data from packing the bits
+    # TODO: this is backwards compatibility, should be removed at some point
+    if not shape is None:
+        arr = arr[:,:shape[1]]
 
     return arr
         
