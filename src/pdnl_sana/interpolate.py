@@ -2,7 +2,6 @@
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 import scipy.optimize
-from numba import jit
 
 import pdnl_sana.geo
 import pdnl_sana.image
@@ -72,7 +71,6 @@ def clip_curve(a, x0, y0, x1, y1):
 
     return a
 
-@jit(nopython=True)
 def intersect_curves(c1: np.ndarray, c2: np.ndarray, atol: float=1e-1):
     """
     this function finds the interpolated point that exists in both input curves
