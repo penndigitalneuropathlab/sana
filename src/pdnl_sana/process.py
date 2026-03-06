@@ -1,13 +1,15 @@
 
 # installed modules
 from matplotlib import pyplot as plt
+import numpy as np
 
 # sana modules
+import pdnl_sana as sana
+import pdnl_sana.logging
 import pdnl_sana.color_deconvolution
 import pdnl_sana.image
 import pdnl_sana.threshold
 import pdnl_sana.geo
-import pdnl_sana as sana
 
 class Processor:
     """
@@ -22,16 +24,23 @@ class Processor:
             self,
             logger: sana.logging.Logger,
             frame: sana.image.Frame,
-            main_roi: sana.geo.Polygon,
+            main_roi: sana.geo.Polygon=None,
             sub_rois: [sana.geo.Polygon]=[],
             exclusion_rois: [sana.geo.Polygon]=[],
+            main_mask: sana.image.Frame=None,
     ):
         self.logger = logger
         self.frame = frame
 
         # generate the main mask
-        self.main_roi = main_roi
-        self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
+        if main_mask is None:
+            self.main_roi = main_roi
+            if self.main_roi is None:
+                self.main_mask = sana.image.frame_like(self.frame, np.ones_like(self.frame.img))
+            else:
+                self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
+        else:
+            self.main_mask = main_mask
 
         # generate the sub masks
         self.sub_rois = []
@@ -159,6 +168,10 @@ class HDABProcessor(Processor):
             'exclusion_mask': self.exclusion_mask,
             'valid_mask': self.valid_mask,
         }
+        self.logger.data['triangular_strictness'] = triangular_strictness
+        self.logger.data['minimum_threshold'] = minimum_threshold
+        self.logger.data['od_threshold'] = od_threshold
+        self.logger.data['morphology_filters'] = morphology_filters
 
         # get the threshold for the DAB that is inside the main roi
         if od_threshold is None:
