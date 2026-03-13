@@ -68,10 +68,10 @@ class Loader(openslide.OpenSlide):
 
         # store the slide bounding box information
         if 'openslide.bounds-x' in self.properties:
-            self.bx = float(self.properties['openslide.bounds-x'])
-            self.by = float(self.properties['openslide.bounds-y'])            
-            self.bw = float(self.properties['openslide.bounds-width'])
-            self.bh = float(self.properties['openslide.bounds-height'])
+            self.bx = int(self.properties['openslide.bounds-x'])
+            self.by = int(self.properties['openslide.bounds-y'])            
+            self.bw = int(self.properties['openslide.bounds-width'])
+            self.bh = int(self.properties['openslide.bounds-height'])
         else:
             self.bx = 0
             self.by = 0            
@@ -154,7 +154,7 @@ class Loader(openslide.OpenSlide):
         loc = self.converter.rescale(loc, 0)
         loc = self.converter.to_int(loc)
         size = self.converter.to_int(size)
-        im = self.read_region(location=loc, level=level, size=size)
+        im = self.read_region(location=loc+self.bloc, level=level, size=size)
         loc = self.converter.rescale(loc, level)
 
         # convert to numpy and remove the alpha channel
