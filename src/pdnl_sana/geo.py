@@ -5,8 +5,6 @@ import math
 # installed packages
 import numpy as np
 from scipy.spatial import ConvexHull
-from numba import jit
-import shapely.geometry
 
 class Converter:
     """
@@ -639,8 +637,6 @@ class Annotation(Array):
         self = self.disconnect()
         return curve_like(self, self[:,0], self[:,1])
 
-# NOTE: using jit here makes this function viable in terms of speed
-@jit(nopython=True)
 def ray_tracing(x,y,poly):
     """
     Detects if the given xy point is inside the poly array. This uses numba so that the loops are very fast, therefore the inputs must be basic C datatypes
@@ -703,6 +699,8 @@ def annotation_like(obj, x, y):
     )
 
 def connect_segments(top, right, bottom, left):
+    top, right, bottom, left = top.copy(), right.copy(), bottom.copy(), left.copy()
+
     # rotate the segments to the correct orientation
     ctr = point_like(top, 0, 0)
     angle = top.get_angle()

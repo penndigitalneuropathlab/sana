@@ -16,14 +16,13 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 
 # sana modules
+import pdnl_sana as sana
+import pdnl_sana.logging
 import pdnl_sana.color_deconvolution
 import pdnl_sana.image
 import pdnl_sana.threshold
 import pdnl_sana.geo
-import pdnl_sana as sana
-import pdnl_sana.logging
 import pdnl_sana.slide
-
 
 class Processor:
     """
@@ -41,7 +40,7 @@ class Processor:
             main_roi: sana.geo.Polygon=None,
             sub_rois: [sana.geo.Polygon]=[],
             exclusion_rois: [sana.geo.Polygon]=[],
-            main_mask: sana.image.Frame=None
+            main_mask: sana.image.Frame=None,
     ):
         self.logger = logger
         self.frame = frame
@@ -218,6 +217,12 @@ class HDABProcessor(Processor):
         positive_stain = stain.copy()
         self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
         ret['positive_stain'] = positive_stain
+
+        self.logger.data['triangular_strictness'] = triangular_strictness
+        self.logger.data['minimum_threshold'] = minimum_threshold
+        self.logger.data['od_threshold'] = od_threshold
+        self.logger.data['morphology_filters'] = morphology_filters
+        self.logger.data['threshold'] = threshold
 
         # return all of the processed images
         return ret

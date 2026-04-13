@@ -361,27 +361,32 @@ class Frame:
         return frame_like(self, img)
 
     def to_polygons(self):
+        """
+        Converts a binary image to a list of pdnl_sana.geo.Polygon objects based on the Contour Detection from cv2
+        """
         if not self.is_binary():
             raise ImageTypeException('Image must be a binary image')
+
+        bodies, holes = [], []
 
         # run contour detection to find boundaries between objects
         contours, hierarchy = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
 
-        # TODO: this doesn't split if exactly 1 touching diagonal connection
-        # TODO: looks like there are some objects missing?
-        bodies, holes = [], []
-
+        # nothing was found
+        if len(contours) == 0:
+            return bodies, holes
+        
         # body contours are contours with no parent in the hierarchy
         has_no_parent = hierarchy[0][:,3] == -1
         contour_idxs = np.arange(0, len(contours)).astype(int)
         body_contour_idxs = contour_idxs[has_no_parent]
 
-        # potentially separate body contours into several
+        # potentially separate body contours into several contours
         # NOTE: this is a fix for when there is a 1 pixel wide gap
         #       cv2.findContours doesn't handle this properly
         for body_idx in body_contour_idxs:
 
-            # TODO: not sure why this would ever happen
+            # skipping improper contours
             if contours[body_idx].shape[0] < 3:
                 continue
 
@@ -406,13 +411,6 @@ class Frame:
 
             # convert shapely.MultiPolygons and shapely.Polygon to sana.geo.Polygons
             res = sana.geo.from_shapely(body, is_micron=False, level=self.level)
-            # if type(res) is list:
-            #     print(type(body))
-            #     fig, ax = plt.subplots(1,1)
-            #     [ax.plot(*x.T, color='blue') for x in res]
-            #     ax.plot(*sana.geo.from_shapely(orig_body).T, color='red')
-            #     plt.show()
-            #     return bodies, holes
             if type(res) is list:
                 bodies += [x for x in res if not x is None]
             else:
@@ -422,8 +420,11 @@ class Frame:
                 holes += [x for x in res if not x is None]
             else:
                 holes.append(res)
+
+        # keep only proper contours
         bodies = [x for x in bodies if len(x) >= 3]
         holes = [x for x in holes if len(x) >= 3]
+        
         return bodies, holes
 
     def instance_segment(self, ctrs, debug=False):
@@ -460,6 +461,28 @@ class Frame:
 
         return objs, markers
     
+    def blend(self, mask, alpha: float=1.0, color=(255,0,0)):
+        """
+        Blends a binary mask with an RGB image
+        :param mask: binary image mask
+        :param alpha: how opaque we want the blending to be
+        :param color: RGB tuple
+        """
+        if not self.is_rgb():
+            raise ImageTypeException('Frame must be RGB.')
+        if not mask.is_binary():
+            raise ImageTypeException('Input mask must be binary.')
+
+        self.to_float()
+
+        # prepare the overlay, binary RGB image from 0.0->1.0
+        overlay = self.img.copy()
+        overlay[mask.img[:,:,0] != 0] = color
+
+        self.img = overlay * alpha + self.img * (1-alpha)
+
+        self.rescale(0, 255)
+
     def save(self, fpath, invert_sform=False, spacing=None):
         """
         Writes the image array to a file
@@ -486,21 +509,17 @@ class Frame:
         """
         Creates and saves a compressed binary image array
         """
-        if (not self.is_short()) or (not self.is_gray()):
-            raise ImageTypeException(f'Array must be short and grayscale -- datatype={self.img.dtype}, shape={self.img.shape}')
-        
-        if self.is_binary():
+        if (not self.is_short()) or (not self.is_binary()):
+            raise ImageTypeException(f'Array must be short and binary -- datatype={self.img.dtype}, shape={self.img.shape}, range=({np.min(self.img)}, {np.max(self.img)})')
 
-            # get the image as a boolean array
-            img = self.img[:,:,0].astype(bool)
-                
-            # pack the bools into bytes (compresses by 1/8)
-            arr = np.packbits(img, axis=-1, bitorder='little')
-        else:
-            arr = self.img[:,:,0]
+        # get the image as a boolean array
+        img = self.img[:,:,0].astype(bool)
+
+        # pack the bools into bytes (compresses by 1/8)
+        arr = np.packbits(img, axis=-1, bitorder='little')
 
         # finally, use numpy's compression algorithm to further compress
-        np.savez_compressed(fpath, arr)
+        np.savez_compressed(fpath, shape=img.shape, arr=arr)
 
     def mask(self, mask_frame, mask_value=0, invert=False):
         """
@@ -689,9 +708,23 @@ def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon], holes: [sana.ge
     return frame_like(frame, mask.img)
 
 def load_compressed_array(filename):
-    arr = np.load(filename)
-    arr = arr['arr_0']
+    data = np.load(filename)
+
+    if 'shape' in data:
+        shape = data['shape']
+        arr = data['arr']
+    # TODO: this is backwards compatibility, should be removed at some point
+    else:
+        shape = None
+        arr = data['arr_0']
+
+    # unpack the bytes into 1 bit pixel values
     arr = np.unpackbits(arr, axis=-1, bitorder='little')
+
+    # remove the padded data from packing the bits
+    # TODO: this is backwards compatibility, should be removed at some point
+    if not shape is None:
+        arr = arr[:,:shape[1]]
 
     return arr
         

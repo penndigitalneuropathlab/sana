@@ -1,6 +1,5 @@
 dill
 matplotlib
-numba
 numpy
 opencv_python
 openslide_python

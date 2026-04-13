@@ -2,8 +2,6 @@
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 import scipy.optimize
-from numba import jit
-from matplotlib import pyplot as plt
 
 import pdnl_sana.geo
 import pdnl_sana.image
@@ -132,7 +130,6 @@ def clip_curve(a, x0, y0, x1, y1):
 
     return a
 
-@jit(nopython=True)
 def intersect_curves(c1: np.ndarray, c2: np.ndarray, atol: float=1e-1):
     """
     this function finds the interpolated point that exists in both input curves
@@ -234,7 +231,6 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
     xmx = max([np.max(curve[:,0]) for curve in [top, right, bottom, left]])
     ymx = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
     ctr = sana.geo.point_like(top, (xmx-xmi)/2, (ymx-ymi)/2)
-    #ctr = sana.geo.point_like(top, *np.mean([np.mean(x, axis=0) for x in [top, right, bottom, left]], axis=0))
     [x.rotate(ctr, -angle) for x in [top, right, bottom, left]]
     if np.mean(top[:,1]) > np.mean(bottom[:,1]):
         [x.rotate(ctr, 180) for x in [top, right, bottom, left]]
@@ -247,12 +243,6 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
     ymx = max([np.max(curve[:,1]) for curve in [top, right, bottom, left]])
     nw = np.rint(xmx-xmi).astype(int)
     nh = np.rint(ymx-ymi).astype(int)    
-    # top_width = max(top[:,0]) - min(top[:,0])
-    # bottom_width = max(bottom[:,0]) - min(bottom[:,0])
-    # nw = int(max(top_width, bottom_width))
-    # left_height = max(left[:,1]) - min(left[:,1])
-    # right_height = max(right[:,1]) - min(right[:,1])
-    # nh = int(max(left_height, right_height))
 
     # fit polynomials to the boundaries
     right, right_z = fit_polynomial(right[:,::-1], degrees, nh)
@@ -297,11 +287,6 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         try:
             sampling_curve = clip_between_segments(sampling_curve, top, bottom)
         except:
-            # fig, ax = plt.subplots(1,1)
-            # ax.plot(*sampling_curve.T)
-            # ax.plot(*top.T)
-            # ax.plot(*bottom.T)
-            # plt.show()
             continue
         if sampling_curve[0,1] > sampling_curve[-1,1]:
             sampling_curve = sampling_curve[::-1, :]

@@ -68,10 +68,10 @@ class Loader(openslide.OpenSlide):
 
         # store the slide bounding box information
         if 'openslide.bounds-x' in self.properties:
-            self.bx = float(self.properties['openslide.bounds-x'])
-            self.by = float(self.properties['openslide.bounds-y'])            
-            self.bw = float(self.properties['openslide.bounds-width'])
-            self.bh = float(self.properties['openslide.bounds-height'])
+            self.bx = int(self.properties['openslide.bounds-x'])
+            self.by = int(self.properties['openslide.bounds-y'])            
+            self.bw = int(self.properties['openslide.bounds-width'])
+            self.bh = int(self.properties['openslide.bounds-height'])
         else:
             self.bx = 0
             self.by = 0            
@@ -154,7 +154,7 @@ class Loader(openslide.OpenSlide):
         loc = self.converter.rescale(loc, 0)
         loc = self.converter.to_int(loc)
         size = self.converter.to_int(size)
-        im = self.read_region(location=loc, level=level, size=size)
+        im = self.read_region(location=loc+self.bloc, level=level, size=size)
         loc = self.converter.rescale(loc, level)
 
         # convert to numpy and remove the alpha channel
@@ -338,6 +338,26 @@ class Loader(openslide.OpenSlide):
         self.logger.data['crop_size'] = crop_size
 
         return frame
+
+    def load_frame_with_logger(self, logger: sana.logging.Logger):
+
+        # extract all necessary pixel data from the WSI
+        loc, size = logger.data.get('loc'), logger.data.get('size')
+        roi = sana.geo.rectangle_like(loc, loc, size)
+        frame = self.load_frame_with_roi(roi, logger.data['level'])
+
+        # rotate the frame
+        M, nw, nh = logger.data.get('M', None), logger.data.get('nw', None), logger.data.get('nh', None)
+        if not M is None:
+            frame.warp_affine(logger.data['M'], logger.data['nw'], logger.data['nh'])
+
+        # crop the rotated frame
+        crop_loc, crop_size = logger.data.get('crop_loc', None), logger.data.get('crop_size', None)
+        if not crop_loc is None:
+            frame.crop(logger.data['crop_loc'], logger.data['crop_size'])
+
+        return frame
+
 
 # loads a series of Frames into memory from a slide image
 # use locs argument to define a list of locations to load at
