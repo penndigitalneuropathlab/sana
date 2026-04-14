@@ -32,6 +32,9 @@ class Frame:
         if type(img) is str:
             if img.endswith('.npz'):
                 self.img = load_compressed_array(img)
+            elif img.endswith('.npy'):
+                im = np.load(img)
+                self.img = im
             else:
                 im = np.array(Image.open(img))
                 if len(im.shape) == 2:
@@ -501,7 +504,7 @@ class Frame:
                 if self.is_gray():
                     im = self.img[:,:,0]
                 if self.is_binary():
-                    im *= 255
+                    im = (255 * im).astype(np.uint8)
                 im = Image.fromarray(im)
                 im.save(fpath)
     

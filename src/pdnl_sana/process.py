@@ -10,7 +10,6 @@ import cv2
 import skimage.feature
 import skfmm
 from matplotlib import pyplot as plt
-from numba import jit
 from sklearn.mixture import GaussianMixture
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
@@ -216,6 +215,7 @@ class HDABProcessor(Processor):
         # perform pixel classification using thresholding and morphology filters
         positive_stain = stain.copy()
         self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
+        ret['stain'] = stain
         ret['positive_stain'] = positive_stain
 
         self.logger.data['triangular_strictness'] = triangular_strictness
@@ -226,62 +226,6 @@ class HDABProcessor(Processor):
 
         # return all of the processed images
         return ret
-
-def detect_somas(pos, minimum_soma_radius=1):
-    dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
-    
-    ctrs = skimage.feature.peak_local_max(
-        dist,
-        min_distance=int(round(1.5*minimum_soma_radius)), # accounts for overlapping/elliptical somas
-    )[:,::-1]
-    
-    return ctrs
-
-def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10, npools=1, instance_segment=True):
-
-    if len(ctrs) == 0:
-        return []
-    
-    # create the rotated anisotropic gaussian filters
-    step = sana.geo.Point(stride, stride, False, pos.level)
-    thetas = np.linspace(0, np.pi, n_directions, endpoint=False)
-    filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=1, sg_y=sigma) for th in thetas]
-
-    # apply the filters to the positive pixels
-    def apply_filter(filt, frame, step):
-        return filt.apply(frame, step)
-    if npools == 1:
-        directions = [apply_filter(filt, pos, step) for filt in filters]
-    else:
-        directions = ThreadPool(npools).map(partial(apply_filter, frame=pos, step=step), filters)
-
-    # calculate directional ratio using the min and max directional values
-    mi = np.min(directions, axis=0)
-    mx = np.max(directions, axis=0)
-    directional_ratio = cv2.resize(np.divide(mi**3, mx, where=mx!=0), dsize=(pos.img.shape[1], pos.img.shape[1]), interpolation=cv2.INTER_NEAREST)
-
-    # initial points for fast march algorithm are the soma centers
-    phi = np.full_like(pos.img[:,:,0], -1, dtype=int)
-    phi[ctrs[:,1], ctrs[:,0]] = 1
-
-    # speed is derived from the directional ratio
-    speed = directional_ratio
-    speed[pos.img[:,:,0] == 0] = 0
-
-    # run the fast march
-    time = skfmm.travel_time(phi, speed)
-    time[time.mask] = np.inf
-
-    # threshold the time to create the soma mask
-    mask = sana.image.frame_like(pos, (time < fm_threshold).astype(np.uint8))
-    
-    # convert the mask to polygons
-    if instance_segment:
-        polygons = mask.instance_segment(ctrs)
-    else:
-        polygons = mask.to_polygons()
-
-    return polygons
 
 def preprocess_wsi_chunk_wrapper(args):
     return preprocess_wsi_chunk(*args)
@@ -327,156 +271,4 @@ def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
 
     return hem_histogram, dab_histogram
     
-def segment_wsi_chunk_wrapper(args):
-    return segment_wsi_chunk(*args)
-def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
-    if not os.path.exists(os.path.join(temp_dir, f"hem_{i}_{j}.png")):
-        return
 
-    logger = sana.logging.Logger('normal', os.path.join(temp_dir, f'parameters_{i}_{j}.pkl'))
-    frame_loc = logger.data['loc']
-
-    hem = sana.image.Frame(os.path.join(temp_dir, f"hem_{i}_{j}.png"))
-    dab = sana.image.Frame(os.path.join(temp_dir, f"dab_{i}_{j}.png"))
-    mask = sana.image.Frame(os.path.join(temp_dir, f"mask_{i}_{j}.png"))
-    hem_int = hem.copy()
-
-    # apply the global thresholds
-    hem.threshold(hem_threshold)
-    dab.threshold(dab_threshold)
-
-    # clean up the stains
-    dab.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
-    hem.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
-    hem.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', 2))
-
-    # remove positive DAB and pixels outside the mask
-    hem.mask(dab, invert=True)
-    hem.mask(mask)
-
-    # find all the somas throughout the counterstain
-    # TODO: parameter should be in microns!
-    soma_ctrs = sana.process.detect_somas(hem, minimum_soma_radius=3)
-    
-    # segment the somas using polygons
-    soma_polygons, _ = hem.instance_segment(soma_ctrs)[0]
-    soma_polygons = [p for p in soma_polygons if not type(p) is list and len(p) != 0]
-    
-    # move the polygons into the slide coordinate system
-    [p.translate(-frame_loc) for p in soma_polygons]
-
-    # re-calculate the centers of the polygons using the bounding box
-    soma_bbs = [p.bounding_box() for p in soma_polygons]
-    soma_ctrs = np.array([loc + size//2 for (loc, size) in soma_bbs])
-
-    # feature 1: calculate the area of each polygon
-    soma_areas = np.array([p.get_area() for p in soma_polygons])
-
-    # feature 2: calculate the mean HEM intensity within the polygon
-    soma_ints = []
-    for poly in soma_polygons:
-
-        # move to frame coordinate system
-        poly.translate(frame_loc)
-        
-        # extract tile based on the bounding box of the polygon
-        loc, size = poly.bounding_box()
-        tile = sana.image.Frame(hem_int.get_tile(loc, size))
-
-        # create a mask of pixels within the polygon
-        poly.translate(loc)
-        tile_mask = sana.image.create_mask_like(tile, [poly])
-        poly.translate(-loc)
-
-        # calculate average intensity
-        soma_ints.append(np.mean(tile.img[tile_mask.img != 0]))
-
-        # move back to slide coordinate system
-        poly.translate(-frame_loc)
-
-    # combine into an (N,4) array
-    soma_feats = np.concatenate([
-        soma_ctrs, 
-        soma_areas[:,None], 
-        np.array(soma_ints)[:,None]], 
-        axis=1)
-
-    # cache the cell features
-    np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)
-
-
-def train_wm_segmenter(heatmap, wm_coords=None, gm_coords=None, priors=None):
-
-    heatmap = heatmap.copy()
-    h, w, d = heatmap.img.shape    
-    feats = heatmap.img.reshape(h*w, d)
-    non_zero = ~np.any(feats == 0, axis=1)
-
-    ss = StandardScaler()
-    ss.fit(feats[non_zero])
-    feats = ss.transform(feats)
-
-    # fig, axs = plt.subplots(1,d)
-    # for i in range(d):
-    #     axs[i].hist(feats[non_zero,i], bins=100, density=True,
-    #             color='gray', alpha=0.7, edgecolor='k')
-
-    model = Pipeline([
-        ('ss', ss),
-        ('gmm', GaussianMixture(n_components=2, covariance_type='full')),
-    ])
-
-    if not wm_coords is None:
-        wm_coords = np.ravel_multi_index(wm_coords.T, (h,w))
-        gm_coords = np.ravel_multi_index(gm_coords.T, (h,w))
-        means_init = np.array([
-            np.mean(feats[wm_coords], axis=0),
-            np.mean(feats[gm_coords], axis=0),
-        ])
-        print(means_init)
-        model.set_params(gmm__means_init=means_init)
-
-        
-        # for i in range(d):
-        #     axs[i].axvline(means_init[0,i], color='red')
-        #     axs[i].axvline(means_init[1,i], color='blue')
-
-        model.get_params()['gmm'].fit(feats[non_zero])
-        model.wm_label = 0
-        
-    elif not priors is None:
-        model.get_params()['gmm'].fit(feats[non_zero])
-
-        mu = model.get_params()['gmm'].means_
-
-        # store votes for each label
-        votes = np.zeros(mu.shape[0], dtype=int)
-    
-        # check each feature prior
-        for i in range(priors.shape[0]):
-    
-            # figure out which label has the most extreme value for this feature
-            if priors[i] == 1:
-                label = np.argmax(mu[:,i])
-            else:
-                label = np.argmin(mu[:,i])
-    
-            # vote for this label
-            votes[label] += 1
-        model.wm_label = np.argmax(votes)
-        model.label_agrees_with_priors = np.max(votes) == len(priors)
-    else:
-        print('need information on which label is wm')
-        return None
-
-    return model
-
-def deploy_wm_segmenter(model, heatmap, open_r=21, close_r=2):
-    h, w, d = heatmap.img.shape
-    pred = model.predict(heatmap.img.reshape(h*w, d)).reshape(h, w, 1)
-    
-    wm_mask = sana.image.frame_like(heatmap, (pred == model.wm_label).astype(np.uint8))
-    wm_mask.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', close_r))
-    wm_mask.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', open_r))
-
-    return wm_mask

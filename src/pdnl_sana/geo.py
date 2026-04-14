@@ -4,7 +4,9 @@ import math
 
 # installed packages
 import numpy as np
+from numba import jit
 from scipy.spatial import ConvexHull
+import shapely.geometry
 
 class Converter:
     """
@@ -637,6 +639,7 @@ class Annotation(Array):
         self = self.disconnect()
         return curve_like(self, self[:,0], self[:,1])
 
+@jit(nopython=True)
 def ray_tracing(x,y,poly):
     """
     Detects if the given xy point is inside the poly array. This uses numba so that the loops are very fast, therefore the inputs must be basic C datatypes
