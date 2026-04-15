@@ -23,48 +23,89 @@ import pdnl_sana.image
 
 def detect_somas(
         pos: pdnl_sana.image.Frame, 
-        minimum_soma_radius:int =1):
+        minimum_soma_radius:int =1,
+        debug:bool=False
+):
+
+    if debug:
+        print('Calculating Distance Transform...', flush=True)
     dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
+
+    if debug:
+        print('Running connected Components...', flush=True)
+    _, markers = cv2.connectedComponents(pos.img)
     
+    if debug:
+        print('Detecting Peaks...', flush=True)
     ctrs = skimage.feature.peak_local_max(
         dist,
         min_distance=int(round(1.5*minimum_soma_radius)),
         threshold_abs=minimum_soma_radius,
+        labels=markers,
+        num_peaks_per_label=1
     )[:,::-1]
 
-    polys = pos.to_polygons()[0]
-    keep_ctrs = []
-    for poly in polys:
-        best_dist = 0
-        best_ctr = None
-        for ctr in ctrs:
-            x, y = ctr
-            if pdnl_sana.geo.ray_tracing(*ctr, poly):
-                if dist[y,x] > best_dist:
-                    best_dist = dist[y,x]
-                    best_ctr = ctr
-        if not best_ctr is None:
-            keep_ctrs.append(best_ctr)
+    if debug:
+        print('Post-processing overlapping somas...', flush=True)
+    # polys = pos.to_polygons()[0]
+    # for ctr in ctrs:
+    #     for poly in tqdm(polys):
+    #         px, py = np.mean(poly, axis=0)
+            
+    #         # before ray tracing just check if its in the neighborhood
+    #         if np.sqrt((x-px)**2+(y-py)**2) > minimum_soma_radius*10:
+    #             continue
+            
+    #         if pdnl_sana.geo.ray_tracing(*ctr, poly):
+
+    #             for other_ctr in ctrs:
+    #                 if ctr[0] == other_ctr[0] and ctr[1] == other_ctr[1]:
+    #                     continue
+    #                 if pdnl_sana.geo.ray_tracing(*other_ctr, poly):
+                        
+                
+    # keep_ctrs = []
+    # for poly in tqdm(polys):
+    #     px, py = np.mean(poly, axis=0)
+    #     best_dist = 0
+    #     best_ctr = None
+    #     for ctr in ctrs:
+    #         x, y = ctr
+
+    #         # before ray tracing just check if its in the neighborhood
+    #         if np.sqrt((x-px)**2+(y-py)**2) > minimum_soma_radius*10:
+    #             continue
+            
+    #         if pdnl_sana.geo.ray_tracing(*ctr, poly):
+    #             if dist[y,x] > best_dist:
+    #                 best_dist = dist[y,x]
+    #                 best_ctr = ctr
+    #     if not best_ctr is None:
+    #         keep_ctrs.append(best_ctr)
     
-    ctrs = np.array(keep_ctrs)
+    # ctrs = np.array(keep_ctrs)
 
     return ctrs
 
 def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10, npools=1, instance_segment=True, debug=False):
 
     if len(ctrs) == 0:
-        return []
+        return pdnl_sana.image.frame_like(pos, np.zeros_like(pos.img))
     
     # create the rotated anisotropic gaussian filters
     step = sana.geo.Point(stride, stride, False, pos.level)
     thetas = np.linspace(0, np.pi, n_directions, endpoint=False)
     filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=1, sg_y=sigma) for th in thetas]
 
+    if debug:
+        print('Applying Anisotropic Gaussian Kernels...', flush=True)
     # apply the filters to the positive pixels
     def apply_filter(filt, frame, step):
         return filt.apply(frame, step)
     if npools == 1:
-        directions = [apply_filter(filt, pos, step) for filt in filters]
+        directions = []
+        for filt in filters:
+            directions.append(apply_filter(filt, pos, step))
     else:
         directions = ThreadPool(npools).map(partial(apply_filter, frame=pos, step=step), filters)
 
@@ -99,15 +140,9 @@ def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10,
 
     return mask
 
-def get_skeleton_vertices(skeleton, skel_id):
-    
-    skeleton = Skeleton(skeleton)
-    df = summarize(skeleton)
-    
+def get_skeleton_vertices(skeleton, df, skel_id):
     path_ids = list(df[df['skeleton-id'] == skel_id].index)
-    if len(path_ids) == 0:
-        print(skel_id)
-        print(df[df['skeleton-id'] == skel_id])
+
     v = []
     for path_id in path_ids:
         v.append(skeleton.path_coordinates(path_id))
@@ -118,9 +153,11 @@ def get_skeleton_vertices(skeleton, skel_id):
     
     return v
 
+# TODO: for big images this needs to be split into smaller patches
 def match_polygons_to_skeleton(skeleton, polygons, debug=False):
-    
-    df = summarize(Skeleton(skeleton))
+
+    skel = Skeleton(skeleton)
+    df = summarize(skel, separator="-")
 
     if debug:
         fig, ax = plt.subplots(1,1)
@@ -130,35 +167,30 @@ def match_polygons_to_skeleton(skeleton, polygons, debug=False):
     
     # get all skeleton ids
     skel_ids = list(df['skeleton-id'].drop_duplicates())
-    
+
     if debug:
-        print('Number of Skeletons:', len(skel_ids))
-        print('Number of Polygons to match:', len(polygons))
+        print(f'Finding skeleton IDs for the {len(polygons)} polygons...', flush=True)
 
     ids = [None]*len(polygons)
-    for skel_id in tqdm(skel_ids):
+    
+    # loop through all skeletons
+    for i, skel_id in list(enumerate(skel_ids)):
+        v = get_skeleton_vertices(skel, df, skel_id)
+        p = sana.geo.Polygon(*v.T, is_micron=False, level=0)
         
-        # get the vertices of the current skeleton
-        v = get_skeleton_vertices(skeleton, skel_id)
-        if len(v) == 0:
-            continue
-        p = sana.geo.Polygon(v[:,0], v[:,1], is_micron=False, level=0)
+        # found all somas
+        if all([not x is None for x in ids]):
+            break
 
-        for i, polygon in enumerate(polygons):
-            
-            if not ids[i] is None:
+        # look for a matching soma polygon
+        for j, polygon in enumerate(polygons):
+            if not ids[j] is None:
                 continue
-                
+
             if p.is_partially_inside(polygon):
-                ids[i] = skel_id
-                
-                if debug:
-                    ax.plot(*p.T, color='blue')
+                ids[j] = skel_id
                 break
-        else:
-            if debug:
-                ax.plot(*p.T, color='green')
-      
+        
     # get the unaccounted for skeletons
     other_ids = list(df['skeleton-id'].drop_duplicates())
     [other_ids.remove(skel_id) for skel_id in ids if not skel_id is None]    
@@ -167,6 +199,9 @@ def match_polygons_to_skeleton(skeleton, polygons, debug=False):
 
 def merge_skeletons(skeleton, ids, other_ids, distance_threshold=10, debug=False):
     new_skeleton = skeleton.copy()
+    
+    skel = Skeleton(skeleton)
+    df = summarize(skel, separator="-")
 
     if debug:
         plotted = False
@@ -175,16 +210,19 @@ def merge_skeletons(skeleton, ids, other_ids, distance_threshold=10, debug=False
     if len(ids) == 0:
         return np.zeros_like(skeleton)
 
+    if debug:
+        print('Looking to merge unattached skeletons...', flush=True)    
     vertices = {}
     for skel_id in ids:
-        vertices[skel_id] = get_skeleton_vertices(skeleton, skel_id)
+        vertices[skel_id] = get_skeleton_vertices(skel, df, skel_id)
 
     # loop through the unattached skeletons
-    for other_id in tqdm(other_ids):
+    for other_id in other_ids:
 
         # get the vertices of this skeleton
-        v_process = get_skeleton_vertices(skeleton, other_id)
-
+        v_process = get_skeleton_vertices(skel, df, other_id)
+        process_ctr = np.mean(v_process, axis=0)
+        
         # stores the potential connections to each skeleton
         potential_connections = []
 
@@ -197,6 +235,12 @@ def merge_skeletons(skeleton, ids, other_ids, distance_threshold=10, debug=False
             if len(v_process) == 0 or len(v) == 0:
                 continue
 
+            # make sure we are at least nearby before looking for connections
+            v_ctr = np.mean(v, axis=0)
+            if np.sqrt(np.sum(np.square(v_ctr - process_ctr))) > distance_threshold:
+                continue
+
+            
             # loop through vertices in the skeleton
             connections = []
             for v0 in v:
@@ -261,8 +305,8 @@ def merge_skeletons(skeleton, ids, other_ids, distance_threshold=10, debug=False
     return new_skeleton
 
 def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=False):
-    
-    df = summarize(Skeleton(skeleton))
+    skel = Skeleton(skeleton)
+    df = summarize(skel, separator="-")
     
     new_pos = pos.copy()
     new_pos.img[:,:,:] = 0
@@ -299,7 +343,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
             continue
         
         # get the bounding box of the vertices
-        v = get_skeleton_vertices(skeleton, soma_id)
+        v = get_skeleton_vertices(skel, df, soma_id)
         p = sana.geo.Polygon(v[:,0], v[:,1], False, 0)
         loc, size = p.bounding_box()
         loc -= pad//2
@@ -322,7 +366,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
 
         # skeleton is blank, just return the soma
         if np.sum(skeleton_tile.img) == 0:
-            microglia = MicrogliaInstance(soma_tile, skeleton_tile, best_tile, loc, size)
+            microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
             microglia_instances.append(microglia)
             continue
         
@@ -343,7 +387,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
                 best_tile = new_tile
                 best_score = score
 
-        microglia = MicrogliaInstance(soma_tile, skeleton_tile, best_tile, loc, size)
+        microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
         microglia_instances.append(microglia)
 
     return microglia_instances
@@ -401,7 +445,7 @@ class MicrogliaInstance:
             v[5] = v[1] / v[3] # convexity
 
     def to_skeleton_features(self, v):
-        df = summarize(Skeleton(self.skeleton))
+        df = summarize(Skeleton(self.skeleton), separator="-")
 
         v[10] = np.sum(self.skeleton)
         v[11] = np.sum(df['branch-type'] == 2) # branchpoints
@@ -441,7 +485,7 @@ class MicrogliaInstance:
             v[17] = v[16] / v[13]
     
     def save(self, f):
-        np.savez(f, soma=self.soma.img, skeleton=self.skeleton.img, mask=self.mask.img, loc=self.loc, size=self.size)
+        np.savez(f, soma=self.soma, skeleton=self.skeleton, mask=self.mask, loc=self.loc, size=self.size)
 
     def overlay_skeleton(self, frame, color=[255,0,0]):
         tile = frame.get_tile(self.loc, self.size)
@@ -476,7 +520,7 @@ def segment_microglia(pos, somas, debug):
 
     soma_ids, process_ids = match_polygons_to_skeleton(skeleton, somas, debug=debug)
 
-    merged_skeleton = merge_skeletons(skeleton, soma_ids, process_ids, distance_threshold=30, debug=True)
+    merged_skeleton = merge_skeletons(skeleton, soma_ids, process_ids, distance_threshold=30, debug=debug)
 
     microglia_instances = reconstruct_instances_from_skeleton(pos, skeleton, somas, debug=debug)
 
@@ -511,7 +555,7 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
 
     # find all the somas throughout the counterstain
     # TODO: parameter should be in microns!
-    soma_ctrs = sana.process.detect_somas(hem, minimum_soma_radius=3)
+    soma_ctrs = detect_somas(hem, minimum_soma_radius=3)
     
     # segment the somas using polygons
     soma_polygons, _ = hem.instance_segment(soma_ctrs)[0]

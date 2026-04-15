@@ -49,7 +49,7 @@ class Processor:
             self.main_mask = main_mask
         else:
             if main_roi is None:
-                self.main_mask = sana.image.frame_like(self.frame, np.ones(self.frame.shape[:2], dtype=np.uint8))
+                self.main_mask = sana.image.frame_like(self.frame, np.ones(self.frame.img.shape[:2], dtype=np.uint8))
             else:
                 self.main_roi = main_roi
                 self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
