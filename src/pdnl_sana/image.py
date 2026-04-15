@@ -189,6 +189,42 @@ class Frame:
         ])
         return img
 
+    def set_tile(self, loc, size, tile):
+        """
+        Sets a cropped rectangular tile on the frame
+        :param loc: top left location of tile
+        :param size: size of tile
+        :param tile: image data to be placed on the tile
+        """
+        if not self.converter is None:
+            self.converter.to_pixels(loc, self.level)
+            self.converter.to_pixels(size, self.level)
+            loc = self.converter.to_int(loc)
+            size = self.converter.to_int(size)
+        w, h = self.size()
+        (x0, y0) = loc[0], loc[1]
+        (x1, y1) = x0+size[0], y0+size[1]
+
+        pad_x0, pad_y0, pad_x1, pad_y1 = 0, 0, 0, 0
+        if x0 < 0:
+            pad_x0 = -x0
+        if y0 < 0:
+            pad_y0 = -y0
+        if x1 >= w:
+            pad_x1 = x1-w
+        if y1 >= h:
+            pad_y1 = y1-h
+
+        x0 = np.clip(x0, 0, None)
+        y0 = np.clip(y0, 0, None)
+        x1 = np.clip(x1, None, w)
+        y1 = np.clip(y1, None, h)
+
+        self.img[y0:y1, x0:x1] = tile[
+            0+pad_y0:tile.shape[0]-pad_y1, 
+            0+pad_x0:tile.shape[1]-pad_x1
+        ]
+
     def crop(self, loc, size):
         """
         Crops the image to the given rectangle
@@ -674,7 +710,7 @@ def frame_like(frame, img):
 #
 # end of frame_like
 
-def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=None):
+def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=sana.geo.Converter(), outlines_only=False, thickness=1):
 
     """
     Creates a mask using a input polygons
@@ -693,8 +729,12 @@ def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana
 
     w, h = size.astype(int)
     img = np.zeros((h,w), dtype=np.uint8)
-    img = cv2.fillPoly(img, pts=polygons, color=1)
-    img = cv2.fillPoly(img, pts=holes, color=0)
+    if not outlines_only:
+        img = cv2.fillPoly(img, pts=polygons, color=1)
+        img = cv2.fillPoly(img, pts=holes, color=0)
+    else:
+        img = cv2.polylines(img, polygons, True, thickness=thickness, color=1)
+        img = cv2.polylines(img, holes, True, thickness=thickness, color=1)
 
     return Frame(img)
 

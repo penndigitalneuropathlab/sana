@@ -12,6 +12,7 @@ from matplotlib import pyplot as plt
 from sklearn.preprocessing import StandardScaler
 from sklearn.pipeline import Pipeline
 from sklearn.mixture import GaussianMixture
+from scipy.spatial import ConvexHull
 
 from skimage.morphology import skeletonize
 from skan import Skeleton, draw, sholl_analysis, summarize
@@ -321,11 +322,8 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
 
         # skeleton is blank, just return the soma
         if np.sum(skeleton_tile.img) == 0:
-            locs.append(loc)
-            sizes.append(size)
-            microglia_masks.append(new_tile)
-            soma_masks.append(soma_tile)
-            microglia_skeletons.append(skeleton_tile)
+            microglia = MicrogliaInstance(soma_tile, skeleton_tile, best_tile, loc, size)
+            microglia_instances.append(microglia)
             continue
         
         # dilate the mask a bit, then test DICE
@@ -346,7 +344,6 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
                 best_score = score
 
         microglia = MicrogliaInstance(soma_tile, skeleton_tile, best_tile, loc, size)
-
         microglia_instances.append(microglia)
 
     return microglia_instances
@@ -359,9 +356,119 @@ class MicrogliaInstance:
         self.loc = loc
         self.size = size
 
+    def to_features(self):
+        v = np.full((18,), np.nan, dtype=float)
+
+        self.to_polygon_features(v)
+        self.to_soma_features(v)
+        self.to_convexhull_features(v)
+        if np.sum(self.skeleton) != 0:
+            self.to_skeleton_features(v)
+            self.to_sholl_features(v)
+        else:
+            v[10:18] = 0
+
+        return v
+
+    def to_polygon_features(self, v):
+        polys = pdnl_sana.image.Frame(self.mask).to_polygons()[0]
+        if len(polys) != 0:
+            poly = polys[0]
+            v[0] = poly.get_area()
+            v[1] = poly.get_perimeter()
+            v[6] = poly.get_circularity()
+        else:
+            v[0] = 0
+            v[1] = 0
+            v[6] = 0
+
+    def to_soma_features(self, v):
+        poly = pdnl_sana.image.Frame(self.soma).to_polygons()[0][0]
+        v[7] = poly.get_area()
+        v[8] = poly.get_perimeter()
+        v[9] = poly.get_circularity()
+
+    def to_convexhull_features(self, v):
+        polys = pdnl_sana.image.Frame(self.mask).to_polygons()[0]
+        if len(polys) != 0:
+            poly = polys[0]
+            ch = ConvexHull(poly)
+            ch_xy = poly[ch.vertices]
+            microglia_ch = pdnl_sana.geo.Polygon(*ch_xy.T)
+            v[2] = microglia_ch.get_area()
+            v[3] = microglia_ch.get_perimeter()
+            v[4] = v[0] / v[2] # solidity
+            v[5] = v[1] / v[3] # convexity
+
+    def to_skeleton_features(self, v):
+        df = summarize(Skeleton(self.skeleton))
+
+        v[10] = np.sum(self.skeleton)
+        v[11] = np.sum(df['branch-type'] == 2) # branchpoints
+        v[12] = np.sum(df['branch-type'] == 1) # endpoints
+
+    def to_sholl_features(self, v):
+        soma = pdnl_sana.image.Frame(self.soma).to_polygons()[0][0]
+        loc, size = soma.bounding_box()
+        soma_center = np.rint(loc + size // 2).astype(int)
+        pos_idxs = np.array(np.where(self.skeleton == 1)[:-1]).T[:,::-1]
+        dist = np.sum(np.square(pos_idxs - soma_center), axis=1)
+        center = pos_idxs[np.argmin(dist)][::-1]
+
+        skeleton = Skeleton(self.skeleton[:,:,0])
+        max_radius = np.max([center[0], center[1], self.skeleton.shape[0]-center[0], self.skeleton.shape[1]-center[1]])
+        max_radius += 10
+        radii = np.arange(4, max_radius, 4)
+        center, radii, counts = sholl_analysis(skeleton, center=center, shells=radii)
+
+        # branching index
+        bi = 0
+        for i in range(1, len(radii)):
+            bi += np.max([(counts[i]-counts[i-1])*radii[i], 0])
+        v[14] = bi
+        v[15] = radii[np.argmax(counts)] # critical radius
+        v[16] = np.max(counts)
+
+        inv_soma = self.soma.copy()
+        inv_soma = 1-inv_soma
+        process_mask = pdnl_sana.image.Frame(self.skeleton.copy().astype(np.uint8))
+        process_mask.mask(pdnl_sana.image.Frame(inv_soma.astype(np.uint8)))
+
+        v[13] = len(process_mask.to_polygons()[0])
+        if v[13] == 0:
+            v[17] = 0
+        else:
+            v[17] = v[16] / v[13]
+    
     def save(self, f):
-        np.savez(f, {'soma': self.soma, 'skeleton': self.skeleton, 'mask': self.mask, 'loc': self.loc, 'size': self.size})
-        
+        np.savez(f, soma=self.soma.img, skeleton=self.skeleton.img, mask=self.mask.img, loc=self.loc, size=self.size)
+
+    def overlay_skeleton(self, frame, color=[255,0,0]):
+        tile = frame.get_tile(self.loc, self.size)
+        tile[self.skeleton[:,:,0] != 0] = color
+        frame.set_tile(self.loc, self.size, tile)
+
+    def overlay_microglia(self, frame, color=[255,0,0]):
+        tile = frame.get_tile(self.loc, self.size)
+        dil_mask = pdnl_sana.image.Frame(self.mask)
+        dil_mask.apply_morphology_filter(pdnl_sana.filter.MorphologyFilter('dilation', 'ellipse', 3))
+        polys = dil_mask.to_polygons()[0]
+        outline = pdnl_sana.image.create_mask(np.array(tile.shape[:2][::-1]), polys, outlines_only=True, thickness=2)
+        tile[outline.img[:,:,0] != 0] = color
+        frame.set_tile(self.loc, self.size, tile)
+
+    def overlay_prediction(self, frame, proba, colors):
+        tile = frame.get_tile(self.loc, self.size)
+        mask = pdnl_sana.image.Frame(self.mask)
+        polys = mask.to_polygons()[0]
+        chs = []
+        for poly in polys:
+            ch = ConvexHull(poly)
+            chs.append(pdnl_sana.geo.Polygon(*poly[ch.vertices].T))
+        outline = pdnl_sana.image.create_mask(np.array(tile.shape[:2][::-1]), chs, outlines_only=True, thickness=2)
+
+        tile[outline.img[:,:,0] != 0] = colors[np.argmax(proba)]
+        frame.set_tile(self.loc, self.size, tile)
 
 def segment_microglia(pos, somas, debug):
     
