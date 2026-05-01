@@ -109,6 +109,13 @@ class Frame:
         """
         self.img = np.rint(self.img).astype(np.uint8)
 
+    def to_binary(self):
+        """
+        Converts the image to 1's and 0's
+        """
+        if np.max(self.img) != 0:
+            self.img = np.rint(self.img / np.max(self.img)).astype(np.uint8)
+        
     def rescale(self, mi=None, mx=None):
         """
         Performs minmax normalization on the image array
@@ -710,7 +717,7 @@ def frame_like(frame, img):
 #
 # end of frame_like
 
-def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=sana.geo.Converter(), outlines_only=False, thickness=1):
+def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=sana.geo.Converter(), mask_value=1, outlines_only=False, thickness=1):
 
     """
     Creates a mask using a input polygons
@@ -730,11 +737,11 @@ def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana
     w, h = size.astype(int)
     img = np.zeros((h,w), dtype=np.uint8)
     if not outlines_only:
-        img = cv2.fillPoly(img, pts=polygons, color=1)
+        img = cv2.fillPoly(img, pts=polygons, color=mask_value)
         img = cv2.fillPoly(img, pts=holes, color=0)
     else:
-        img = cv2.polylines(img, polygons, True, thickness=thickness, color=1)
-        img = cv2.polylines(img, holes, True, thickness=thickness, color=1)
+        img = cv2.polylines(img, polygons, True, thickness=thickness, color=mask_value)
+        img = cv2.polylines(img, holes, True, thickness=thickness, color=mask_value)
 
     return Frame(img)
 

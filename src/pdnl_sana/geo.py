@@ -579,7 +579,7 @@ class Annotation(Array):
         verts = []
         for i in range(self.shape[0]):
             verts.append([self[i][0], self[i][1]])
-        if self.object_type == 'Polygon':
+        if self.object_type == 'Polygon' or self.object_type == 'Curve':
             verts = [verts]
             
         # create the JSON format, using the given class and name
