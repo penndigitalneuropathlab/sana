@@ -1,7 +1,12 @@
 
-import pdnl_sana.image
-import pdnl_sana as sana
 import numpy as np
+from tqdm import tqdm
+from numba import jit
+from concurrent.futures import ProcessPoolExecutor, as_completed
+
+import pdnl_sana as sana
+import pdnl_sana.image
+
 
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):
     """
@@ -200,3 +205,118 @@ class Sampler:
         mask = sana.image.frame_like(self.mask, self.mask.img[:, i_s])
         num, den = calculate_ao(pos, mask)
         return num, den, pos, mask, i_s
+
+@jit(nopython=True)
+def find_local_samples(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+    """
+    finds the samples which are inside this provided window
+    """
+    return (loc[0] < x) & (x < loc[0]+size[0]) & (loc[1] < y) & (y < loc[1]+size[1])
+
+@jit(nopython=True)
+def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+    """
+    calculates the weights of samples based on their proximity to a local 2d gaussian
+    :param x: (N,1) array, same resolution as loc/size
+    :param y: (N,1) array, same resolution as loc/size
+    :param loc: upper left corner of the tile
+    :param size: size of the tile
+    """
+    # define a 2d gaussian centered on the tile
+    mu_x, mu_y = loc + size / 2
+    sg_x, sg_y = size / 5
+
+    # weight each sample by its proximity to the 2d gaussian center
+    wgts = np.exp(-((x-mu_x)**2 / (2*sg_x**2) + (y-mu_y)**2 / (2*sg_y**2))) / \
+        (2*np.pi*sg_x*sg_y)
+
+    return wgts
+
+@jit(nopython=True)
+def aggregate_features_wrapper(args):
+    return aggregate_features(*args)
+@jit(nopython=True)
+def aggregate_features(window_size, feats, i0, j0, i1, j1, ds):
+    out = np.zeros((j1-j0, i1-i0, feats.shape[1]-2+1), dtype=float)
+    x, y = feats[:,:2].T
+    for j in range(j0, j1):
+        for i in range(i0, i1):
+            ctr = np.array([i,j])*ds
+            loc = ctr - window_size//2
+
+            window_idxs = find_local_samples(x, y, loc, window_size)
+            wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
+            
+            den = np.sum(wgts)
+            if den == 0:
+                continue
+            out[j-j0,i-i0,0] = den
+            for k in range(1, out.shape[2]):
+                out[j-j0,i-i0,k] = np.nansum(feats[window_idxs,k+1] * wgts) / den
+
+    return out
+
+def aggregate_features_chunked(feats, window_size, chunk_size, out_size, slide_size, n_processes=1):
+
+    # amount we're downsampling from slide pixels to output pixels
+    ds_slide = slide_size / out_size
+
+    # initialize the output array
+    N, d = feats.shape
+    print(feats.shape)
+    heatmap = np.zeros((out_size[1], out_size[0], d-1), dtype=float)
+    print(heatmap.shape)
+
+    # calculate the parameters in output pixels
+    window_size_out = window_size / ds_slide
+    chunk_size_out = chunk_size / ds_slide
+
+    # calculate the upper left coordinates of each chunk in the output coordinate system
+    chunk_xs = np.arange(0, out_size[0] + chunk_size_out[0], chunk_size_out[0])
+    chunk_ys = np.arange(0, out_size[1] + chunk_size_out[1], chunk_size_out[1])
+    chunk_locs_out = [sana.geo.Point(x, y) for y in chunk_ys for x in chunk_xs]
+
+    fn_args = []
+    for chunk_loc_out in chunk_locs_out:
+
+        # pad the chunk by the window since our output pixels are centered
+        pad_chunk_loc_out = chunk_loc_out - window_size_out / 2
+        pad_chunk_loc = pad_chunk_loc_out * ds_slide
+        x0, y0 = pad_chunk_loc
+        x1, y1 = pad_chunk_loc + chunk_size + window_size
+
+        # get all samples within the chunk
+        chunk_sample_idxs = (
+            (x0 < feats[:,0]) & (feats[:,0] < x1) & \
+            (y0 < feats[:,1]) & (feats[:,1] < y1)
+        )
+        chunk_feats = feats[chunk_sample_idxs]
+
+        # no samples found, no need to process this chunk
+        if len(chunk_feats) == 0:
+            continue
+
+        # get the output pixels which define this chunk
+        i0 = int(np.floor(chunk_loc_out[0]))
+        j0 = int(np.floor(chunk_loc_out[1]))
+        i1 = np.clip(int(round(chunk_loc_out[0] + chunk_size_out[0])), None, out_size[0]-1)
+        j1 = np.clip(int(round(chunk_loc_out[1] + chunk_size_out[1])), None, out_size[1]-1)
+        # print(i0, j0, i1, j1)
+        args = (window_size, feats, i0, j0, i1, j1, ds_slide)
+        fn_args.append(args)
+
+    with ProcessPoolExecutor(max_workers=n_processes) as executor:
+        future_args_mapping = {}
+        futures = set()
+        for args in fn_args:
+            future = executor.submit(sana.quantify.aggregate_features_wrapper, args)
+            future_args_mapping[future] = args
+            futures.add(future)
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Aggregating Features"):
+            out = future.result()
+
+            args = future_args_mapping[future]
+            i0, j0, i1, j1 = args[2:6]
+            heatmap[j0:j1, i0:i1] = out
+
+    return heatmap

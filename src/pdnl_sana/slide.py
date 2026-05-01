@@ -61,6 +61,8 @@ class Loader(openslide.OpenSlide):
                 self.mpp = float(self.properties['aperio.MPP'])
             elif 'openslide.mpp-x' in self.properties:
                 self.mpp = float(self.properties['openslide.mpp-x'])
+            elif 'tiff.XResolution' in self.properties and 'tiff.ResolutionUnit' in self.properties:
+                self.mpp = 10000 / float(self.properties['tiff.XResolution'])                
             else:
                 self.mpp = None
         else:
@@ -171,6 +173,11 @@ class Loader(openslide.OpenSlide):
         img = np.concatenate((padx1, img, padx2), axis=1)
 
         # convert to Frame object
+        self.logger.data["level"] = level
+        self.logger.data["mpp"] = self.converter.mpp
+        self.logger.data["ds"] = self.converter.ds
+        self.logger.data["loc"] = loc
+        self.logger.data["size"] = size
         return sana.image.Frame(img, level=level, converter=self.converter)
 
     def load_frame_with_roi(self, roi: sana.geo.Polygon, level: int=0, padding=0):
@@ -364,8 +371,9 @@ class Framer:
     :param step: distance between Frames, defaults to frame size
     :param fpad: amount of padding to add
     :param rois: list of polygons used to create a frame mask
+    :param holes: list of polygon holes used to create to subtract from the frame mask
     """
-    def __init__(self, loader: Loader, size: sana.geo.Point, level: int=0, step: sana.geo.Point=None, fpad: sana.geo.Point=None, rois: [sana.geo.Polygon]=[]):
+    def __init__(self, loader: Loader, size: sana.geo.Point, level: int=0, step: sana.geo.Point=None, fpad: sana.geo.Point=None, rois: {str: [sana.geo.Polygon]}={}, roi_holes: [sana.geo.Polygon]=[]):
 
         # store the slide loader
         self.loader = loader
@@ -396,25 +404,55 @@ class Framer:
         self.nframes = np.ceil(slide_size / self.step).astype(int)
 
         # prepare the ROIs
-        self.rois = [self.converter.rescale(roi, self.level) for roi in rois]
+        self.rois = rois
+        for key in self.rois:
+            for roi in self.rois[key]:
+                self.converter.rescale(roi, self.level)
+        self.roi_holes = [self.converter.rescale(roi_holes, self.level) for roi in roi_holes]
 
-    def load(self, i, j):
+    def get_coords(self, i, j):
         x = i * self.step[0]
         y = j * self.step[1]
         loc = sana.geo.point_like(self.size, x, y) - self.fpad
         size = self.size + 2*self.fpad
+        return loc, size
+
+    def load_mask(self, i, j):
+        loc, size = self.get_coords(i, j)
+
+        # move the ROIs to the chunk's local coordinate system
+        for key in self.rois:
+            for roi in self.rois[key]:
+                roi.translate(loc)
+        [hole.translate(loc) for hole in self.roi_holes]
+
+        roi_masks = {}
+        for mask_value, key in enumerate(self.rois):
+            roi_mask = sana.image.create_mask(
+                self.size,
+                self.rois[key], self.roi_holes,
+                level=self.level, converter=self.converter,
+                mask_value=mask_value+1
+            )
+            roi_masks[key] = roi_mask
+
+        # move the ROIs back to the slide coordinate system
+        for key in self.rois:
+            for roi in self.rois[key]:
+                roi.translate(-loc)
+        [hole.translate(-loc) for hole in self.roi_holes]
+
+        mask = pdnl_sana.image.Frame(np.zeros(self.size, dtype=np.uint8), level=self.level, converter=self.converter)
+        for key in roi_masks:
+            mask.img[roi_masks[key].img != 0] = 1
+        
+        return mask, roi_masks
+
+    def load_frame(self, i, j):
+        loc, size = self.get_coords(i, j)
         frame = self.loader.load_frame(loc, size, level=self.level)
         frame.frame_padding = self.fpad
-
-        # create the mask for the frame
-        for roi in self.rois:
-            roi.translate(loc)
-
-        mask = sana.image.create_mask_like(frame, self.rois)
-        for roi in self.rois:
-            roi.translate(-loc)
-        
-        return frame, mask
+        return frame
 
 def sort_segments(a, b, c=None, d=None):
     a = a.copy()

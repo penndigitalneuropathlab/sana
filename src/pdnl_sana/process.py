@@ -1,7 +1,18 @@
 
+# system modules
+import os
+from functools import partial
+from multiprocessing.dummy import Pool as ThreadPool
+
 # installed modules
-from matplotlib import pyplot as plt
 import numpy as np
+import cv2
+import skimage.feature
+import skfmm
+from matplotlib import pyplot as plt
+from sklearn.mixture import GaussianMixture
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 
 # sana modules
 import pdnl_sana as sana
@@ -10,6 +21,7 @@ import pdnl_sana.color_deconvolution
 import pdnl_sana.image
 import pdnl_sana.threshold
 import pdnl_sana.geo
+import pdnl_sana.slide
 
 class Processor:
     """
@@ -33,14 +45,14 @@ class Processor:
         self.frame = frame
 
         # generate the main mask
-        if main_mask is None:
-            self.main_roi = main_roi
-            if self.main_roi is None:
-                self.main_mask = sana.image.frame_like(self.frame, np.ones_like(self.frame.img))
-            else:
-                self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
-        else:
+        if not main_mask is None:
             self.main_mask = main_mask
+        else:
+            if main_roi is None:
+                self.main_mask = sana.image.frame_like(self.frame, np.ones(self.frame.img.shape[:2], dtype=np.uint8))
+            else:
+                self.main_roi = main_roi
+                self.main_mask = sana.image.create_mask_like(self.frame, [self.main_roi])
 
         # generate the sub masks
         self.sub_rois = []
@@ -73,8 +85,10 @@ class Processor:
             axs[0].imshow(frame.img, cmap='gray')
             axs[0].set_title('Original')
 
-        # apply the threshold
+        # apply the threshold and the mask
         frame.threshold(threshold)
+        if not mask is None:
+            frame.mask(mask)
 
         # DEBUG:
         if self.logger.debug_level == 'full':
@@ -103,17 +117,22 @@ class HDABProcessor(Processor):
             frame: sana.image.Frame, 
             apply_smoothing: bool=True,
             normalize_background: bool=True,
+            radius: int=100,
             stain_vector: list=None,
+            run_hem=True,
+            run_dab=True,
             **kwargs
     ):
         super(HDABProcessor, self).__init__(logger, frame, **kwargs)
 
         # separate out the individual stains within the image
         self.ss = sana.color_deconvolution.StainSeparator('H-DAB', stain_vector)
+        #self.ss.estimate_stain_vector(self.frame.img)
         stains = self.ss.separate(self.frame.img)
         self.hem = sana.image.frame_like(self.frame, stains[:,:,0])
         self.dab = sana.image.frame_like(self.frame, stains[:,:,1])
         self.res = sana.image.frame_like(self.frame, stains[:,:,2])
+        self.stains = [self.hem, self.dab, self.res]
 
         if logger.debug_level == 'full':
             fig, axs = plt.subplots(2, 3, sharex=True, sharey=True, figsize=(20,15))
@@ -134,18 +153,24 @@ class HDABProcessor(Processor):
         # rescale the OD to uint8 using the digital min/max
         # TODO: this compresses the digital space, maybe don't use min/max od!
         self.hem.img = self.hem.img - self.dab.img
-        self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
-        self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
+        if run_hem:
+            self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
+        if run_dab:
+            self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
         # smooth the DAB, mainly flattening interiors of objects
         if apply_smoothing:
-            self.hem.anisodiff()
-            self.dab.anisodiff()
+            if run_hem:
+                self.hem.anisodiff()
+            if run_dab:
+                self.dab.anisodiff()
 
         # subtract the bacgkround image from the stains
         if normalize_background:
-            self.hem.remove_background()
-            self.dab.remove_background()
+            if run_hem:
+                self.hem.remove_background(radius=radius)
+            if run_dab:
+                self.dab.remove_background(radius=radius)
 
         self.logger.data['apply_smoothing'] = apply_smoothing
         self.logger.data['normalize_background'] = normalize_background
@@ -159,7 +184,7 @@ class HDABProcessor(Processor):
             ax.imshow(self.dab.img, cmap='gray')
             ax.set_title('DAB (Preprocessed)')
 
-    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, morphology_filters=[], **kwargs):
+    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, mask=None, morphology_filters=[], target_stain="DAB"):
 
         # list of processed images to return
         ret = {
@@ -168,14 +193,12 @@ class HDABProcessor(Processor):
             'exclusion_mask': self.exclusion_mask,
             'valid_mask': self.valid_mask,
         }
-        self.logger.data['triangular_strictness'] = triangular_strictness
-        self.logger.data['minimum_threshold'] = minimum_threshold
-        self.logger.data['od_threshold'] = od_threshold
-        self.logger.data['morphology_filters'] = morphology_filters
+        stain_idx = self.ss.stain_vector.stains.index(target_stain)
+        stain = self.stains[stain_idx]
 
-        # get the threshold for the DAB that is inside the main roi
+        # get the threshold for the stain using pixels that are inside the ROI
         if od_threshold is None:
-            hist = self.dab.get_histogram(mask=self.main_mask)
+            hist = stain.get_histogram(mask=self.main_mask)
             threshold = sana.threshold.triangular_method(
                 hist, 
                 strictness=triangular_strictness,
@@ -190,9 +213,62 @@ class HDABProcessor(Processor):
                 (self.ss.max_od[1] - self.ss.min_od[1])
             
         # perform pixel classification using thresholding and morphology filters
-        self.positive_dab = self.dab.copy()
-        self.classify_pixels(self.positive_dab, threshold, morphology_filters=morphology_filters)
-        ret['positive_dab'] = self.positive_dab
+        positive_stain = stain.copy()
+        self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
+        ret['stain'] = stain
+        ret['positive_stain'] = positive_stain
+
+        self.logger.data['triangular_strictness'] = triangular_strictness
+        self.logger.data['minimum_threshold'] = minimum_threshold
+        self.logger.data['od_threshold'] = od_threshold
+        self.logger.data['morphology_filters'] = morphology_filters
+        self.logger.data['threshold'] = threshold
 
         # return all of the processed images
         return ret
+
+def preprocess_wsi_chunk_wrapper(args):
+    return preprocess_wsi_chunk(*args)
+def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
+    """
+    This function loads, preprocesses, and caches a chunk of a WSI
+    """
+    logger = sana.logging.Logger('normal', os.path.join(temp_dir, f'parameters_{i}_{j}.pkl'))
+    loader = sana.slide.Loader(logger, slide_f)
+    frame_size = sana.geo.Point(frame_size, frame_size, is_micron=False, level=level)
+    for roi in rois:
+        roi.is_micron = False
+        roi.level = level
+    framer = sana.slide.Framer(loader, size=frame_size, step=frame_size, level=level, rois=rois)
+
+    # get the frame mask
+    mask = framer.load_mask(i, j)
+
+    # decide if it's worth it to process this frame
+    if np.sum(mask.img) < 0.005*mask.img.shape[0]*mask.img.shape[1]:
+        return None, None
+
+    # extract the frame from the WSI
+    frame = framer.load_frame(i, j)
+
+    # preprocess the frame
+    processor = HDABProcessor(
+        logger, frame, main_mask=mask, 
+        run_hem=True, run_dab=True, 
+        apply_smoothing=False, 
+        normalize_background=True, radius=100
+    )
+
+    # cache the stain data
+    processor.hem.save(os.path.join(temp_dir, f"hem_{i}_{j}.png"))
+    processor.dab.save(os.path.join(temp_dir, f"dab_{i}_{j}.png"))
+    mask.save(os.path.join(temp_dir, f"mask_{i}_{j}.png"))
+    logger.write_data()
+
+    # return the histograms in order to calculate a global WSI
+    hem_histogram = processor.hem.get_histogram(mask=mask)
+    dab_histogram = processor.dab.get_histogram(mask=mask)
+
+    return hem_histogram, dab_histogram
+    
+

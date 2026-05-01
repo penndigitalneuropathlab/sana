@@ -4,7 +4,9 @@ import math
 
 # installed packages
 import numpy as np
+from numba import jit
 from scipy.spatial import ConvexHull
+import shapely.geometry
 
 class Converter:
     """
@@ -86,7 +88,6 @@ class Converter:
         """
         if not x.is_micron:
             return self.rescale(x, level)
-        
         if self.mpp is None:
             raise ConversionException("Microns per pixel resolution not specified.")
 
@@ -100,17 +101,15 @@ class Converter:
             x.level = 0
 
         # rescale to new pixel resolution
-        x = self.rescale(x, level)
-
-        return x
-
+        return self.rescale(x, level)
+    
 class Array(np.ndarray):
     """
     Wrapper class to a Numpy array which only allows (n,2) arrays, while also storing units and resolution. Follows this guide: https://numpy.org/doc/stable/user/basics.subclassing.html#slightly-more-realistic-example-attribute-added-to-existing-array
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         arr = np.array([x, y]).T
         obj = np.asarray(arr).view(cls)
         obj.is_micron = is_micron
@@ -178,7 +177,7 @@ class Point(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         # TODO: need to check validity of x and y, same in Array
         arr = np.array((x, y))
         obj = np.asarray(arr).view(cls)
@@ -217,7 +216,7 @@ class Polygon(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
@@ -238,10 +237,28 @@ class Polygon(Array):
         """
         Calculates the area of the Polygon
         """
+        return np.abs(self.get_signed_area())
+
+    def get_signed_area(self):
+        """
+        Calculates the area of the Polygon
+        """
         x0, y0 = self.get_xy()
         x1, y1 = self.get_rolled_xy()
-        A = 0.5 * np.abs(np.dot(x0, y1) - np.dot(x1, y0))
+        A = 0.5 * (np.dot(x0, y1) - np.dot(x1, y0))
         return A
+
+    def fit_ellipse(self, N=21):
+        rect = self.get_minimum_bounding_rectangle()
+        loc, size = rect.bounding_box()
+        ctr = loc + size/2
+        side_lengths = np.sqrt(np.sum((rect[1:] - rect[:-1])**2, axis=1))
+        major = float(np.max(side_lengths)/2)
+        minor = float(np.min(side_lengths)/2)
+        side_idx = np.argmax(side_lengths)
+        x, y = rect.get_xy()
+        angle = np.abs(np.mod(180*np.arctan2(y[1:]-y[:-1], x[1:]-x[:-1])/np.pi, 180)[side_idx])
+        return ellipse_like(self, ctr, major, minor, th=angle, N=N)
     
     def get_axes(self):
         """
@@ -261,13 +278,8 @@ class Polygon(Array):
 
         hull = self[ConvexHull(self).vertices]
 
-        edges = hull[1:] - hull[:-1]
-
-        angles = np.arctan2(edges[:,1], edges[:,0])
-
-        angles = np.abs(np.mod(angles, pi2))
-        angles = np.unique(angles)
-
+        # create rotation matrices
+        angles = np.linspace(0, np.pi, 180)
         rotations = np.vstack([
             np.cos(angles),
             np.cos(angles-pi2),
@@ -275,7 +287,7 @@ class Polygon(Array):
             np.cos(angles),
         ]).T
         rotations = rotations.reshape((-1, 2, 2))
-
+        
         rot_points = np.dot(rotations, hull.T)
 
         min_x = np.nanmin(rot_points[:, 0], axis=1)
@@ -335,7 +347,19 @@ class Polygon(Array):
         loc = point_like(self, x0, y0)
         size = point_like(self, x1-x0, y1-y0)
         return loc, size
-    
+
+    def get_centroid(self):
+        """
+        Gets the centroid of the array
+        """
+        xs, ys = self.T
+        xy = np.array([xs, ys])
+        A = self.get_signed_area()
+        cx, cy = np.dot(xy + np.roll(xy, 1, axis=1),
+                    xs * np.roll(ys, 1) - np.roll(xs, 1) * ys
+                    ) / (6 * A)
+        return point_like(self, cx, cy)
+
     def is_inside(self, poly):
         """
         Checks if all vertices of this Polygon are in the input Polygon
@@ -416,6 +440,33 @@ class Polygon(Array):
         """
         self = self.connect()
         return polygon_like(self, self[:,0], self[:,1])
+    def to_curve(self):
+        self = self.disconnect()
+        return curve_like(self, self[:,0], self[:,1])
+    
+    def slice(self, a, b, direction):
+        if direction > 0:
+            if a < b:
+                x, y = self[a:b+1].T
+            else:
+                l = len(self)-a+b
+                x, y = np.roll(self, len(self)-a, axis=0)[:l+1].T
+        else:
+            if b < a:
+                x, y = self[b:a+1].T
+            else:
+                l = len(self)-b+a
+                x, y = np.roll(self, len(self)-b, axis=0)[:l+1].T
+        return curve_like(self, x, y)
+
+    # this gets the shortest eulid connection between 2 vertices, traversing in either direction of the Polygon
+    def slice_shortest(self, a, b):
+        c1 = self.slice(a, b, +1)
+        c2 = self.slice(a, b, -1)
+        if c1.get_length() < c2.get_length():
+            return c1
+        else:
+            return c2
 
 class Curve(Array):
     """
@@ -425,7 +476,7 @@ class Curve(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, is_micron=None, level=None):
+    def __new__(cls, x, y, is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         return obj
     
@@ -475,6 +526,10 @@ class Curve(Array):
 
         return angle
     
+    def get_length(self):
+        x, y = self.get_xy()
+        return np.sqrt(np.sum((x[:-1]-x[1:])**2+(y[:-1]-y[1:])**2))
+
     def to_annotation(self, class_name, annotation_name="", attributes={}):
         """
         Converts the Curve to an Annotation using the LineString format in geojson
@@ -495,7 +550,7 @@ class Annotation(Array):
     :param is_micron: flag denoting if the Array is micron units or pixel units
     :param level: pixel resolution level (level=0 when in microns)
     """
-    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", attributes={}, object_type='Polygon', is_micron=None, level=None):
+    def __new__(cls, x, y, ifile="", class_name="", annotation_name="", attributes={}, object_type='Polygon', is_micron=False, level=0):
         obj = Array(x, y, is_micron, level).view(cls)
         
         # store attributes
@@ -524,7 +579,7 @@ class Annotation(Array):
         verts = []
         for i in range(self.shape[0]):
             verts.append([self[i][0], self[i][1]])
-        if self.object_type == 'Polygon':
+        if self.object_type == 'Polygon' or self.object_type == 'Curve':
             verts = [verts]
             
         # create the JSON format, using the given class and name
@@ -584,6 +639,7 @@ class Annotation(Array):
         self = self.disconnect()
         return curve_like(self, self[:,0], self[:,1])
 
+@jit(nopython=True)
 def ray_tracing(x,y,poly):
     """
     Detects if the given xy point is inside the poly array. This uses numba so that the loops are very fast, therefore the inputs must be basic C datatypes
@@ -623,6 +679,17 @@ def rectangle_like(obj, loc, size):
     x = [loc[0], loc[0]+size[0], loc[0]+size[0], loc[0], loc[0]]
     y = [loc[1], loc[1], loc[1]+size[1], loc[1]+size[1], loc[1]]
     return polygon_like(obj, x, y)
+def ellipse_like(obj, ctr, a, b, th=0, N=21):
+    theta = np.linspace(0, 2*np.pi, N)    
+    x = a*np.cos(theta) + ctr[0]
+    y = b*np.sin(theta) + ctr[1]
+    ret = polygon_like(obj, x, y)
+    ret.rotate(ctr, th)
+    return ret
+        
+def circle_like(obj, ctr, radius, N=21):
+    return ellipse_like(obj, ctr, radius, radius, th=0, N=N)
+
 def annotation_like(obj, x, y):
     return Annotation(
         x, y,
@@ -688,6 +755,34 @@ def inverse_transform_array(x, loc, M, crop_loc):
 
     return x
 
+def from_shapely(p, is_micron=None, level=None, use_interior=False):
+    """
+    this function converts shapely.Polygon -> sana.geo.Polygon and shapely.MultiPolygon to list of sana.geo.Polygon's
+    """
+    if type(p) is shapely.geometry.MultiPolygon:
+        polygons = []
+        for geom in p.geoms:
+            out_p = from_shapely(geom, is_micron=is_micron, level=level, use_interior=use_interior)
+            if type(out_p) is list:
+                polygons += out_p
+            else:
+                polygons.append(out_p)
+        return polygons
+    elif type(p) is shapely.geometry.Polygon:
+        if use_interior:
+            if not hasattr(p, 'interiors'):
+                return None
+            polygons = []
+            for ring in p.interiors:
+                xs, ys = ring.xy
+                polygons.append(Polygon(xs, ys, is_micron=is_micron, level=level))
+            return polygons
+        else:
+            xs, ys = p.exterior.xy
+            return Polygon(xs, ys, is_micron=is_micron, level=level)
+    else:
+        return None
+    
 class UnitException(Exception):
     def __init__(self, message):
         self.message = message

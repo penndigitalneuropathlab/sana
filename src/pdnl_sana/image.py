@@ -1,6 +1,7 @@
 
 # system packages
 import os
+import time
 
 # installed packages
 import cv2
@@ -9,6 +10,7 @@ from PIL import Image
 import shapely.geometry
 from matplotlib import colors
 from matplotlib import pyplot as plt
+import shapely.geometry
 
 # sana packages
 import pdnl_sana.geo
@@ -24,12 +26,15 @@ class Frame:
     :param padding: amount of padding added to the frame
     :param is_deformed: whether or not this frame was normalized to a common cortical space, usually False
     """
-    def __init__(self, img, level=None, converter=None, padding=0, is_deformed=False):
+    def __init__(self, img, level=0, converter=sana.geo.Converter(), padding=0, is_deformed=False):
 
         # load/store the image array
         if type(img) is str:
             if img.endswith('.npz'):
                 self.img = load_compressed_array(img)
+            elif img.endswith('.npy'):
+                im = np.load(img)
+                self.img = im
             else:
                 im = np.array(Image.open(img))
                 if len(im.shape) == 2:
@@ -88,9 +93,11 @@ class Frame:
     def is_short(self):
         return self.img.dtype == np.uint8
     def is_float(self):
-        return self.img.dtype == float
-
-    def to_float(self):
+        return np.issubdtype(self.img.dtype, float)
+    def is_int(self):
+        return np.issubdtype(self.img.dtype, np.integer)
+    
+    def to_float(self): 
         """
         Converts short int values to floating point values
         """
@@ -102,6 +109,13 @@ class Frame:
         """
         self.img = np.rint(self.img).astype(np.uint8)
 
+    def to_binary(self):
+        """
+        Converts the image to 1's and 0's
+        """
+        if np.max(self.img) != 0:
+            self.img = np.rint(self.img / np.max(self.img)).astype(np.uint8)
+        
     def rescale(self, mi=None, mx=None):
         """
         Performs minmax normalization on the image array
@@ -110,7 +124,7 @@ class Frame:
             mi = np.min(self.img)
         if mx is None:
             mx = np.max(self.img)
-        if self.is_short():
+        if self.is_int():
             self.to_float()
 
         self.img = self.img.clip(mi, mx)
@@ -182,6 +196,42 @@ class Frame:
         ])
         return img
 
+    def set_tile(self, loc, size, tile):
+        """
+        Sets a cropped rectangular tile on the frame
+        :param loc: top left location of tile
+        :param size: size of tile
+        :param tile: image data to be placed on the tile
+        """
+        if not self.converter is None:
+            self.converter.to_pixels(loc, self.level)
+            self.converter.to_pixels(size, self.level)
+            loc = self.converter.to_int(loc)
+            size = self.converter.to_int(size)
+        w, h = self.size()
+        (x0, y0) = loc[0], loc[1]
+        (x1, y1) = x0+size[0], y0+size[1]
+
+        pad_x0, pad_y0, pad_x1, pad_y1 = 0, 0, 0, 0
+        if x0 < 0:
+            pad_x0 = -x0
+        if y0 < 0:
+            pad_y0 = -y0
+        if x1 >= w:
+            pad_x1 = x1-w
+        if y1 >= h:
+            pad_y1 = y1-h
+
+        x0 = np.clip(x0, 0, None)
+        y0 = np.clip(y0, 0, None)
+        x1 = np.clip(x1, None, w)
+        y1 = np.clip(y1, None, h)
+
+        self.img[y0:y1, x0:x1] = tile[
+            0+pad_y0:tile.shape[0]-pad_y1, 
+            0+pad_x0:tile.shape[1]-pad_x1
+        ]
+
     def crop(self, loc, size):
         """
         Crops the image to the given rectangle
@@ -215,7 +265,7 @@ class Frame:
             raise ImageTypeException('Convolution only supported on single-channel images')
 
         tile_size = sana.geo.point_like(tile_step, kernel.shape[1], kernel.shape[0])
-        
+
         # generate the tile views to convolve the kernel with
         tiles = self.to_tiles(tile_size, tile_step, align_center=align_center)
 
@@ -230,7 +280,7 @@ class Frame:
 
         return result
 
-    def remove_background(self, min_background=0, max_background=255, debug=False):
+    def remove_background(self, radius=100, min_background=0, max_background=255, debug=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by estimating a background image, which is then subtracted from the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
 
@@ -249,17 +299,16 @@ class Frame:
             axs[0].imshow(self.img)
 
         # get the tiles for the convolution
-        # TODO: check the parameters, make these arg
         tsize = self.converter.to_int(self.converter.to_pixels(
-            sana.geo.Point(100, 100, is_micron=True), 
+            sana.geo.Point(radius, radius, is_micron=True), 
             self.level
         ))
         if tsize[0] % 2 == 0: tsize[0] += 1
         if tsize[1] % 2 == 0: tsize[1] += 1
-        tstep = sana.geo.Point(50, 50, is_micron=True)
+        tstep = tsize / 2
         kern_sigma = tsize[0]/5
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
-
+        
         # find the background simply by gaussian blurring the image
         # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
         background_image = self.convolve(kernel, tstep, align_center=True)
@@ -357,6 +406,107 @@ class Frame:
                                      ), mode=mode)
         return frame_like(self, img)
 
+    def to_polygons(self):
+        """
+        Converts a binary image to a list of pdnl_sana.geo.Polygon objects based on the Contour Detection from cv2
+        """
+        if not self.is_binary():
+            raise ImageTypeException('Image must be a binary image')
+
+        bodies, holes = [], []
+
+        # run contour detection to find boundaries between objects
+        contours, hierarchy = cv2.findContours(self.img, mode=cv2.RETR_TREE, method=cv2.CHAIN_APPROX_SIMPLE)
+
+        # nothing was found
+        if len(contours) == 0:
+            return bodies, holes
+        
+        # body contours are contours with no parent in the hierarchy
+        has_no_parent = hierarchy[0][:,3] == -1
+        contour_idxs = np.arange(0, len(contours)).astype(int)
+        body_contour_idxs = contour_idxs[has_no_parent]
+
+        # potentially separate body contours into several contours
+        # NOTE: this is a fix for when there is a 1 pixel wide gap
+        #       cv2.findContours doesn't handle this properly
+        for body_idx in body_contour_idxs:
+
+            # skipping improper contours
+            if contours[body_idx].shape[0] < 3:
+                continue
+
+            # create the body polygon
+            # NOTE: this is a catch-all fix for some polygons that shapely doesn't like
+            orig_body = shapely.geometry.Polygon(np.squeeze(contours[body_idx])).buffer(0)
+            body = shapely.geometry.Polygon(np.squeeze(contours[body_idx])).buffer(0)
+            
+            # hole contours are contours whose parent is the current body contour
+            parent_is_body = hierarchy[0][:,3] == body_idx
+            hole_contour_idxs = contour_idxs[parent_is_body]
+
+            # subtract the hole from the body
+            for hole_idx in hole_contour_idxs:
+
+                # create the hole polygon
+                # NOTE: this is a catch-all fix for some polygons that shapely doesn't like
+                hole = shapely.geometry.Polygon(np.squeeze(contours[hole_idx])).buffer(0)
+
+                # remove the hole from the body
+                body = body.difference(hole)
+
+            # convert shapely.MultiPolygons and shapely.Polygon to sana.geo.Polygons
+            res = sana.geo.from_shapely(body, is_micron=False, level=self.level)
+            if type(res) is list:
+                bodies += [x for x in res if not x is None]
+            else:
+                bodies.append(res)
+            res = sana.geo.from_shapely(body, is_micron=False, level=self.level, use_interior=True)
+            if type(res) is list:
+                holes += [x for x in res if not x is None]
+            else:
+                holes.append(res)
+
+        # keep only proper contours
+        bodies = [x for x in bodies if len(x) >= 3]
+        holes = [x for x in holes if len(x) >= 3]
+        
+        return bodies, holes
+
+    def instance_segment(self, ctrs, debug=False):
+        
+        # generate a foreground image using the soma centers
+        fg = np.zeros_like(self.img)[:,:,0]
+        fg[ctrs[:,1], ctrs[:,0]] = 1
+
+        # create an RGB image for the watershed algorithm, if necessary
+        if self.is_gray():
+            rgb = np.tile(self.img, 3)
+        else:
+            rgb = self.img
+
+        # get the unique components
+        _, markers = cv2.connectedComponents(fg)
+
+        # run the watershed algorithm on the unique components
+        markers = cv2.watershed(rgb, markers)
+            
+        # remove the background segmentation
+        markers += 1
+        bg = np.argmax(np.bincount(markers.flatten()))
+        markers[markers == bg] = 0
+
+        # convert to markers binary image, preserving boundaries between objects
+        binary_markers = markers.copy()
+        binary_markers[binary_markers != 0] = 1
+        binary_markers = binary_markers.astype(np.uint8)
+        binary_markers = frame_like(self, binary_markers)
+
+        # get the object polygons from the instance segmented binary mask
+        objs = binary_markers.to_polygons()
+
+        return objs, markers
+    
     def blend(self, mask, alpha: float=1.0, color=(255,0,0)):
         """
         Blends a binary mask with an RGB image
@@ -378,7 +528,7 @@ class Frame:
         self.img = overlay * alpha + self.img * (1-alpha)
 
         self.rescale(0, 255)
-        
+
     def save(self, fpath, invert_sform=False, spacing=None):
         """
         Writes the image array to a file
@@ -397,7 +547,7 @@ class Frame:
                 if self.is_gray():
                     im = self.img[:,:,0]
                 if self.is_binary():
-                    im *= 255
+                    im = (255 * im).astype(np.uint8)
                 im = Image.fromarray(im)
                 im.save(fpath)
     
@@ -567,22 +717,45 @@ def frame_like(frame, img):
 #
 # end of frame_like
 
-def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon]):
+def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[], level: int=None, converter: sana.geo.Converter=sana.geo.Converter(), mask_value=1, outlines_only=False, thickness=1):
+
+    """
+    Creates a mask using a input polygons
+    :param size: size of mask to create
+    :param polygons: list of Polygons to use as positive pixels
+    :param holes: list of Polygons to use as negative pixels
+    """
+    if not converter is None:
+        if not level is None:
+            polygons = [converter.to_pixels(p, level) for p in polygons]
+            holes = [converter.to_pixels(p, level) for p in holes]
+        polygons = [converter.to_int(p) for p in polygons]
+        holes = [converter.to_int(p) for p in holes]
+    polygons = [p.connect() for p in polygons]
+    holes = [p.connect() for p in holes]
+
+    w, h = size.astype(int)
+    img = np.zeros((h,w), dtype=np.uint8)
+    if not outlines_only:
+        img = cv2.fillPoly(img, pts=polygons, color=mask_value)
+        img = cv2.fillPoly(img, pts=holes, color=0)
+    else:
+        img = cv2.polylines(img, polygons, True, thickness=thickness, color=mask_value)
+        img = cv2.polylines(img, holes, True, thickness=thickness, color=mask_value)
+
+    return Frame(img)
+
+
+def create_mask_like(frame: Frame, polygons: [sana.geo.Polygon], holes: [sana.geo.Polygon]=[]):
     """
     Creates a mask with the same size as the given Frame using a list of Polygons
     :param frame: frame to emulate
-    :param polygons: list of Polygons to fill in
+    :param polygons: list of Polygons to use as positive pixels
+    :param holes: list of Polygons to use as negative pixels
     """
-    int_polygons = []
-    for p in polygons:
-        frame.converter.to_pixels(p, frame.level)
-        p = frame.converter.to_int(p).connect()
-        int_polygons.append(p)
 
-    mask_img = np.zeros(frame.img.shape[:2], dtype=np.uint8)
-    mask_img = cv2.fillPoly(mask_img, pts=int_polygons, color=1)
-
-    return frame_like(frame, mask_img)
+    mask = create_mask(frame.size(), polygons=polygons, holes=holes, converter=frame.converter)
+    return frame_like(frame, mask.img)
 
 def load_compressed_array(filename):
     data = np.load(filename)

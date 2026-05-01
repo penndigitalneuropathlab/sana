@@ -7,12 +7,71 @@ import pdnl_sana.geo
 import pdnl_sana.image
 import pdnl_sana as sana
 
+def fit_rotated_polynomial(c, degrees, N, n_angles=16, fixed_endpoints=True, x0=None, x1=None):
+    angles = np.linspace(0, 180, n_angles, endpoint=False)
+    ctr = sana.geo.point_like(c, 0, 0)
+    best_c = None
+    best_d = np.inf
+    interp_c = interp(c, N)
+    for angle in angles:
+        test_c = c.copy()
+        test_c.rotate(ctr, angle)
+        x, y = test_c.T
+        x_is_increasing = np.all(np.diff(x) >= 0)
+        y_is_increasing = np.all(np.diff(y) >= 0)
+        if x_is_increasing:
+            fit_c = polyfit_with_fixed_points(test_c, degrees, N)
+            if fit_c is None:
+                continue
+            fit_c.rotate(ctr, -angle)
+        elif y_is_increasing:
+            fit_c = polyfit_with_fixed_points(test_c[:, ::-1], degrees, N)
+            if fit_c is None:
+                continue
+            fit_c = fit_c[:, ::-1]
+            fit_c.rotate(ctr, -angle)
+        else:
+            continue
+        d = np.sum((interp_c - fit_c)**2)
+        if d < best_d:
+            best_c = fit_c
+
+    return best_c
+
+def polyfit_with_fixed_points(c, n, N):
+    x, y = c.T
+    xf = np.array([x[0], x[-1]])
+    yf = np.array([y[0], y[-1]])
+    
+    mat = np.empty((n + 1 + len(xf),) * 2)
+    vec = np.empty((n + 1 + len(xf),))
+    x_n = x**np.arange(2 * n + 1)[:, None]
+    yx_n = np.sum(x_n[:n + 1] * y, axis=1)
+    x_n = np.sum(x_n, axis=1)
+    idx = np.arange(n + 1) + np.arange(n + 1)[:, None]
+    mat[:n + 1, :n + 1] = np.take(x_n, idx)
+    xf_n = xf**np.arange(n + 1)[:, None]
+    mat[:n + 1, n + 1:] = xf_n / 2
+    mat[n + 1:, :n + 1] = xf_n.T
+    mat[n + 1:, n + 1:] = 0
+    vec[:n + 1] = yx_n
+    vec[n + 1:] = yf
+    try:
+        params = np.linalg.solve(mat, vec)
+    except:
+        return None
+    z = params[:n+1][::-1]
+    p = np.poly1d(z)
+    xnew = np.linspace(xf[0], xf[1], N)
+    ynew = p(xnew)
+    return sana.geo.curve_like(c, xnew, ynew)
+
 def fit_polynomial(c, degrees, N, fixed_endpoints=True, x0=None, x1=None):
     c = interp(c, N)
     x, y = c.T
     sigma = np.ones_like(x)
     if fixed_endpoints:
-        sigma[[0, -1]] = 0.01
+        sigma[[0, -1]] = 0.001
     def f(x, *z):
         return np.poly1d(z)(x)
     z, _ = scipy.optimize.curve_fit(f, x, y, p0=(0,)*(degrees+1), sigma=sigma)
@@ -241,6 +300,7 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
         # rotate the sampling curve back to the original coordinate system
         sampling_curve.rotate(ctr, angle)
         if i % plot_interval == 0 and not ax is None:
+            #color = plt.cm.coolwarm(np.linspace(0, 1, sampling_curve.shape[0]))
             ax.plot(*sampling_curve.T, color='red', linewidth=0.5)
             ax.plot(sampling_curve[0,0], sampling_curve[0,1], '*', color='blue', markersize=5)
 
