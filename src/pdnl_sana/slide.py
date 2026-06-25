@@ -428,6 +428,7 @@ class Framer:
 
         roi_masks = {}
         for mask_value, key in enumerate(self.rois):
+
             roi_mask = sana.image.create_mask(
                 self.size,
                 self.rois[key], self.roi_holes,

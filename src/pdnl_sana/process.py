@@ -239,10 +239,10 @@ def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
     for roi in rois:
         roi.is_micron = False
         roi.level = level
-    framer = sana.slide.Framer(loader, size=frame_size, step=frame_size, level=level, rois=rois)
+    framer = sana.slide.Framer(loader, size=frame_size, step=frame_size, level=level, rois={'ROI': rois})
 
     # get the frame mask
-    mask = framer.load_mask(i, j)
+    mask, roi_masks = framer.load_mask(i, j)
 
     # decide if it's worth it to process this frame
     if np.sum(mask.img) < 0.005*mask.img.shape[0]*mask.img.shape[1]:
@@ -250,7 +250,7 @@ def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
 
     # extract the frame from the WSI
     frame = framer.load_frame(i, j)
-
+    
     # preprocess the frame
     processor = HDABProcessor(
         logger, frame, main_mask=mask, 

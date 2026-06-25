@@ -135,10 +135,10 @@ def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10,
         axs[0].imshow(pos.img, cmap='gray')
         axs[0].plot(*ctrs.T, '*', color='red')
         axs[1].imshow(speed, cmap='gray')
-        axs[2].imshow(time, cmap='gray')
+        axs[2].imshow(time, cmap='gray', vmax=fm_threshold*2)
         axs[3].imshow(mask.img, cmap='gray')
 
-    return mask
+    return mask, directional_ratio
 
 def get_skeleton_vertices(skeleton, df, skel_id):
     path_ids = list(df[df['skeleton-id'] == skel_id].index)
@@ -311,9 +311,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
     new_pos = pos.copy()
     new_pos.img[:,:,:] = 0
     
-    microglia_masks, soma_masks, microglia_skeletons, locs, sizes = [], [], [], [], []
-
-    pad = 100
+    pad = 10
     
     soma_ids, _ = match_polygons_to_skeleton(skeleton, soma_polygons)
 
@@ -333,62 +331,66 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
             soma_tile = best_tile.copy()
             skeleton_tile = best_tile.copy()
             skeleton_tile.img[:,:,:] = 0
-            
-            locs.append(loc)
-            sizes.append(size)
-            microglia_masks.append(best_tile)
-            soma_masks.append(soma_tile)
-            microglia_skeletons.append(skeleton_tile)
-                
-            continue
-        
-        # get the bounding box of the vertices
-        v = get_skeleton_vertices(skel, df, soma_id)
-        p = sana.geo.Polygon(v[:,0], v[:,1], False, 0)
-        loc, size = p.bounding_box()
-        loc -= pad//2
-        size += pad
 
-        # crop the frame and the skeleton by the bounding box
-        skeleton_tile = sana.image.frame_like(pos, np.zeros_like(skeleton))
-        skeleton_tile.img[p[:,1], p[:,0], 0] = 1
-        skeleton_tile.crop(loc, size)
-        pos_tile = pos.copy()
-        pos_tile.crop(loc, size)
-        soma_tile = soma_mask.copy()
-        soma_tile.crop(loc, size)
-        
-        # start with the skeleton, OR'd with soma
-        new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img | soma_tile.img) 
-
-        # DICE score with the original classified DAB
-        score = np.mean(new_tile == pos_tile.img)
-
-        # skeleton is blank, just return the soma
-        if np.sum(skeleton_tile.img) == 0:
             microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
             microglia_instances.append(microglia)
-            continue
+        else:
+            # get the bounding box of the vertices
+            v = get_skeleton_vertices(skel, df, soma_id)
+            p = sana.geo.Polygon(v[:,0], v[:,1], False, 0)
+            skel_loc, skel_size = p.bounding_box()
+            soma_loc, soma_size = soma_polygon.bounding_box()
+            if skel_size[0]*skel_size[1] < soma_size[0]*soma_size[1]:
+                loc = soma_loc.copy()
+                size = soma_size.copy()
+            else:
+                loc = skel_loc.copy()
+                size = skel_size.copy()
+            loc -= pad//2
+            size += pad
+
+            # crop the frame and the skeleton by the bounding box
+            skeleton_tile = sana.image.frame_like(pos, np.zeros_like(skeleton))
+            skeleton_tile.img[p[:,1], p[:,0], 0] = 1
+            skeleton_tile.crop(loc, size)
         
-        # dilate the mask a bit, then test DICE
-        best_tile = new_tile
-        best_score = score
-        for r in range(1, 10):
+            pos_tile = pos.copy()
+            pos_tile.crop(loc, size)
+            soma_tile = soma_mask.copy()
+            soma_tile.crop(loc, size)
+            best_tile = soma_mask.copy()
+            best_tile.crop(loc, size)
+        
+            # start with the skeleton, OR'd with soma
+            new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img | soma_tile.img) 
 
-            # perform dilation, OR'd with soma
-            new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img.astype(np.uint8))
-            kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
-            new_tile.img = cv2.dilate(new_tile.img, kern)[:,:,None] | soma_tile.img
+            # DICE score with the original classified DAB
+            score = np.mean(new_tile == pos_tile.img)
 
-            # new DICE score
-            score = np.mean(new_tile.img == pos_tile.img)
-
-            if score > best_score:
+            # skeleton is blank, just return the soma
+            if np.sum(skeleton_tile.img) == 0:
+                microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
+                microglia_instances.append(microglia)
+            else:
+                # dilate the mask a bit, then test DICE
                 best_tile = new_tile
                 best_score = score
+                for r in range(1, 10):
 
-        microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
-        microglia_instances.append(microglia)
+                    # perform dilation, OR'd with soma
+                    new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img.astype(np.uint8))
+                    kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
+                    new_tile.img = cv2.dilate(new_tile.img, kern)[:,:,None] | soma_tile.img
+
+                    # new DICE score
+                    score = np.mean(new_tile.img == pos_tile.img)
+
+                    if score > best_score:
+                        best_tile = new_tile
+                        best_score = score
+
+                microglia = MicrogliaInstance(soma_tile.img, skeleton_tile.img, best_tile.img, loc, size)
+                microglia_instances.append(microglia)
 
     return microglia_instances
 
@@ -427,10 +429,16 @@ class MicrogliaInstance:
             v[6] = 0
 
     def to_soma_features(self, v):
-        poly = pdnl_sana.image.Frame(self.soma).to_polygons()[0][0]
-        v[7] = poly.get_area()
-        v[8] = poly.get_perimeter()
-        v[9] = poly.get_circularity()
+        polys = pdnl_sana.image.Frame(self.soma).to_polygons()[0]
+        if len(polys) == 0:
+            v[7] = 0
+            v[8] = 0
+            v[9] = 0
+        else:
+            poly = polys[0]
+            v[7] = poly.get_area()
+            v[8] = poly.get_perimeter()
+            v[9] = poly.get_circularity()
 
     def to_convexhull_features(self, v):
         polys = pdnl_sana.image.Frame(self.mask).to_polygons()[0]
@@ -491,6 +499,10 @@ class MicrogliaInstance:
         tile = frame.get_tile(self.loc, self.size)
         tile[self.skeleton[:,:,0] != 0] = color
         frame.set_tile(self.loc, self.size, tile)
+    def overlay_soma(self, frame, color=[255,0,0]):
+        tile = frame.get_tile(self.loc, self.size)
+        tile[self.soma[:,:,0] != 0] = color
+        frame.set_tile(self.loc, self.size, tile)
 
     def overlay_microglia(self, frame, color=[255,0,0]):
         tile = frame.get_tile(self.loc, self.size)
@@ -514,15 +526,39 @@ class MicrogliaInstance:
         tile[outline.img[:,:,0] != 0] = colors[np.argmax(proba)]
         frame.set_tile(self.loc, self.size, tile)
 
-def segment_microglia(pos, somas, debug):
+def segment_microglia(pos, somas, debug, connection_threshold=30):
     
     skeleton = skeletonize(pos.img)
 
-    soma_ids, process_ids = match_polygons_to_skeleton(skeleton, somas, debug=debug)
+    try:
+        Skeleton(skeleton)
+        skip_skeleton = False
+    except Exception as e:
+        skip_skeleton = True
 
-    merged_skeleton = merge_skeletons(skeleton, soma_ids, process_ids, distance_threshold=30, debug=debug)
+    if not skip_skeleton:
+        soma_ids, process_ids = match_polygons_to_skeleton(skeleton, somas, debug=debug)
 
-    microglia_instances = reconstruct_instances_from_skeleton(pos, skeleton, somas, debug=debug)
+        merged_skeleton = merge_skeletons(skeleton, soma_ids, process_ids, distance_threshold=connection_threshold, debug=debug)
+    else:
+        skip_recon = True
+
+    try:
+        Skeleton(merged_skeleton)
+        skip_recon = False
+    except:
+        skip_recon = True
+    
+    if not skip_recon:
+        microglia_instances = reconstruct_instances_from_skeleton(pos, merged_skeleton, somas, debug=debug)        
+    else:
+        microglia_instances = []
+        for soma_poly in somas:
+            soma_tile = pdnl_sana.image.create_mask_like(pos, [soma_poly])
+            loc, size = soma_poly.bounding_box()
+            soma_tile.crop(loc, size)
+            instance = MicrogliaInstance(soma_tile.img, np.zeros_like(soma_tile.img), soma_tile.img.copy(), loc, size)
+            microglia_instances.append(instance)
 
     return microglia_instances
 
@@ -592,13 +628,13 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
 
         # move back to slide coordinate system
         poly.translate(-frame_loc)
-
+    soma_ints = np.array(soma_ints)
+    
     # combine into an (N,4) array
-    soma_feats = np.concatenate([
-        soma_ctrs, 
-        soma_areas[:,None], 
-        np.array(soma_ints)[:,None]], 
-        axis=1)
+    if len(soma_ctrs) != 0:
+        soma_feats = np.vstack([soma_ctrs[:,0], soma_ctrs[:,1], soma_areas, soma_ints]).T
+    else:
+        soma_feats = np.zeros((0,4))
 
     # cache the cell features
     np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)

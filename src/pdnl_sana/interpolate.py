@@ -96,6 +96,18 @@ def interp(c, N, xmi=None, xmx=None):
     yp = f(xp)
     return sana.geo.curve_like(c, xp, yp)
 
+def interp_poly(p):
+    new_x, new_y = [], []
+    for i in range(len(p)-1):
+        x0,y0 = p[i]
+        x1,y1 = p[i+1]
+        n = int(round(np.sqrt((y1-y0)**2+(x1-x0)**2)))
+        x = np.linspace(x0, x1, n, endpoint=False)
+        y = np.linspace(y0, y1, n, endpoint=False)
+        new_x.append(x)
+        new_y.append(y)
+    return pdnl_sana.geo.polygon_like(p, np.concatenate(new_x), np.concatenate(new_y))
+
 def separate_curve_at_point(a, xp, yp):
 
     # get the vertices that the point is inbetween
