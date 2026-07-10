@@ -7,3 +7,4 @@ openslide_bin
 pillow
 scipy
 shapely
+skan
