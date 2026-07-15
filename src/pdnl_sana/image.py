@@ -148,7 +148,7 @@ class Frame:
         Generates a 256 bin histogram for each color channel
         """
         if not self.is_short():
-            raise DataTypeException("Histogram must be calculated on short pixel values")
+            raise DatatypeException("Histogram must be calculated on short pixel values")
         
         histogram = np.zeros((256, self.img.shape[-1]))
         for i in range(histogram.shape[-1]):

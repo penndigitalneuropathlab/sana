@@ -272,3 +272,50 @@ def preprocess_wsi_chunk(temp_dir, i, j, slide_f, frame_size, level, rois):
     return hem_histogram, dab_histogram
     
 
+def preprocess_chunk(tmp_directory, j, i, input_slide, level, size, rois, roi_holes):
+    """
+    This function applies color deconvolution to an RGB chunk and saves the stain information
+    """
+    logger = sana.logging.Logger('normal', os.path.join(tmp_directory, f'parameters_{j}_{i}.pkl'))
+    loader = sana.slide.Loader(logger, input_slide)
+    size = sana.geo.Point(size, size, is_micron=False, level=level)
+    # TODO: fix for pickling error, either need dill or use __reduce__ in sana.geo.Array
+    for key in rois:
+        for roi in rois[key]:
+            roi.is_micron = False
+            roi.level = level
+    for roi_hole in roi_holes:
+        roi_hole.is_micron = False
+        roi_hole.level = level
+    framer = sana.slide.Framer(loader, size=size, step=size, level=level, rois=rois, roi_holes=roi_holes)
+
+    # get the frame mask
+    mask, _ = framer.load_mask(j,i)
+
+    # decide if it's worth it to process this frame
+    if np.sum(mask.img) < 0.005*mask.img.shape[0]*mask.img.shape[1]:
+        return None
+
+    # extract the frame from the WSI
+    frame = framer.load_frame(j,i)
+    
+    # preprocess the frame
+    processor = HDABProcessor(
+        logger, frame, main_mask=mask, 
+        run_hem=True, run_dab=True, 
+        apply_smoothing=False, 
+        normalize_background=True, radius=100
+    )
+
+    # cache the stain data
+    # TODO: make this generic rather than specific stain
+    processor.hem.save(os.path.join(tmp_directory, f"hem_{j}_{i}.png"))
+    mask.save_compressed(os.path.join(tmp_directory, f"mask_{j}_{i}.npz"))
+    logger.write_data()
+
+    # return the histograms in order to calculate a global WSI
+    hem_histogram = processor.hem.get_histogram(mask=mask)
+
+    return hem_histogram
+    
+

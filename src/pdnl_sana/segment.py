@@ -585,8 +585,7 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
     hem.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
     hem.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', 2))
 
-    # remove positive DAB and pixels outside the mask
-    hem.mask(dab, invert=True)
+    # remove pixels outside the mask
     hem.mask(mask)
 
     # find all the somas throughout the counterstain
@@ -594,9 +593,12 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
     soma_ctrs = detect_somas(hem, minimum_soma_radius=3)
     
     # segment the somas using polygons
-    soma_polygons, _ = hem.instance_segment(soma_ctrs)[0]
-    soma_polygons = [p for p in soma_polygons if not type(p) is list and len(p) != 0]
-    
+    if len(soma_ctrs) != 0:
+        soma_polygons, _ = hem.instance_segment(soma_ctrs)[0]
+        soma_polygons = [p for p in soma_polygons if not type(p) is list and len(p) != 0]
+    else:
+        soma_polygons = []
+            
     # move the polygons into the slide coordinate system
     [p.translate(-frame_loc) for p in soma_polygons]
 
@@ -639,6 +641,72 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
     # cache the cell features
     np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)
 
+def segment_chunk(tmp_directory, j, i, threshold):
+    if not os.path.exists(os.path.join(tmp_directory, f"hem_{j}_{i}.png")):
+        return np.empty([0,4])
+
+    logger = sana.logging.Logger('normal', os.path.join(tmp_directory, f'parameters_{j}_{i}.pkl'))
+    frame_loc = logger.data['loc']
+
+    stain = sana.image.Frame(os.path.join(tmp_directory, f"hem_{j}_{i}.png"))
+    mask = sana.image.Frame(os.path.join(tmp_directory, f"mask_{j}_{i}.npz"))
+    stain_int = stain.copy()
+
+    # threshold and filter small objects and holes
+    stain.threshold(threshold)
+    stain.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
+    stain.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', 2))
+    stain.mask(mask)
+
+    # find all the somas throughout the counterstain
+    # TODO: parameter should be in microns!
+    ctrs = detect_somas(stain, minimum_soma_radius=3)
+    
+    # segment the somas using polygons
+    if len(ctrs) != 0:
+        polys, _ = stain.instance_segment(ctrs)[0]
+        polys = [p for p in polys if not type(p) is list and len(p) != 0]
+    else:
+        polys = []
+            
+    # move the polygons into the slide coordinate system
+    [p.translate(-frame_loc) for p in polys]
+
+    # re-calculate the centers of the polygons using the bounding box
+    bbs = [p.bounding_box() for p in polys]
+    ctrs = np.array([loc + size//2 for (loc, size) in bbs])
+
+    # feature 1: calculate the area of each polygon
+    areas = np.array([p.get_area() for p in polys])
+
+    # feature 2: calculate the mean HEM intensity within the polygon
+    ints = []
+    for poly in polys:
+
+        # move to frame coordinate system
+        poly.translate(frame_loc)
+        
+        # extract tile based on the bounding box of the polygon
+        loc, size = poly.bounding_box()
+        tile = sana.image.Frame(stain_int.get_tile(loc, size))
+
+        # create a mask of pixels within the polygon
+        poly.translate(loc)
+        tile_mask = sana.image.create_mask_like(tile, [poly])
+        poly.translate(-loc)
+
+        # calculate average intensity
+        ints.append(np.mean(tile.img[tile_mask.img != 0]))
+
+        # move back to slide coordinate system
+        poly.translate(-frame_loc)
+    ints = np.array(ints)
+    
+    # combine into an (N,4) array
+    if len(ctrs) != 0:
+        return np.vstack([ctrs[:,0], ctrs[:,1], areas, ints]).T
+    else:
+        return np.empty([0,4])
 
 def train_wm_segmenter(heatmap, wm_coords=None, gm_coords=None, priors=None):
 
