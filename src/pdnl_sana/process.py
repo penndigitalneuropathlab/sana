@@ -71,7 +71,7 @@ class Processor:
         self.valid_mask = self.exclusion_mask.copy()
         self.valid_mask.img = 1 - self.valid_mask.img
 
-    def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[], debug=True):
+    def classify_pixels(self, frame, threshold, mask=None, morphology_filters=[], debug=False):
         """
         Classifies pixels as foreground/background based on a threshold and morphology filters
         :param frame: grayscale image to classify
@@ -117,8 +117,10 @@ class HDABProcessor(Processor):
             frame: sana.image.Frame, 
             apply_smoothing: bool=True,
             normalize_background: bool=True,
-            radius: int=100,
+            radius: float=100,
+            overlap: float=0.5,
             stain_vector: list=None,
+            subtract_dab: bool=True,
             run_hem=True,
             run_dab=True,
             **kwargs
@@ -150,9 +152,11 @@ class HDABProcessor(Processor):
             ax.imshow(self.res.img, cmap='gray')
             ax.set_title('RES (OD)')
 
+        if subtract_dab:
+            self.hem.img = self.hem.img - self.dab.img
+
         # rescale the OD to uint8 using the digital min/max
         # TODO: this compresses the digital space, maybe don't use min/max od!
-        self.hem.img = self.hem.img - self.dab.img
         if run_hem:
             self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
         if run_dab:
@@ -168,9 +172,9 @@ class HDABProcessor(Processor):
         # subtract the bacgkround image from the stains
         if normalize_background:
             if run_hem:
-                self.hem.remove_background(radius=radius)
+                self.hem.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
             if run_dab:
-                self.dab.remove_background(radius=radius)
+                self.dab.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
 
         self.logger.data['apply_smoothing'] = apply_smoothing
         self.logger.data['normalize_background'] = normalize_background
@@ -302,9 +306,9 @@ def preprocess_chunk(tmp_directory, j, i, input_slide, level, size, rois, roi_ho
     # preprocess the frame
     processor = HDABProcessor(
         logger, frame, main_mask=mask, 
-        run_hem=True, run_dab=True, 
+        run_hem=True, run_dab=False,
         apply_smoothing=False, 
-        normalize_background=True, radius=100
+        normalize_background=True, radius=300.0, overlap=0.50,
     )
 
     # cache the stain data

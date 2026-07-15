@@ -1,7 +1,9 @@
 
 # system packages
+from __future__ import annotations
 import os
 import time
+
 
 # installed packages
 import cv2
@@ -254,12 +256,13 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = morphology_filter.apply(self.img)[:,:,None]
 
-    def convolve(self, kernel: np.ndarray, tile_step: sana.geo.Point, align_center=False):
+    def convolve(self, kernel: np.ndarray, tile_step: sana.geo.Point, align_center=False, normalize=True):
         """
         Performs a (downsampled) convolution of the given kernel over the image. This is done by creating tile views into the frame, then applying the kernel to each of the views
         :param kernel: (M,N) array to apply to each tile
         :param tile_step: stride distance between tiles
         :param align_center: if True, pads the frame to center align rather than upper left align
+        :param normalize: if True, applies a normalization factor based on the size of the kernel
         """
         if not self.is_gray():
             raise ImageTypeException('Convolution only supported on single-channel images')
@@ -273,30 +276,26 @@ class Frame:
         result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
 
         # TODO: do we always want to normalize?
-        ones = frame_like(self, np.ones_like(self.img))
-        ones_tiles = ones.to_tiles(tile_size, tile_step, align_center=align_center)
-        norm_factor = np.sum(ones_tiles * kernel[None,None,:,:], axis=(2,3))
-        result = result.astype(float) / norm_factor
+        if normalize:
+            ones = frame_like(self, np.ones_like(self.img))
+            ones_tiles = ones.to_tiles(tile_size, tile_step, align_center=align_center)
+            norm_factor = np.sum(ones_tiles * kernel[None,None,:,:], axis=(2,3))
+            result = result.astype(float) / norm_factor
 
         return result
 
-    def remove_background(self, radius=100, min_background=0, max_background=255, debug=False):
+    def remove_background(self, radius: float=100.0, overlap: float=0.5, mask: Frame=None, debug: bool=False):
         """
         Performs a background subtraction process on a grayscale image. The process works by estimating a background image, which is then subtracted from the original image. The background is found by looking at a specified range of pixel values along with convolving a gaussian kernel over the image. Note that background in this case usually refers to non-specific staining data as opposed to glass slide background. It is trivial to remove slide background with a simple threshold, but non-specific staining background can vary throughout the image so some type of adaptive thresholding is necessary. This functions acts somewhat like an adaptive threshold, since we subtract a variable background value throughout the image.
 
         TODO: add math formula?
         TODO: add example image
-
-        :param min_background: minimum value to be used as background, values below this are often white slide pixels which may throw off the calculation
-        :param max_background: maximum value to be used as background, this can be used to exclude the darkest objects in the image so that they don't contribute to background
+        :param radius: size of kernel (microns)
+        :param overlap: amount of overlap between tiles (0-1)
         :param debug: when True, generates a plot that shows the original image, background image, and processed image
         """
         if self.is_rgb():
             raise ChannelException('Cannot apply background removal in RGB images')
-
-        if debug:
-            fig, axs = plt.subplots(1,3, sharex=True, sharey=True)
-            axs[0].imshow(self.img)
 
         # get the tiles for the convolution
         tsize = self.converter.to_int(self.converter.to_pixels(
@@ -306,16 +305,30 @@ class Frame:
         if tsize[0] % 2 == 0: tsize[0] += 1
         if tsize[1] % 2 == 0: tsize[1] += 1
         tstep = tsize / 2
+        tstep = tsize * (1-overlap)
         kern_sigma = tsize[0]/5
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
         
         # find the background simply by gaussian blurring the image
-        # NOTE: used to support masking by a minimum+maximum background value but this is not currently used
-        background_image = self.convolve(kernel, tstep, align_center=True)
+        intensity = self.convolve(kernel, tstep, align_center=True, normalize=False)
+        area = mask.convolve(kernel, tstep, align_center=True, normalize=False)
+        mi_area = 0.01
+        area[area<=mi_area] = 0
+        background_image = np.divide(intensity, area, where=area!=0, out=np.zeros_like(area))
 
         # resize the background frame back to original resolution
         background_frame = frame_like(self, background_image)
         background_frame.resize(self.size(), interpolation=cv2.INTER_CUBIC)
+
+        if debug:
+            fig, ax = plt.subplots(2,3, sharex=True, sharey=True)
+            ax = ax.ravel()
+            ax[0].imshow(self.img)
+            ax[1].imshow(intensity, extent=(0, self.img.shape[0], self.img.shape[1], 0))
+            ax[2].imshow(area, extent=(0, self.img.shape[0], self.img.shape[1], 0))
+            ax[3].imshow(background_image, extent=(0, self.img.shape[0], self.img.shape[1], 0))
+            ax[4].imshow(background_frame.img)
+
 
         # finally, subtract the background
         # NOTE: we clip to 0 here, this is okay since this will be background data which we don't care about
@@ -325,8 +338,7 @@ class Frame:
         self.to_short()
 
         if debug:
-            axs[1].imshow(background_frame.img)
-            axs[2].imshow(self.img)
+            ax[5].imshow(self.img)
             plt.show()
 
         return background_frame

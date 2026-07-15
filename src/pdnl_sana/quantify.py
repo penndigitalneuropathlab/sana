@@ -256,6 +256,25 @@ def aggregate_features(window_size, feats, i0, j0, i1, j1, ds):
 
     return out
 
+@jit(nopython=True)
+def aggregate_cells(window_size: pdnl_sana.geo.Point, cells: np.ndarray, i0: int, j0: int, i1: int, j1: int, ds: float):
+    out = np.zeros((j1-j0, i1-i0, cells.shape[1]-2+1), dtype=float)
+    x, y = cells[:,:2].T
+    for (j,i) in [(j,i) for j in range(j0, j1) for i in range(i0, i1)]:
+        ctr = np.array([i,j])*ds
+        loc = ctr - window_size//2
+
+        window_idxs = find_local_samples(x, y, loc, window_size)
+        wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
+
+        den = np.sum(wgts)
+        if den == 0:
+            continue
+        out[j-j0,i-i0,0] = den # density
+        for k in range(1, out.shape[2]):
+            out[j-j0,i-i0,k] = np.nansum(cells[window_idxs,k+1] * wgts) / den
+    return out, i0, j0, i1, j1
+
 def aggregate_features_chunked(feats, window_size, chunk_size, out_size, slide_size, n_processes=1):
 
     # amount we're downsampling from slide pixels to output pixels

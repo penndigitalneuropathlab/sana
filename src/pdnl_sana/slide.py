@@ -84,6 +84,8 @@ class Loader(openslide.OpenSlide):
         self.bloc = sana.geo.Point(self.bx, self.by, is_micron=False, level=0)
         self.bsize = sana.geo.Point(self.bw, self.bh, is_micron=False, level=0)
 
+        self.thumbnail_level = self.level_count - 1
+        
         # define the converter object to convert units and rescale data
         self.converter = sana.geo.Converter(self.mpp, self.ds)
 
@@ -91,7 +93,6 @@ class Loader(openslide.OpenSlide):
         """
         Loads the thumbnail using the image stored at the top of the pyramid
         """
-        self.thumbnail_level = self.level_count - 1
         w, h = self.level_dimensions[self.thumbnail_level]
         loc = sana.geo.Point(0, 0, is_micron=False, level=self.thumbnail_level)
         size = sana.geo.Point(w, h, is_micron=False, level=self.thumbnail_level)
