@@ -23,7 +23,8 @@ import pdnl_sana.image
 
 def detect_somas(
         pos: pdnl_sana.image.Frame, 
-        minimum_soma_radius:int =1,
+        minimum_soma_radius: int=1,
+        use_markers: bool=False,
         debug:bool=False
 ):
 
@@ -31,20 +32,26 @@ def detect_somas(
         print('Calculating Distance Transform...', flush=True)
     dist = cv2.distanceTransform(pos.img, cv2.DIST_L2, cv2.DIST_MASK_PRECISE)
 
-    if debug:
-        print('Running connected Components...', flush=True)
-    _, markers = cv2.connectedComponents(pos.img)
+    if use_markers:
+        if debug:
+            print('Running connected Components...', flush=True)
+        _, markers = cv2.connectedComponents(pos.img)
     
     if debug:
         print('Detecting Peaks...', flush=True)
-    ctrs = skimage.feature.peak_local_max(
-        dist,
-        min_distance=int(round(1.5*minimum_soma_radius)),
-        threshold_abs=minimum_soma_radius,
-        labels=markers,
-        num_peaks_per_label=1
-    )[:,::-1]
-
+    if use_markers:
+        ctrs = skimage.feature.peak_local_max(
+            dist,
+            min_distance=int(round(1.5*minimum_soma_radius)),
+            threshold_abs=minimum_soma_radius,
+            labels=markers,
+            num_peaks_per_label=1
+        )[:,::-1]
+    else:
+        ctrs = skimage.feature.peak_local_max(
+            dist, min_distance=int(round(1.5*minimum_soma_radius)),
+            threshold_abs=minimum_soma_radius,
+        )[:,::-1]
     if debug:
         print('Post-processing overlapping somas...', flush=True)
     # polys = pos.to_polygons()[0]
