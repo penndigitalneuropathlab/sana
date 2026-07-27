@@ -211,7 +211,7 @@ def find_local_samples(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: 
     """
     finds the samples which are inside this provided window
     """
-    return (loc[0] < x) & (x < loc[0]+size[0]) & (loc[1] < y) & (y < loc[1]+size[1])
+    return (loc[0] <= x) & (x <= loc[0]+size[0]) & (loc[1] <= y) & (y <= loc[1]+size[1])
 
 @jit(nopython=True)
 def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):

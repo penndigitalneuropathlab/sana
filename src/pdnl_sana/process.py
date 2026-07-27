@@ -159,6 +159,7 @@ class HDABProcessor(Processor):
         # TODO: this compresses the digital space, maybe don't use min/max od!
         if run_hem:
             self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
+            #self.hem.rescale(self.ss.min_od[0], 1)
         if run_dab:
             self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
 
@@ -184,6 +185,129 @@ class HDABProcessor(Processor):
             ax = axs[4]
             ax.imshow(self.hem.img, cmap='gray')
             ax.set_title('HEM (Preprocessed)')
+            ax = axs[5]
+            ax.imshow(self.dab.img, cmap='gray')
+            ax.set_title('DAB (Preprocessed)')
+
+    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, mask=None, morphology_filters=[], target_stain="DAB"):
+
+        # list of processed images to return
+        ret = {
+            'main_mask': self.main_mask,
+            'sub_masks': self.sub_masks,
+            'exclusion_mask': self.exclusion_mask,
+            'valid_mask': self.valid_mask,
+        }
+        stain_idx = self.ss.stain_vector.stains.index(target_stain)
+        stain = self.stains[stain_idx]
+
+        # get the threshold for the stain using pixels that are inside the ROI
+        if od_threshold is None:
+            hist = stain.get_histogram(mask=self.main_mask)
+            threshold = sana.threshold.triangular_method(
+                hist, 
+                strictness=triangular_strictness,
+                debug=self.logger.debug_level == 'full'
+            )
+            if threshold < minimum_threshold:
+                threshold = minimum_threshold
+                
+        # manually select the threshold
+        else:
+            threshold = 255 * (od_threshold - self.ss.min_od[1]) / \
+                (self.ss.max_od[1] - self.ss.min_od[1])
+            
+        # perform pixel classification using thresholding and morphology filters
+        positive_stain = stain.copy()
+        self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
+        ret['stain'] = stain
+        ret['positive_stain'] = positive_stain
+
+        self.logger.data['triangular_strictness'] = triangular_strictness
+        self.logger.data['minimum_threshold'] = minimum_threshold
+        self.logger.data['od_threshold'] = od_threshold
+        self.logger.data['morphology_filters'] = morphology_filters
+        self.logger.data['threshold'] = threshold
+
+        # return all of the processed images
+        return ret
+class CVDABProcessor(Processor):
+    """
+    Subclass of Processor which handles the DAB/Cryssl Violet (and Residual) stains
+    :param logger: Logger object which will store various processing parameters
+    :param frame: input RGB frame to process
+    :param apply_smoothing: applies an anisotropic diffusion smoothing filter
+    :param normalize_background: normalizes the background to a constant value for better thresholding
+    :param stain_vector: overrides the default staining vector
+    """
+    def __init__(
+            self,
+            logger: sana.logging.Logger,
+            frame: sana.image.Frame, 
+            apply_smoothing: bool=True,
+            normalize_background: bool=True,
+            radius: float=100,
+            overlap: float=0.5,
+            stain_vector: list=None,
+            run_cv=True,
+            run_dab=True,
+            **kwargs
+    ):
+        super(CVDABProcessor, self).__init__(logger, frame, **kwargs)
+
+        # separate out the individual stains within the image
+        self.ss = sana.color_deconvolution.StainSeparator('CV-DAB', stain_vector)
+        stains = self.ss.separate(self.frame.img)
+        self.cv = sana.image.frame_like(self.frame, stains[:,:,0])
+        self.dab = sana.image.frame_like(self.frame, stains[:,:,1])
+        self.res = sana.image.frame_like(self.frame, stains[:,:,2])
+        self.stains = [self.cv, self.dab, self.res]
+
+        if logger.debug_level == 'full':
+            fig, axs = plt.subplots(2, 3, sharex=True, sharey=True, figsize=(20,15))
+            axs = axs.ravel()
+            ax = axs[0]
+            ax.imshow(self.frame.img)
+            ax.set_title('Frame')
+            ax = axs[1]
+            ax.imshow(self.cv.img, cmap='gray')
+            ax.set_title('CV (OD)')
+            ax = axs[2]
+            ax.imshow(self.dab.img, cmap='gray')
+            ax.set_title('DAB (OD)')
+            ax = axs[3]
+            ax.imshow(self.res.img, cmap='gray')
+            ax.set_title('RES (OD)')
+
+        # rescale the OD to uint8 using the digital min/max
+        # TODO: this compresses the digital space, maybe don't use min/max od!
+        if run_cv:
+            self.cv.rescale(self.ss.min_od[0], self.ss.max_od[1])
+        if run_dab:
+            self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
+
+        # smooth the DAB, mainly flattening interiors of objects
+        if apply_smoothing:
+            if run_cv:
+                self.cv.anisodiff()
+            if run_dab:
+                self.dab.anisodiff()
+
+        # subtract the bacgkround image from the stains
+        if normalize_background:
+            if run_cv:
+                self.cv.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
+            if run_dab:
+                self.dab.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
+
+        self.logger.data['apply_smoothing'] = apply_smoothing
+        self.logger.data['normalize_background'] = normalize_background
+        self.logger.data['stain_vector'] = stain_vector
+        
+        if self.logger.debug_level == 'full':
+            ax = axs[4]
+            ax.imshow(self.cv.img, cmap='gray')
+            ax.set_title('CV (Preprocessed)')
             ax = axs[5]
             ax.imshow(self.dab.img, cmap='gray')
             ax.set_title('DAB (Preprocessed)')

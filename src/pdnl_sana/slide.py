@@ -448,9 +448,12 @@ class Framer:
                 roi.translate(-loc)
         [hole.translate(-loc) for hole in self.roi_holes]
 
-        mask = pdnl_sana.image.Frame(np.ones(self.size, dtype=np.uint8), level=self.level, converter=self.converter)
-        for key in roi_masks:
-            mask.img[roi_masks[key].img == 0] = 0
+        mask = pdnl_sana.image.Frame(np.zeros(self.size, dtype=np.uint8), level=self.level, converter=self.converter)
+        if len(roi_masks) == 0:
+            mask[:] = 1
+        else:
+            for key in roi_masks:
+                mask.img[roi_masks[key].img != 0] = 1
         
         return mask, roi_masks
 

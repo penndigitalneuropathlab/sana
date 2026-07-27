@@ -648,7 +648,7 @@ def segment_wsi_chunk(temp_dir, i, j, hem_threshold, dab_threshold):
     # cache the cell features
     np.save(os.path.join(temp_dir, f"feats_{i}_{j}.npy"), soma_feats)
 
-def segment_chunk(tmp_directory, j, i, threshold):
+def segment_chunk(tmp_directory, j, i, threshold, closing_radius=2, opening_radius=2, minimum_soma_radius=3):
     if not os.path.exists(os.path.join(tmp_directory, f"hem_{j}_{i}.png")):
         return np.empty([0,4])
 
@@ -661,13 +661,13 @@ def segment_chunk(tmp_directory, j, i, threshold):
 
     # threshold and filter small objects and holes
     stain.threshold(threshold)
-    stain.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', 2))
-    stain.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', 2))
+    stain.apply_morphology_filter(sana.filter.MorphologyFilter('closing', 'ellipse', closing_radius))
+    stain.apply_morphology_filter(sana.filter.MorphologyFilter('opening', 'ellipse', opening_radius))
     stain.mask(mask)
 
     # find all the somas throughout the counterstain
     # TODO: parameter should be in microns!
-    ctrs = detect_somas(stain, minimum_soma_radius=3)
+    ctrs = detect_somas(stain, minimum_soma_radius=minimum_soma_radius)
     
     # segment the somas using polygons
     if len(ctrs) != 0:
