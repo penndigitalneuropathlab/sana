@@ -233,30 +233,6 @@ def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size
     return wgts
 
 @jit(nopython=True)
-def aggregate_features_wrapper(args):
-    return aggregate_features(*args)
-@jit(nopython=True)
-def aggregate_features(window_size, feats, i0, j0, i1, j1, ds):
-    out = np.zeros((j1-j0, i1-i0, feats.shape[1]-2+1), dtype=float)
-    x, y = feats[:,:2].T
-    for j in range(j0, j1):
-        for i in range(i0, i1):
-            ctr = np.array([i,j])*ds
-            loc = ctr - window_size//2
-
-            window_idxs = find_local_samples(x, y, loc, window_size)
-            wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
-            
-            den = np.sum(wgts)
-            if den == 0:
-                continue
-            out[j-j0,i-i0,0] = den
-            for k in range(1, out.shape[2]):
-                out[j-j0,i-i0,k] = np.nansum(feats[window_idxs,k+1] * wgts) / den
-
-    return out
-
-@jit(nopython=True)
 def aggregate_cells(window_size: pdnl_sana.geo.Point, cells: np.ndarray, i0: int, j0: int, i1: int, j1: int, ds: float):
     out = np.zeros((j1-j0, i1-i0, cells.shape[1]-2+1), dtype=float)
     x, y = cells[:,:2].T
@@ -271,6 +247,7 @@ def aggregate_cells(window_size: pdnl_sana.geo.Point, cells: np.ndarray, i0: int
         if den == 0:
             continue
         out[j-j0,i-i0,0] = den # density
+        # TODO: calculate std of these features not just mean?
         for k in range(1, out.shape[2]):
             out[j-j0,i-i0,k] = np.nansum(cells[window_idxs,k+1] * wgts) / den
     return out, i0, j0, i1, j1

@@ -18,6 +18,10 @@ class Converter:
         self.mpp = mpp
         self.ds = ds
 
+    def mtop(self, m, level):
+        return m / self.mpp * self.ds[level]
+    def ptom(self, p, level):
+        return p * self.ds[level] * self.mpp
     def to_float(self, x):
         """
         Converts an Array to floating point

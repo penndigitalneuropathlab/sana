@@ -15,8 +15,6 @@ else:
 # installed packages
 import numpy as np
 from matplotlib import pyplot as plt
-from scipy.interpolate import interp1d
-from scipy.signal import find_peaks
 
 # sana packages
 import pdnl_sana.image
@@ -462,40 +460,6 @@ class Framer:
         frame = self.loader.load_frame(loc, size, level=self.level)
         frame.frame_padding = self.fpad
         return frame
-
-def find_tissue(tb: pdnl_sana.image.Frame) -> pdnl_sana.image.Frame:
-    """
-    Thresholds the thumbnail of a slide based on the detected color of the glass background
-    """
-    # get the histogram of the grayscale pixels
-    w, h = tb.size()
-    gray = tb.copy(); gray.to_gray(); gray.to_short()
-    hist = gray.get_histogram()[:,0][::-1] / (w*h)
-
-    # get the whitest peak that is significant (at least 1% of the image)
-    peaks = find_peaks(hist, height=0.01)[0]
-    if len(peaks) == 0:
-        return None
-    glass_peak = peaks[0]
-
-    # set the threshold as the first zero crossing after the peak in the 2nd deriv
-    histp = np.gradient(hist)
-    histpp = np.gradient(histp)
-    zero_crossings = np.where(np.diff(np.sign(histpp[glass_peak:])) != 0)[0]
-    if len(zero_crossings) == 0:
-        return None
-    glass_threshold = zero_crossings[0] + glass_peak
-
-    # threshold the grayscale thumbnail
-    tissue_mask = gray.copy(); tissue_mask.threshold(255-glass_threshold, x=1, y=0)
-
-    # only accept large portions of tissue
-    # TODO: define in microns!
-    r = 5
-    tissue_mask.apply_morphology_filter(pdnl_sana.filter.MorphologyFilter('opening', 'ellipse', 5))
-    tissue_mask.apply_morphology_filter(pdnl_sana.filter.MorphologyFilter('closing', 'ellipse', 5))
-
-    return tissue_mask
 
 def sort_segments(a, b, c=None, d=None):
     a = a.copy()
