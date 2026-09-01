@@ -13,6 +13,7 @@ import shapely.geometry
 from matplotlib import colors
 from matplotlib import pyplot as plt
 import shapely.geometry
+from tqdm import tqdm
 
 # sana packages
 import pdnl_sana.geo
@@ -256,7 +257,7 @@ class Frame:
             raise ImageTypeException("Cannot apply morphology filter to non-binary image")
         self.img = morphology_filter.apply(self.img)[:,:,None]
 
-    def convolve(self, kernel: np.ndarray, tile_step: sana.geo.Point, align_center=False, normalize=True):
+    def convolve(self, kernel: np.ndarray, tile_step: sana.geo.Point, align_center=False, normalize=True, iterate=False):
         """
         Performs a (downsampled) convolution of the given kernel over the image. This is done by creating tile views into the frame, then applying the kernel to each of the views
         :param kernel: (M,N) array to apply to each tile
@@ -273,13 +274,25 @@ class Frame:
         tiles = self.to_tiles(tile_size, tile_step, align_center=align_center)
 
         # perform the convolution
-        result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
+        if not iterate:
+            result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
+        else:
+            result = np.empty((tiles.shape[0], tiles.shape[1]))
+            idxs = [(j,i) for j in range(result.shape[0]) for i in range(result.shape[1])]
+            for (j,i) in tqdm(idxs):
+                result[j,i] = np.sum(tiles[j,i] * kernel)
 
         # TODO: do we always want to normalize?
         if normalize:
             ones = frame_like(self, np.ones_like(self.img))
             ones_tiles = ones.to_tiles(tile_size, tile_step, align_center=align_center)
-            norm_factor = np.sum(ones_tiles * kernel[None,None,:,:], axis=(2,3))
+            if not iterate:
+                norm_factor = np.sum(ones_tiles * kernel[None,None,:,:], axis=(2,3))
+            else:
+                norm_factor = np.empty((ones_tiles.shape[0], ones_tiles.shape[1]))
+                idxs = [(j,i) for j in range(norm_factor.shape[0]) for i in range(norm_factor.shape[1])]
+                for (j,i) in tqdm(idxs):
+                    norm_factor[j,i] = np.sum(ones_tiles[j,i] * kernel)
             result = result.astype(float) / norm_factor
 
         return result
@@ -405,12 +418,12 @@ class Frame:
         """
         if alignment == 'before':
             before = pad
-            after = sana.geo.point_like(pad, (0,0))
+            after = sana.geo.point_like(pad, 0,0)
         elif alignment == 'center':
             before = pad//2
             after = pad - before
         elif alignment == 'after':
-            before = sana.geo.point_like(pad, (0,0))
+            before = sana.geo.point_like(pad, 0,0)
             after = pad
         img = np.pad(self.img, ((before[1], after[1]), # y
                                      (before[0], after[0]), # x

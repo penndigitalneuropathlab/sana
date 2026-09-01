@@ -55,7 +55,6 @@ class Loader(openslide.OpenSlide):
 
         # define the necessary attributes
         self.ds = np.array(self.level_downsamples)
-
         if mpp is None:
             if self.fname.endswith('.svs') and 'aperio.MPP' in self.properties:
                 self.mpp = float(self.properties['aperio.MPP'])
@@ -97,7 +96,7 @@ class Loader(openslide.OpenSlide):
         roi = sana.geo.rectangle_like(loc, loc, size)
         return self.load_frame_with_roi(roi, level=self.thumbnail_level)
 
-    def load_frame(self, loc: sana.geo.Point, size: sana.geo.Point, level: int=0, pad_color=0):
+    def load_frame(self, loc: sana.geo.Point, size: sana.geo.Point, level: int=0, pad_color=255):
         """
         Loads a Frame into memory, defined by the top left corner and a requested size
         :param loc: top left corner of Frame (in any unit)
@@ -420,6 +419,10 @@ class Framer:
         size = self.size + 2*self.fpad
         return loc, size
 
+    def get_frame_idxs(self):
+        return [(j,i) for j in range(self.nframes[0]) \
+                  for i in range(self.nframes[1])]
+
     def load_mask(self, i, j):
         loc, size = self.get_coords(i, j)
 
@@ -499,3 +502,4 @@ def sort_segments(a, b, c=None, d=None):
     d.rotate(origin, angle)
         
     return a, b, c, d
+

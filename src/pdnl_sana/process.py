@@ -3,6 +3,8 @@
 import os
 from functools import partial
 from multiprocessing.dummy import Pool as ThreadPool
+import tempfile
+import random
 
 # installed modules
 import numpy as np
@@ -154,7 +156,7 @@ class HDABProcessor(Processor):
 
         if subtract_dab:
             self.hem.img = self.hem.img - self.dab.img
-
+        
         # rescale the OD to uint8 using the digital min/max
         # TODO: this compresses the digital space, maybe don't use min/max od!
         if run_hem:
@@ -204,10 +206,14 @@ class HDABProcessor(Processor):
         # get the threshold for the stain using pixels that are inside the ROI
         if od_threshold is None:
             hist = stain.get_histogram(mask=self.main_mask)
+            if self.logger.debug_level == 'full':
+                fig, ax = plt.subplots(1,1)
+            else:
+                ax = None
             threshold = sana.threshold.triangular_method(
                 hist, 
                 strictness=triangular_strictness,
-                debug=self.logger.debug_level == 'full'
+                ax=ax,
             )
             if threshold < minimum_threshold:
                 threshold = minimum_threshold
@@ -327,10 +333,14 @@ class CVDABProcessor(Processor):
         # get the threshold for the stain using pixels that are inside the ROI
         if od_threshold is None:
             hist = stain.get_histogram(mask=self.main_mask)
+            if self.logger.debug_level == 'full':
+                fig, ax = plt.subplots(1,1)
+            else:
+                ax = None
             threshold = sana.threshold.triangular_method(
                 hist, 
                 strictness=triangular_strictness,
-                debug=self.logger.debug_level == 'full'
+                ax=ax,
             )
             if threshold < minimum_threshold:
                 threshold = minimum_threshold
@@ -355,3 +365,125 @@ class CVDABProcessor(Processor):
         # return all of the processed images
         return ret
 
+def preprocess_chunk(
+        input_slide: str, staining_code: str, target_stain: str, 
+        j: int, i: int, level: int, size: int, rois: dict, roi_holes: list, 
+        tmp_directory: str=None, apply_smoothing: bool=False,
+        normalize_background: bool=True, 
+        background_radius: float=300.0, background_overlap: float=0.5,
+        ret_indices: bool=False,
+        ):
+    """
+    This function applies color deconvolution to an RGB chunk and saves the stain information
+    """
+    if tmp_directory is None:
+        logger_path = ""
+    else:
+        logger_path = os.path.join(tmp_directory, f'parameters_{j}_{i}.pkl')
+
+    logger = sana.logging.Logger('normal', logger_path)
+    loader = sana.slide.Loader(logger, input_slide)
+    size = sana.geo.Point(size, size, is_micron=False, level=level)
+    # TODO: fix for pickling error, either need dill or use __reduce__ in sana.geo.Array
+    for key in rois:
+        for roi in rois[key]:
+            roi.is_micron = False
+            roi.level = level
+    for roi_hole in roi_holes:
+        roi_hole.is_micron = False
+        roi_hole.level = level
+    framer = sana.slide.Framer(loader, size=size, step=size, level=level, rois=rois, roi_holes=roi_holes)
+
+    # get the frame mask
+    mask, _ = framer.load_mask(j,i)
+
+    # decide if it's worth it to process this frame
+    if np.sum(mask.img) < 0.005*mask.img.shape[0]*mask.img.shape[1]:
+        return None
+
+    # extract the frame from the WSI
+    frame = framer.load_frame(j,i)
+    
+    # preprocess the frame
+    if staining_code == 'HDAB':
+        run_hem = target_stain == 'HEM'
+        processor = sana.process.HDABProcessor(
+            logger, frame, main_mask=mask, 
+            run_hem=run_hem, run_dab=~run_hem,
+            apply_smoothing=apply_smoothing, 
+            normalize_background=normalize_background, 
+            radius=background_radius, 
+            overlap=background_overlap,
+        )
+        if target_stain == 'HEM':
+            stain = processor.hem
+            stain_name = 'counterstain'
+        else:
+            stain = processor.dab
+            stain_name = 'dab'
+    elif staining_code == 'CVDAB':
+        run_cv = target_stain == 'CV'
+        processor = sana.process.CVDABProcessor(
+            logger, frame, main_mask=mask, 
+            run_cv=run_cv, run_dab=~run_cv,
+            apply_smoothing=apply_smoothing, 
+            normalize_background=normalize_background, 
+            radius=background_radius, 
+            overlap=background_overlap,
+        )
+        if target_stain == 'CV':
+            stain = processor.cv
+            stain_name = 'counterstain'
+        else:
+            stain = processor.dab
+            stain_name = 'dab'
+    else:
+        logger.error(f'STAINING CODE NOT RECOGNIZED -- {staining_code}')
+        return
+
+    # cache the stain data
+    if tmp_directory:
+
+        stain.save(os.path.join(tmp_directory, f"{stain_name}_{j}_{i}.png"))
+        mask.save_compressed(os.path.join(tmp_directory, f"mask_{j}_{i}.npz"))
+        logger.write_data()
+
+    # return the histograms in order to calculate a global WSI
+    histogram = stain.get_histogram(mask=mask)
+
+    if ret_indices:
+        return histogram, i, j
+    else:
+        return histogram
+
+def preprocess_wsi(
+        input_slide: str, staining_code: str, target_stain: str,
+        frame_size: int=1024, level: int=0, 
+        rois: dict={}, roi_holes: list=[], 
+        tmp_directory: str=None, n_cores: int=1,
+        ret_indices: bool=False, shuffle: bool=False,
+        ):
+    if tmp_directory is None:
+        tmp_directory = tempfile.TemporaryDirectory().name
+    logger = sana.logging.Logger('normal', "")
+    loader = sana.slide.Loader(logger, input_slide)
+
+    size = sana.geo.Point(frame_size, frame_size, is_micron=False, level=level)
+    framer = pdnl_sana.slide.Framer(
+        loader, size=size, step=size, 
+        level=level, rois=rois, roi_holes=roi_holes)
+
+    job_args = [{
+        'j': j, 'i': i,
+        'tmp_directory': tmp_directory,
+        'input_slide': input_slide, 'level': level,
+        'size': frame_size, 'rois': rois, 'roi_holes':  roi_holes,
+        'staining_code': staining_code, 'target_stain': target_stain,
+        'ret_indices': ret_indices,
+        } for (j,i) in framer.get_frame_idxs()]
+    if shuffle:
+        random.shuffle(job_args)
+    return sana.utils.dispatch_jobs(
+        preprocess_chunk, job_args, 
+        n_cores=n_cores, progress_str="Find Global Threshold"), len(job_args)
+    

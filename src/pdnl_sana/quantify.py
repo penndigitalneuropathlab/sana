@@ -239,7 +239,6 @@ def aggregate_cells(window_size: pdnl_sana.geo.Point, cells: np.ndarray, i0: int
     for (j,i) in [(j,i) for j in range(j0, j1) for i in range(i0, i1)]:
         ctr = np.array([i,j])*ds
         loc = ctr - window_size//2
-
         window_idxs = find_local_samples(x, y, loc, window_size)
         wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
 
@@ -316,3 +315,28 @@ def aggregate_features_chunked(feats, window_size, chunk_size, out_size, slide_s
             heatmap[j0:j1, i0:i1] = out
 
     return heatmap
+
+def apply_layer_masks_to_frame(frame, layer_masks):
+    nlayers = np.max(layer_masks)
+    curve = np.zeros(nlayers)
+    for layer in range(1, np.max(layer_masks)+1):
+        mask = layer_masks == layer
+        curve[layer-1] = np.sum(frame.img[mask]) / np.sum(mask)
+    return curve
+
+
+def apply_layer_masks_to_cells(cells, layer_masks):
+    nlayers = np.max(layer_masks)
+    cell_features = np.zeros((nlayers, cells.shape[1]-2+1))
+    for i in range(len(cells)):
+        x, y = cells[i, :2].astype(int)
+        cell_layer = layer_masks[y, x]
+        if cell_layer == 0:
+            continue
+        cell_features[cell_layer-1, 0] += 1
+        cell_features[cell_layer-1, 1:] += cells[i, 2:]
+
+    cell_features[:,1:] = cell_features[:, 1:] / cell_features[:,0][:, None]
+    for layer in range(1, nlayers+1):
+        cell_features[layer-1,0] = cell_features[layer-1,0] / np.sum(layer_masks == layer)
+    return cell_features

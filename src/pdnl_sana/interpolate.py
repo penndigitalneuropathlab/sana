@@ -2,6 +2,7 @@
 import numpy as np
 from scipy.interpolate import interp1d, RegularGridInterpolator
 import scipy.optimize
+from tqdm import tqdm
 
 import pdnl_sana.geo
 import pdnl_sana.image
@@ -331,3 +332,19 @@ def fan_sample(top, right, bottom, left, degrees=1, N=10, ax=None, plot_interval
     angles = np.where(angles <= 180, angles, angles - 360)
         
     return sample_grid, angles
+
+def sample_grid_to_layers(sample_grid, out_h, out_w, nlayers):
+    h, w, _ = sample_grid.shape
+    bins = np.linspace(0, h, nlayers+1, endpoint=True).astype(int)
+
+    layer_masks = np.zeros((out_h,out_w,1), dtype=int)
+    for layer in range(nlayers):
+        valid = sample_grid[bins[layer]:bins[layer+1]]
+
+        y = valid[:,:,0].astype(int).flatten()
+        x = valid[:,:,1].astype(int).flatten()
+        layer_masks[y-1,x-1,0] = layer+1
+
+    return layer_masks
+
+

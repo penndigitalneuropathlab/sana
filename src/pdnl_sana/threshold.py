@@ -2,7 +2,7 @@
 import numpy as np
 from matplotlib import pyplot as plt
 
-def triangular_method(hist, strictness=0.0, debug=False):
+def triangular_method(hist, strictness=0.0, ax=None):
     """
     This method draws a straight line from the peak of the histogram to the right most end of the histogram, and selects the threshold as the x value which maximizes the length of the perpendicular line drawn from the original line to the histogram
     :param hist: (256,) array of values
@@ -34,8 +34,7 @@ def triangular_method(hist, strictness=0.0, debug=False):
     # move the peak value down the histogram based on the scaler
     x0 = np.argmax(hist[x0:x1] <= (y0 * peak_percentage)) + x0
     y0 = hist[x0]
-    if debug:
-        fig, ax = plt.subplots(1,1)
+    if ax:
         ax.plot(hist, color='black')
         ax.plot([x0, x1], [y0, y1], color='blue')
 
@@ -67,10 +66,16 @@ def triangular_method(hist, strictness=0.0, debug=False):
     dist = np.sqrt(((xi-xj)**2 + (yi-yj)**2))
     idx = np.argmax(dist)
     thresh = idx + x0
-    if debug:
+    if ax:
         #plot_idx = np.unique(np.rint(np.geomspace(x0, x1-1)).astype(int)) - x0
         #ax.plot([xi[plot_idx], xj[plot_idx]], [yi[plot_idx], yj[plot_idx]], '--', color='red')
-        ax.plot([xi[idx], xj[idx]], [yi[idx], yj[idx]], color='green')
+        ax.plot([xi[idx], xj[idx]], [yi[idx], yj[idx]], color='green', linestyle='--')
+        ax.set_xlim([x0, x1])
+        if y1 < y0:
+            ax.set_ylim([y1, y0])
+        else:
+            ax.set_ylim([y0, y1])
+        ax.axvline(thresh, color='red', linestyle='--')
         ax.set_aspect('equal')
         ax.set_title('Triangular Strictness=%.2f' % strictness)        
 
