@@ -7,7 +7,6 @@ from concurrent.futures import ProcessPoolExecutor, as_completed
 import pdnl_sana as sana
 import pdnl_sana.image
 
-
 def calculate_ao(pos: sana.image.Frame, mask: sana.image.Frame=None, neg: sana.image.Frame=None):
     """
     this function takes calculate the %Area Occupied of an ROI based on the positive pixel classifications
@@ -214,38 +213,83 @@ def find_local_samples(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: 
     return (loc[0] <= x) & (x <= loc[0]+size[0]) & (loc[1] <= y) & (y <= loc[1]+size[1])
 
 @jit(nopython=True)
-def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point):
+def localize_coordinates(x: np.ndarray, y: np.ndarray, loc: sana.geo.Point, size: sana.geo.Point, theta: float=0.0):
     """
     calculates the weights of samples based on their proximity to a local 2d gaussian
     :param x: (N,1) array, same resolution as loc/size
     :param y: (N,1) array, same resolution as loc/size
     :param loc: upper left corner of the tile
     :param size: size of the tile
+    :param theta: angle (radians) of rotation of the gaussian
     """
     # define a 2d gaussian centered on the tile
     mu_x, mu_y = loc + size / 2
     sg_x, sg_y = size / 5
 
-    # weight each sample by its proximity to the 2d gaussian center
-    wgts = np.exp(-((x-mu_x)**2 / (2*sg_x**2) + (y-mu_y)**2 / (2*sg_y**2))) / \
-        (2*np.pi*sg_x*sg_y)
+    # # weight each sample by its proximity to the 2d gaussian center
+    # wgts = np.exp(-((x-mu_x)**2 / (2*sg_x**2) + (y-mu_y)**2 / (2*sg_y**2))) / \
+    #     (2*np.pi*sg_x*sg_y)
+
+    x = (x - mu_x).astype(np.float64)
+    y = (y - mu_y).astype(np.float64)
+    wgts = (1/(2*np.pi*sg_x*sg_y)) * \
+        np.exp(-((x*np.cos(theta) + y*np.sin(theta))**2 / (2*sg_x**2) + \
+                    (-x*np.sin(theta) + y*np.cos(theta))**2 / (2*sg_y**2)))
 
     return wgts
 
 @jit(nopython=True)
-def aggregate_cells(window_size: pdnl_sana.geo.Point, cells: np.ndarray, i0: int, j0: int, i1: int, j1: int, ds: float):
+def aggregate_cells(window_size: pdnl_sana.geo.Point, 
+                    cells: np.ndarray, 
+                    i0: int, j0: int, i1: int, j1: int, ds: float,
+                    cortical_angles: np.ndarray=None,
+                    valid_mask: np.ndarray=None,
+                    apply_angles: bool=False,
+                    ):
+    if cortical_angles is None:
+        cortical_angles = np.zeros((j1, i1), dtype=np.float64)
+        valid_mask = np.ones((j1,i1), dtype=np.uint8)
+
     out = np.zeros((j1-j0, i1-i0, cells.shape[1]-2+1), dtype=float)
     x, y = cells[:,:2].T
     for (j,i) in [(j,i) for j in range(j0, j1) for i in range(i0, i1)]:
+        # if valid_mask[j-j0,i-i0] == 0:
+        if valid_mask[j,i] == 0:
+            continue
+        
         ctr = np.array([i,j])*ds
         loc = ctr - window_size//2
         window_idxs = find_local_samples(x, y, loc, window_size)
-        wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, window_size)
+
+        # TODO: this is no longer centered! this is the bug on the plots
+        size = window_size.copy()
+        if apply_angles:
+            size[0] = size[0] / 3
+            # theta = cortical_angles[j-j0,i-i0]
+            theta = cortical_angles[j,i]
+        else:
+            theta = 0.0
+        wgts = localize_coordinates(x[window_idxs], y[window_idxs], loc, size, theta)
+
+        # x0 = int((i-i0) - (size[0]//2)/ds)
+        # y0 = int((j-j0) - (size[1]//2)/ds)
+        x0 = int((i) - (size[0]//2)/ds)
+        y0 = int((j) - (size[1]//2)/ds)
+        if x0 < 0:
+            x0 = 0
+        if y0 < 0:
+            y0 = 0
+
+        x1 = x0 + int(size[0]/ds)
+        y1 = y0 + int(size[1]/ds)
+        valid_pct = np.mean(valid_mask[y0:y1, x0:x1])
+        if valid_pct == 0:
+            continue
 
         den = np.sum(wgts)
         if den == 0:
             continue
-        out[j-j0,i-i0,0] = den # density
+        out[j-j0,i-i0,0] = den / valid_pct # density
         # TODO: calculate std of these features not just mean?
         for k in range(1, out.shape[2]):
             out[j-j0,i-i0,k] = np.nansum(cells[window_idxs,k+1] * wgts) / den

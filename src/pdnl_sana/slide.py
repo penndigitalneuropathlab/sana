@@ -2,19 +2,11 @@
 # system packages
 import os
 import time
-
-# openslide importing
-OPENSLIDE_PATH = os.environ.get('OPENSLIDE_DLL_DIRECTORY')
-if hasattr(os, 'add_dll_directory'):
-    # Windows
-    with os.add_dll_directory(OPENSLIDE_PATH):
-        import openslide
-else:
-    import openslide
     
 # installed packages
 import numpy as np
 from matplotlib import pyplot as plt
+import openslide
 
 # sana packages
 import pdnl_sana.image
@@ -451,7 +443,7 @@ class Framer:
 
         mask = pdnl_sana.image.Frame(np.zeros(self.size, dtype=np.uint8), level=self.level, converter=self.converter)
         if len(roi_masks) == 0:
-            mask[:] = 1
+            mask.img[:] = 1
         else:
             for key in roi_masks:
                 mask.img[roi_masks[key].img != 0] = 1

@@ -472,6 +472,26 @@ class Polygon(Array):
         else:
             return c2
 
+    def calculate_tangents(self):
+        tangents = []
+        for mid in range(self.shape[0]):
+            if mid == 0:
+                st = self.shape[0]-1
+            else:
+                st = mid - 1
+            if mid == self.shape[0]-1:
+                en = 0
+            else:
+                en = mid + 1
+            l0 = self.slice_shortest(st, mid)
+            l1 = self.slice_shortest(mid, en)
+
+            m0 = (l0[1,1]-l0[0,1])/(l0[1,0]-l0[0,0])
+            m1 = (l1[1,1]-l1[0,1])/(l1[1,0]-l1[0,0])
+            m = (m0+m1)/2
+            tangents.append(-1/m)
+        return tangents
+    
 class Curve(Array):
     """
     (n,2) shaped Array object, which usually is used for segmented boundaries in the tissue
