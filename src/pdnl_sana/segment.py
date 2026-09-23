@@ -99,9 +99,9 @@ def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10,
         return pdnl_sana.image.frame_like(pos, np.zeros_like(pos.img))
     
     # create the rotated anisotropic gaussian filters
-    step = sana.geo.Point(stride, stride, False, pos.level)
+    step = pdnl_sana.geo.Point(stride, stride, False, pos.level)
     thetas = np.linspace(0, np.pi, n_directions, endpoint=False)
-    filters = [sana.filter.AnisotropicGaussianFilter(th=th, sg_x=1, sg_y=sigma) for th in thetas]
+    filters = [pdnl_sana.filter.AnisotropicGaussianFilter(th=th, sg_x=1, sg_y=sigma) for th in thetas]
 
     if debug:
         print('Applying Anisotropic Gaussian Kernels...', flush=True)
@@ -133,7 +133,7 @@ def segment_somas(pos, ctrs, n_directions=2, stride=1, sigma=3, fm_threshold=10,
     time[time.mask] = np.inf
 
     # threshold the time to create the soma mask
-    mask = sana.image.frame_like(pos, (time < fm_threshold).astype(np.uint8))
+    mask = pdnl_sana.image.frame_like(pos, (time < fm_threshold).astype(np.uint8))
 
     if debug:
         fig, axs = plt.subplots(2,2, sharex=True, sharey=True)
@@ -182,7 +182,7 @@ def match_polygons_to_skeleton(skeleton, polygons, debug=False):
     # loop through all skeletons
     for i, skel_id in list(enumerate(skel_ids)):
         v = get_skeleton_vertices(skel, df, skel_id)
-        p = sana.geo.Polygon(*v.T, is_micron=False, level=0)
+        p = pdnl_sana.geo.Polygon(*v.T, is_micron=False, level=0)
         
         # found all somas
         if all([not x is None for x in ids]):
@@ -324,7 +324,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
     microglia_instances = []    
     for microglia_id, (soma_id, soma_polygon) in enumerate(zip(soma_ids, soma_polygons)):
 
-        soma_mask = sana.image.create_mask_like(pos, [soma_polygon])
+        soma_mask = pdnl_sana.image.create_mask_like(pos, [soma_polygon])
         
         # no skeleton
         if soma_id is None:
@@ -343,7 +343,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
         else:
             # get the bounding box of the vertices
             v = get_skeleton_vertices(skel, df, soma_id)
-            p = sana.geo.Polygon(v[:,0], v[:,1], False, 0)
+            p = pdnl_sana.geo.Polygon(v[:,0], v[:,1], False, 0)
             skel_loc, skel_size = p.bounding_box()
             soma_loc, soma_size = soma_polygon.bounding_box()
             if skel_size[0]*skel_size[1] < soma_size[0]*soma_size[1]:
@@ -356,7 +356,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
             size += pad
 
             # crop the frame and the skeleton by the bounding box
-            skeleton_tile = sana.image.frame_like(pos, np.zeros_like(skeleton))
+            skeleton_tile = pdnl_sana.image.frame_like(pos, np.zeros_like(skeleton))
             skeleton_tile.img[p[:,1], p[:,0], 0] = 1
             skeleton_tile.crop(loc, size)
         
@@ -368,7 +368,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
             best_tile.crop(loc, size)
         
             # start with the skeleton, OR'd with soma
-            new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img | soma_tile.img) 
+            new_tile = pdnl_sana.image.frame_like(pos_tile, skeleton_tile.img | soma_tile.img) 
 
             # DICE score with the original classified DAB
             score = np.mean(new_tile == pos_tile.img)
@@ -384,7 +384,7 @@ def reconstruct_instances_from_skeleton(pos, skeleton, soma_polygons, debug=Fals
                 for r in range(1, 10):
 
                     # perform dilation, OR'd with soma
-                    new_tile = sana.image.frame_like(pos_tile, skeleton_tile.img.astype(np.uint8))
+                    new_tile = pdnl_sana.image.frame_like(pos_tile, skeleton_tile.img.astype(np.uint8))
                     kern = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2*r+1, 2*r+1))
                     new_tile.img = cv2.dilate(new_tile.img, kern)[:,:,None] | soma_tile.img
 
