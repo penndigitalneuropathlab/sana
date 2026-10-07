@@ -183,6 +183,7 @@ class StainVector:
             'H-DAB': ['HEM', 'DAB', 'RES'],
             'CV-DAB': ['CV', 'DAB', 'RES'],
             'LFB-CV': ['LFB', 'CV', 'RES'],
+            'H-DABVR': ['HEM', 'DAB', 'VR'],
         }
         if not self.staining_code in self.available_stains:
             raise StainNotImplementedError(self.staining_code)
@@ -233,6 +234,18 @@ class StainVector:
                     [0.570, 0.790, 0.220],
                     [0.000, 0.000, 0.000],
                 ])
+            elif self.staining_code == 'H-DABVR':
+                self.v = np.array([
+                    [0.650, 0.706, 0.286],
+                    [0.268, 0.570, 0.776],
+                    [0.260, 0.796, 0.546],
+                ]) 
+                # NOTE: these HEM/DAB vectors came from QuPath directly from the VR sections - not necessary to keep
+                # self.v = np.array([
+                #     [0.631, 0.671, 0.388],
+                #     [0.228, 0.523, 0.821],
+                #     [0.260, 0.796, 0.546],
+                # ]) 
         
         # 3rd channel is unspecified, create an orthogonal residual color
         # NOTE: this color will sometimes have negative components, thats okay since we will check for this later on
