@@ -237,6 +237,202 @@ class HDABProcessor(Processor):
 
         # return all of the processed images
         return ret
+    
+
+class HDABVRProcessor(Processor):
+    """
+    Subclass of Processor which handles the DAB/Hematoxylin (and Vector Red Residual) stains
+    :param logger: Logger object which will store various processing parameters
+    :param frame: input RGB frame to process
+    :param apply_smoothing: applies an anisotropic diffusion smoothing filter
+    :param normalize_background: normalizes the background to a constant value for better thresholding
+    :param stain_vector: overrides the default staining vector
+    """
+    def __init__(
+            self,
+            logger: sana.logging.Logger,
+            frame: sana.image.Frame, 
+            apply_smoothing: bool=True,
+            normalize_background: bool=True,
+            radius: float=100,
+            overlap: float=0.5,
+            stain_vector: list=None,
+            subtract_dab: bool=True,
+            run_hem=True,
+            run_dab=True,
+            run_res=True,
+            **kwargs
+    ):
+        super(HDABVRProcessor, self).__init__(logger, frame, **kwargs)
+
+        # separate out the individual stains within the image
+        self.ss = sana.color_deconvolution.StainSeparator('H-DABVR', stain_vector)
+        #self.ss.estimate_stain_vector(self.frame.img)
+        stains = self.ss.separate(self.frame.img)
+        self.hem = sana.image.frame_like(self.frame, stains[:,:,0])
+        self.dab = sana.image.frame_like(self.frame, stains[:,:,1])
+        self.res = sana.image.frame_like(self.frame, stains[:,:,2])
+        self.stains = [self.hem, self.dab, self.res]
+        
+        if logger.debug_level == 'full':
+            fig, axs = plt.subplots(2, 4, sharex=True, sharey=True, figsize=(20,15))
+            axs = axs.ravel()
+            ax = axs[0]
+            ax.imshow(self.frame.img)
+            ax.set_title('Frame')
+            ax = axs[1]
+            ax.imshow(self.hem.img, cmap='gray')
+            ax.set_title('HEM (OD)')
+            ax = axs[2]
+            ax.imshow(self.dab.img, cmap='gray')
+            ax.set_title('DAB (OD)')
+            ax = axs[3]
+            ax.imshow(self.res.img, cmap='gray')
+            ax.set_title('RES (OD)')
+
+        if subtract_dab:
+            self.hem.img = self.hem.img - self.dab.img 
+        
+        # NOTE: band-aid fix for VR image - "color" gate
+        # - checks to see if the masked tissue contains any pixels close to the VR stain vector 
+        # - count the pixels closest to the stain vector, and if above a threshold, subtract HEM and DAB from VR RES
+        if run_res:
+            # setting params for the color gate
+            od_min=0.15
+            max_angle_deg=15.0
+
+            # grabbing the raw stain vector for each channel
+            hem_v = self.ss.stain_vector.v[0]
+            dab_v = self.ss.stain_vector.v[1]
+            vr_v  = self.ss.stain_vector.v[2]
+
+            # grab the OD for the entire frame, and convert to unit vector
+            img_od = self.ss.to_od(self.frame.img)
+            mag = np.linalg.norm(img_od, axis=-1)
+            unit_od = img_od / np.maximum(mag, 1e-8)[..., None]
+
+            def unit(v):
+                v = np.asarray(v, dtype=np.float64)
+                return v / np.linalg.norm(v)
+
+            # cosine similarity to each stain vector -> angle in degrees
+            def angle(v):
+                return np.degrees(np.arccos(np.clip(unit_od @ unit(v), -1, 1)))
+
+            # convert stain vectors to unit vectors and calculate the angle between unit stain vector and unit OD vector
+            vr_a, hem_a, dab_a = angle(vr_v), angle(hem_v), angle(dab_v)
+
+            tissue_mask = self.main_mask.copy()
+            tissue_mask.to_binary()
+
+            # get an image of the 'VR' pixels
+            vr_like = (tissue_mask.img & (mag > od_min)
+                    & (vr_a < max_angle_deg) & (vr_a < hem_a) & (vr_a < dab_a))
+
+            # sum the masked tissue pixels, and get a count of the 'VR' pixels
+            n_tissue = tissue_mask.img.sum()
+            frac = vr_like.sum() / max(n_tissue, 1)
+
+            # if the ratio between 'VR' pixel count and the total tissue is high enough, we process as a VR image, otherwise zero out the image
+            has_vr = frac >= 1e-3
+
+            if has_vr:
+                self.res.img = self.res.img - self.hem.img - self.dab.img
+            else:
+                self.res.img = np.zeros_like(self.res.img)
+
+        # rescale the OD to uint8 using the digital min/max
+        # TODO: this compresses the digital space, maybe don't use min/max od!
+        if run_hem:
+            self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
+            #self.hem.rescale(self.ss.min_od[0], 1)
+        if run_dab:
+            self.dab.rescale(self.ss.min_od[1], self.ss.max_od[1])
+        if run_res:
+            self.res.rescale(self.ss.min_od[2], self.ss.max_od[2])
+
+        # smooth the DAB, mainly flattening interiors of objects
+        if apply_smoothing:
+            if run_hem:
+                self.hem.anisodiff()
+            if run_dab:
+                self.dab.anisodiff()
+            if run_res:
+                self.res.anisodiff()
+
+        # subtract the bacgkround image from the stains
+        if normalize_background:
+            if run_hem:
+                self.hem.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
+            if run_dab:
+                self.dab.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
+            if run_res:
+                self.res.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
+
+
+        self.logger.data['apply_smoothing'] = apply_smoothing
+        self.logger.data['normalize_background'] = normalize_background
+        self.logger.data['stain_vector'] = stain_vector
+        
+        if self.logger.debug_level == 'full':
+            ax = axs[5]
+            ax.imshow(self.hem.img, cmap='gray')
+            ax.set_title('HEM (Preprocessed)')
+            ax = axs[6]
+            ax.imshow(self.dab.img, cmap='gray')
+            ax.set_title('DAB (Preprocessed)')
+            ax = axs[7]
+            ax.imshow(self.res.img, cmap='gray')
+            ax.set_title('RES (Preprocessed)')
+
+
+    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, mask=None, morphology_filters=[], target_stain=["DAB","VR"]):
+
+        # list of processed images to return
+        ret = {
+            'main_mask': self.main_mask,
+            'sub_masks': self.sub_masks,
+            'exclusion_mask': self.exclusion_mask,
+            'valid_mask': self.valid_mask,
+        }
+        stain_idx = self.ss.stain_vector.stains.index(target_stain)
+        stain = self.stains[stain_idx]
+
+        # get the threshold for the stain using pixels that are inside the ROI
+        if od_threshold is None:
+            hist = stain.get_histogram(mask=self.main_mask)
+            if self.logger.debug_level == 'full':
+                fig, ax = plt.subplots(1,1)
+            else:
+                ax = None
+            threshold = sana.threshold.triangular_method(
+                hist, 
+                strictness=triangular_strictness,
+                ax=ax,
+            )
+            if threshold < minimum_threshold:
+                threshold = minimum_threshold
+                
+        # manually select the threshold
+        else:
+            threshold = 255 * (od_threshold - self.ss.min_od[1]) / \
+                (self.ss.max_od[1] - self.ss.min_od[1])
+            
+        # perform pixel classification using thresholding and morphology filters
+        positive_stain = stain.copy()
+        self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
+        ret['stain'] = stain
+        ret['positive_stain'] = positive_stain
+
+        self.logger.data['triangular_strictness'] = triangular_strictness
+        self.logger.data['minimum_threshold'] = minimum_threshold
+        self.logger.data['od_threshold'] = od_threshold
+        self.logger.data['morphology_filters'] = morphology_filters
+        self.logger.data['threshold'] = threshold
+
+        # return all of the processed images
+        return ret
+    
 class CVDABProcessor(Processor):
     """
     Subclass of Processor which handles the DAB/Cryssl Violet (and Residual) stains
@@ -365,134 +561,6 @@ class CVDABProcessor(Processor):
         # return all of the processed images
         return ret
 
-class LFBCVProcessor(Processor):
-    """
-    Subclass of Processor which handles the Cryssl Violet and Luxol Fast Blue (and Residual) stains
-    :param logger: Logger object which will store various processing parameters
-    :param frame: input RGB frame to process
-    :param apply_smoothing: applies an anisotropic diffusion smoothing filter
-    :param normalize_background: normalizes the background to a constant value for better thresholding
-    :param stain_vector: overrides the default staining vector
-    """
-    def __init__(
-            self,
-            logger: sana.logging.Logger,
-            frame: sana.image.Frame, 
-            apply_smoothing: bool=True,
-            normalize_background: bool=True,
-            radius: float=100,
-            overlap: float=0.5,
-            stain_vector: list=None,
-            run_lfb=True,            
-            run_cv=True,
-            **kwargs
-    ):
-        super().__init__(logger, frame, **kwargs)
-
-        # separate out the individual stains within the image
-        self.ss = sana.color_deconvolution.StainSeparator('LFB-CV', stain_vector)
-        stains = self.ss.separate(self.frame.img)
-        self.lfb = sana.image.frame_like(self.frame, stains[:,:,0])        
-        self.cv = sana.image.frame_like(self.frame, stains[:,:,1])
-        self.res = sana.image.frame_like(self.frame, stains[:,:,2])
-        self.stains = [self.lfb, self.cv, self.res]
-
-        if logger.debug_level == 'full':
-            fig, axs = plt.subplots(2, 3, sharex=True, sharey=True, figsize=(20,15))
-            axs = axs.ravel()
-            ax = axs[0]
-            ax.imshow(self.frame.img)
-            ax.set_title('Frame')
-            ax = axs[1]
-            ax.imshow(self.lfb.img, cmap='gray')
-            ax.set_title('LFB (OD)')
-            ax = axs[2]
-            ax.imshow(self.cv.img, cmap='gray')
-            ax.set_title('CV (OD)')
-            ax = axs[3]
-            ax.imshow(self.res.img, cmap='gray')
-            ax.set_title('RES (OD)')
-
-        # rescale the OD to uint8 using the digital min/max
-        # TODO: this compresses the digital space, maybe don't use min/max od!
-        if run_lfb:
-            self.lfb.rescale(self.ss.min_od[0], self.ss.max_od[1])
-        if run_cv:
-            self.cv.rescale(self.ss.min_od[1], self.ss.max_od[1])
-
-        # smooth the DAB, mainly flattening interiors of objects
-        if apply_smoothing:
-            if run_lfb:
-                self.lfb.anisodiff()
-            if run_cv:
-                self.cv.anisodiff()
-
-        # subtract the bacgkround image from the stains
-        if normalize_background:
-            if run_lfb:
-                self.lfb.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
-            if run_cv:
-                self.cv.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
-
-        self.logger.data['apply_smoothing'] = apply_smoothing
-        self.logger.data['normalize_background'] = normalize_background
-        self.logger.data['stain_vector'] = stain_vector
-        
-        if self.logger.debug_level == 'full':
-            ax = axs[4]
-            ax.imshow(self.lfb.img, cmap='gray')
-            ax.set_title('LFB (Preprocessed)')
-            ax = axs[5]
-            ax.imshow(self.cv.img, cmap='gray')
-            ax.set_title('CV (Preprocessed)')
-
-    def run(self, triangular_strictness=0.0, minimum_threshold=0, od_threshold=None, mask=None, morphology_filters=[], target_stain="LFB"):
-
-        # list of processed images to return
-        ret = {
-            'main_mask': self.main_mask,
-            'sub_masks': self.sub_masks,
-            'exclusion_mask': self.exclusion_mask,
-            'valid_mask': self.valid_mask,
-        }
-        stain_idx = self.ss.stain_vector.stains.index(target_stain)
-        stain = self.stains[stain_idx]
-
-        # get the threshold for the stain using pixels that are inside the ROI
-        if od_threshold is None:
-            hist = stain.get_histogram(mask=self.main_mask)
-            if self.logger.debug_level == 'full':
-                fig, ax = plt.subplots(1,1)
-            else:
-                ax = None
-            threshold = sana.threshold.triangular_method(
-                hist, 
-                strictness=triangular_strictness,
-                ax=ax,
-            )
-            if threshold < minimum_threshold:
-                threshold = minimum_threshold
-                
-        # manually select the threshold
-        else:
-            threshold = 255 * (od_threshold - self.ss.min_od[1]) / \
-                (self.ss.max_od[1] - self.ss.min_od[1])
-            
-        # perform pixel classification using thresholding and morphology filters
-        positive_stain = stain.copy()
-        self.classify_pixels(positive_stain, threshold, mask=mask, morphology_filters=morphology_filters)
-        ret['stain'] = stain
-        ret['positive_stain'] = positive_stain
-
-        self.logger.data['triangular_strictness'] = triangular_strictness
-        self.logger.data['minimum_threshold'] = minimum_threshold
-        self.logger.data['od_threshold'] = od_threshold
-        self.logger.data['morphology_filters'] = morphology_filters
-        self.logger.data['threshold'] = threshold
-
-        # return all of the processed images
-        return ret
-
 def preprocess_chunk(
         input_slide: str, staining_code: str, target_stain: str, 
         j: int, i: int, level: int, size: int, rois: dict, roi_holes: list, 
@@ -546,6 +614,22 @@ def preprocess_chunk(
         if target_stain == 'HEM':
             stain = processor.hem
             stain_name = 'counterstain'
+        else:
+            stain = processor.dab
+            stain_name = 'dab'
+    elif staining_code == 'H-DABVR':
+        run_hem = target_stain == 'HEM'
+        processor = sana.process.HDABVRProcessor(
+            logger, frame, main_mask=mask, 
+            run_hem=run_hem, run_dab=~run_hem, run_res=True,
+            apply_smoothing=apply_smoothing, 
+            normalize_background=normalize_background, 
+            radius=background_radius, 
+            overlap=background_overlap,
+        )
+        if target_stain == 'VR':
+            stain = processor.res
+            stain_name = 'VR'
         else:
             stain = processor.dab
             stain_name = 'dab'
