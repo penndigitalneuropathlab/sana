@@ -737,10 +737,10 @@ def connect_segments(top, right, bottom, left):
         angle += 180
 
     # sort the vertices of the segments according to their orientation
-    top = top[np.argsort(top[:,0])]
-    right = right[np.argsort(right[:,1])]
-    bottom = bottom[np.argsort(bottom[:,0])[::-1]]
-    left = left[np.argsort(left[:,1])[::-1]]
+    if top[0,0] > top[-1,0]: top = top[::-1]
+    if right[0,1] > right[-1,1]: right = right[::-1]
+    if bottom[0,0] < bottom[-1,0]: bottom = bottom[::-1]
+    if left[0,1] < left[-1,1]: left = left[::-1]
 
     # rotate back to the original orientation
     [curve.rotate(ctr, angle) for curve in [top, right, bottom, left]]

@@ -411,12 +411,7 @@ class HEProcessor(Processor):
             ax = axs[2]
             ax.imshow(self.eos.img, cmap='gray')
             ax.set_title('EOS (OD)')
-            ax = axs[3]
-            ax.imshow(self.res.img, cmap='gray')
-            ax.set_title('RES (OD)')
 
-        # rescale the OD to uint8 using the digital min/max
-        # TODO: this compresses the digital space, maybe don't use min/max od!
         if run_hem:
             self.hem.rescale(self.ss.min_od[0], self.ss.max_od[1])
             #self.hem.rescale(self.ss.min_od[0], 1)
@@ -436,13 +431,6 @@ class HEProcessor(Processor):
                 self.hem.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
             if run_eos:
                 self.eos.remove_background(radius=radius, overlap=overlap, mask=self.main_mask)
-
-        self.logger.data['apply_smoothing'] = apply_smoothing
-        self.logger.data['normalize_background'] = normalize_background
-        self.logger.data['stain_vector'] = stain_vector
-        
-        if self.logger.debug_level == 'full':
-            ax = axs[4]
             ax.imshow(self.hem.img, cmap='gray')
             ax.set_title('HEM (Preprocessed)')
             ax = axs[5]
@@ -468,6 +456,14 @@ class HEProcessor(Processor):
                 hist, 
                 strictness=triangular_strictness,
                 debug=self.logger.debug_level == 'full'
+            if self.logger.debug_level == 'full':
+                fig, ax = plt.subplots(1,1)
+            else:
+                ax = None
+            threshold = sana.threshold.triangular_method(
+                hist, 
+                strictness=triangular_strictness,
+                ax=ax,
             )
             if threshold < minimum_threshold:
                 threshold = minimum_threshold
