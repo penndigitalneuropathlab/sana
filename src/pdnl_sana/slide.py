@@ -456,6 +456,118 @@ class Framer:
         frame.frame_padding = self.fpad
         return frame
 
+def get_chunk_dirs(input_directory):
+    for d in os.listdir(input_directory):
+        if not os.path.isdir(os.path.join(input_directory, d)):
+            continue
+        i, j = list(map(int, d.split('_')))
+        yield d, i, j
+
+def get_available_rois(chunk_directory):
+    for f in os.listdir(chunk_directory):
+        if not f.startswith('mask_'):
+            continue
+        yield os.path.splitext(f.replace('mask_', ''))[0]
+
+def load_chunks(input_directory):
+    for d, i, j in get_chunk_dirs(input_directory):
+        chunk_directory = os.path.join(input_directory, d)
+        # TODO: show an actual error message here!
+        try:
+            logger = pdnl_sana.logging.Logger('normal', os.path.join(chunk_directory, 'log.pkl'))
+            level = logger.data['level']
+            mpp = logger.data['mpp']
+            ds = logger.data['ds']
+            converter = pdnl_sana.geo.Converter(mpp, ds)
+
+            chunk = pdnl_sana.image.Frame(os.path.join(chunk_directory, 'frame.png'),
+                                          level=level, converter=converter)
+            mask = pdnl_sana.image.Frame(os.path.join(chunk_directory, 'mask.png'),
+                                          level=level, converter=converter)
+            roi_masks = {}
+            for roi_name in get_available_rois(chunk_directory):
+                roi_masks[roi_name] = pdnl_sana.image.Frame(os.path.join(chunk_directory, f'mask_{roi_name}.png'),
+                                                            level=level, converter=converter)
+        except:
+            continue
+        yield i, j, logger, chunk, mask, roi_masks
+
+# TODO: support subrois
+def concatenate_chunks(input_directory):
+
+    chunks = {}
+    default_chunk = None
+    default_mask = None
+    for i, j, logger, chunk, mask, roi_masks in load_chunks(input_directory):
+        level = chunk.level
+        converter = chunk.converter
+        if default_chunk is None:
+            default_chunk = pdnl_sana.image.frame_like(chunk, np.full_like(chunk.img, 255))
+            default_mask = pdnl_sana.image.frame_like(chunk, np.full_like(mask.img, 0))
+            frame_size = chunk.size()
+        for roi_name in roi_masks:
+            if not roi_name in chunks:
+                chunks[roi_name] = {}
+
+            # only store the chunk for this ROI if it overlaps
+            roi_mask = roi_masks[roi_name]
+            if np.sum(roi_mask.img) != 0:
+                chunks[roi_name][(i,j)] = (chunk, mask, roi_mask)
+
+    rois = {}
+    for roi_name in chunks:
+
+        # get chunk boundaries for this ROI
+        j_s = [k[0] for k in chunks[roi_name]]
+        i_s = [k[1] for k in chunks[roi_name]]
+        mi_j, mx_j = np.min(j_s), np.max(j_s)
+        mi_i, mx_i = np.min(i_s), np.max(i_s)        
+        frame_loc = pdnl_sana.geo.Point(mi_j*frame_size[0], mi_i*frame_size[1])
+
+        frames, masks = [], []
+        for j in range(mi_j, mx_j+1):
+            frames.append([])
+            masks.append([])
+            for i in range(mi_i, mx_i+1):
+                chunk, mask, roi_mask = chunks[roi_name].get(
+                    (j,i), (default_chunk, default_mask, default_mask))
+                frames[-1].append(chunk.img)
+                masks[-1].append(roi_mask.img)
+
+        frame_rows = [np.concatenate(row, axis=0) for row in frames]
+        mask_rows = [np.concatenate(row, axis=0) for row in masks]
+
+        frame = pdnl_sana.image.Frame(np.concatenate(frame_rows, axis=1), 
+                                      level=level, converter=converter)
+        mask = pdnl_sana.image.Frame(np.concatenate(mask_rows, axis=1).astype(np.uint8), 
+                                      level=level, converter=converter)
+        mask.to_binary()
+
+        # Source - https://stackoverflow.com/a/47269413
+        # Posted by Divakar, modified by community. See post 'Timeline' for change history
+        # Retrieved 2026-10-27, License - CC BY-SA 3.0
+
+        def first_nonzero(arr, axis, invalid_val=-1):
+            mask = arr!=0
+            nonzeros = np.where(mask.any(axis=axis), mask.argmax(axis=axis), invalid_val)
+            return np.min(nonzeros[nonzeros!=-1])
+        def last_nonzero(arr, axis, invalid_val=-1):
+            mask = arr!=0
+            val = arr.shape[axis] - np.flip(mask, axis=axis).argmax(axis=axis) - 1
+            nonzeros = np.where(mask.any(axis=axis), val, invalid_val)
+            return np.max(nonzeros[nonzeros!=-1])
+        
+        # TODO: crop based on mask
+        loc = pdnl_sana.geo.Point(first_nonzero(mask.img, axis=1), first_nonzero(mask.img, axis=0))
+        size = pdnl_sana.geo.Point(last_nonzero(mask.img, axis=1), last_nonzero(mask.img, axis=0)) - loc
+        frame.crop(loc, size)
+        mask.crop(loc, size)
+        frame_loc.translate(-loc)
+        
+        rois[roi_name] = (frame, mask, frame_loc)
+
+    return rois
+
 def sort_segments(a, b, c=None, d=None):
     a = a.copy()
     b = b.copy()

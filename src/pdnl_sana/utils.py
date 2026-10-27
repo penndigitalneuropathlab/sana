@@ -49,11 +49,25 @@ def read_geojson(f: str) -> list[pdnl_sana.geo.Polygon]:
         props = ann.get('properties', {})
         class_name = props.get('classification', {}).get('name', None)
         name = props.get('name', None)
-        if ann['geometry']['type'] == 'MultiPolygon':
-            
+
+
+        coords = ann['geometry']['coordinates']
+        try:
+            test = np.array(coords)
+            if len(test.shape) == 3:
+                if test.shape[0] != 1:
+                    is_multi = False
+                else:
+                    is_multi = True
+            else:
+                is_multi = False
+
+        except:
+            is_multi = True
+
+        if ann['geometry']['type'] == 'MultiPolygon' or is_multi:
             for x in ann['geometry']['coordinates']:
                 xy = np.squeeze(np.array(x)).astype(float)
-                print(xy.shape)
                 annotation = pdnl_sana.geo.Annotation(
                     *xy.T, 
                     class_name=class_name, annotation_name=name, 
@@ -61,7 +75,10 @@ def read_geojson(f: str) -> list[pdnl_sana.geo.Polygon]:
                 )
                 annotations.append(annotation)
         else:
-            xy = np.squeeze(np.array(ann['geometry']['coordinates'])).astype(float)
+            coords = ann['geometry']['coordinates']
+            xy = np.squeeze(np.array(coords)).astype(float)
+            if len(xy) == 0:
+                continue
             annotation = pdnl_sana.geo.Annotation(
                 *xy.T, 
                 class_name=class_name, annotation_name=name, 

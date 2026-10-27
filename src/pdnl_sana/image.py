@@ -272,7 +272,7 @@ class Frame:
 
         # generate the tile views to convolve the kernel with
         tiles = self.to_tiles(tile_size, tile_step, align_center=align_center)
-
+        
         # perform the convolution
         if not iterate:
             result = np.sum(tiles * kernel[None,None,:,:], axis=(2,3))
@@ -323,25 +323,33 @@ class Frame:
         kernel = sana.filter.get_gaussian_kernel(tsize[0], kern_sigma)
         
         # find the background simply by gaussian blurring the image
-        intensity = self.convolve(kernel, tstep, align_center=True, normalize=False)
+        pixels = self.copy()
+        pixels.mask(mask)
+        intensity = pixels.convolve(kernel, tstep, align_center=True, normalize=False)
         area = mask.convolve(kernel, tstep, align_center=True, normalize=False)
-        mi_area = 0.01
-        area[area<=mi_area] = 0
-        background_image = np.divide(intensity, area, where=area!=0, out=np.zeros_like(area))
 
-        # resize the background frame back to original resolution
-        background_frame = frame_like(self, background_image)
-        background_frame.resize(self.size(), interpolation=cv2.INTER_CUBIC)
+        # resize the background frame back to original resolution        
+        intensity = frame_like(self, intensity)
+        area = frame_like(self, area)
+        
+        intensity = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
+        
+        intensity.resize(self.size(), interpolation=cv2.INTER_CUBIC)
+        area.resize(self.size(), interpolation=cv2.INTER_CUBIC)
+        area.img = np.clip(area.img, 0.1, 1)
+        
+
+        # normalize the average intensity by the size of the mask
+        background_frame = intensity.copy()
+        #background_frame.img = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
 
         if debug:
-            fig, ax = plt.subplots(2,3, sharex=True, sharey=True)
+            fig, ax = plt.subplots(1, 5, sharex=True, sharey=True)
             ax = ax.ravel()
             ax[0].imshow(self.img)
-            ax[1].imshow(intensity, extent=(0, self.img.shape[0], self.img.shape[1], 0))
-            ax[2].imshow(area, extent=(0, self.img.shape[0], self.img.shape[1], 0))
-            ax[3].imshow(background_image, extent=(0, self.img.shape[0], self.img.shape[1], 0))
-            ax[4].imshow(background_frame.img)
-
+            ax[2].imshow(intensity.img)
+            ax[3].imshow(area.img)
+            ax[1].imshow(background_frame.img)
 
         # finally, subtract the background
         # NOTE: we clip to 0 here, this is okay since this will be background data which we don't care about
@@ -351,8 +359,7 @@ class Frame:
         self.to_short()
 
         if debug:
-            ax[5].imshow(self.img)
-            plt.show()
+            ax[4].imshow(self.img)
 
         return background_frame
 
@@ -761,6 +768,8 @@ def create_mask(size: sana.geo.Point, polygons: [sana.geo.Polygon], holes: [sana
 
     w, h = size.astype(int)
     img = np.zeros((h,w), dtype=np.uint8)
+
+    # TODO: i think this function is bugged, need to take the union of polygons i think...
     if not outlines_only:
         img = cv2.fillPoly(img, pts=polygons, color=mask_value)
         img = cv2.fillPoly(img, pts=holes, color=0)
