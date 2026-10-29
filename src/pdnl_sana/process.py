@@ -178,7 +178,7 @@ class HDABProcessor(Processor):
                 stain = self.hem
             if run_dab:
                 stain = self.dab
-            bckg = stain.remove_background(radius=radius, overlap=overlap, mask=self.main_mask, debug=self.logger.debug_level=='full')
+            self.bckg = stain.remove_background(radius=radius, overlap=overlap, mask=self.main_mask, debug=self.logger.debug_level=='full')
 
         self.logger.data['apply_smoothing'] = apply_smoothing
         self.logger.data['normalize_background'] = normalize_background
@@ -452,10 +452,6 @@ class HEProcessor(Processor):
         # get the threshold for the stain using pixels that are inside the ROI
         if od_threshold is None:
             hist = stain.get_histogram(mask=self.main_mask)
-            threshold = sana.threshold.triangular_method(
-                hist, 
-                strictness=triangular_strictness,
-                debug=self.logger.debug_level == 'full'
             if self.logger.debug_level == 'full':
                 fig, ax = plt.subplots(1,1)
             else:

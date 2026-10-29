@@ -332,16 +332,15 @@ class Frame:
         intensity = frame_like(self, intensity)
         area = frame_like(self, area)
         
-        intensity = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
-        
+        #intensity = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
+
         intensity.resize(self.size(), interpolation=cv2.INTER_CUBIC)
         area.resize(self.size(), interpolation=cv2.INTER_CUBIC)
         area.img = np.clip(area.img, 0.1, 1)
         
-
         # normalize the average intensity by the size of the mask
         background_frame = intensity.copy()
-        #background_frame.img = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
+        background_frame.img = np.divide(intensity.img, area.img, where=area!=0, out=np.zeros_like(area.img))
 
         if debug:
             fig, ax = plt.subplots(1, 5, sharex=True, sharey=True)
